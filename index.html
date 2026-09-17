@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Breach Team</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div id="app">
+  <canvas id="game"></canvas>
+  <div id="hud">
+    <div id="hudTop">
+      <div class="brand">BREACH<span>TEAM</span></div>
+      <div id="levelName">—</div>
+      <div id="objective">Suspects : —</div>
+      <div id="timer">00:00.0</div>
+    </div>
+    <div id="hudBottom">
+      <div id="hpBox">
+        <div class="label">SANTÉ</div>
+        <div class="hpbar"><div id="hpFill"></div></div>
+        <div id="flashBox">Flash <b id="flashCount">3</b> <small>(Espace)</small> <span id="moveMode" class="mode">COURSE</span> <small>(A / Maj)</small></div>
+        <div id="squad"></div>
+        <div id="squadHint">T : suivre / tenir · clic droit : aller là (sur vous : suivre)</div>
+      </div>
+      <div id="message"></div>
+      <div id="weaponBox">
+        <div id="weaponName">—</div>
+        <div id="ammo"><b id="ammoMag">0</b> / <span id="ammoReserve">0</span></div>
+        <div id="reloadHint">R / clic molette : recharger · Alt : arme · E : ouvrir/fermer · molette : ouvrir/fermer par étapes · Espace : flash</div>
+      </div>
+    </div>
+  </div>
+  <div id="overlay" class="hidden"><div class="panel" id="overlayPanel"></div></div>
+</div>
+<script src="js/util.js"></script>
+<script src="js/levels.js"></script>
+<script src="js/map.js"></script>
+<script src="js/entities.js"></script>
+<script src="js/game.js"></script>
+<script src="js/sprites.js"></script>
+<script src="js/render.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>

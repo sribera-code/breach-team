@@ -1,0 +1,312 @@
+'use strict';
+// Carte en grille fine + raycast + ligne de vue + A*.
+//
+// Les niveaux sont décrits en ASCII (une case ASCII = U = 32 px). Ils sont convertis en grille fine
+// (une case = TILE = 16 px) : chaque case ASCII (x,y) correspond à la petite case (2x,2y), et les petites
+// cases intermédiaires relient les murs voisins. Les murs n'ont donc plus qu'une petite case d'épaisseur,
+// les portes font trois petites cases de large.
+const FLOOR = { '.': 0, ',': 1, ':': 2 }; // béton, parquet, carrelage
+const PROPS = { c: 'crate', B: 'barrel', T: 'table', p: 'plant', b: 'bed', k: 'desk' };
+const DOOR_LEN = 3; // largeur d'une porte, en petites cases
+
+// Tas binaire minimal pour l'A*.
+class MinHeap {
+  constructor() { this.k = []; this.v = []; }
+  get size() { return this.k.length; }
+  push(key, val) {
+    const k = this.k, v = this.v;
+    let i = k.length;
+    k.push(key); v.push(val);
+    while (i > 0) {
+      const p = (i - 1) >> 1;
+      if (k[p] <= key) break;
+      k[i] = k[p]; v[i] = v[p]; i = p;
+    }
+    k[i] = key; v[i] = val;
+  }
+  pop() {
+    const k = this.k, v = this.v;
+    const top = v[0];
+    const lk = k.pop(), lv = v.pop();
+    if (k.length) {
+      let i = 0;
+      const n = k.length;
+      for (;;) {
+        let c = 2 * i + 1;
+        if (c >= n) break;
+        if (c + 1 < n && k[c + 1] < k[c]) c++;
+        if (k[c] >= lk) break;
+        k[i] = k[c]; v[i] = v[c]; i = c;
+      }
+      k[i] = lk; v[i] = lv;
+    }
+    return top;
+  }
+}
+
+class GameMap {
+  constructor(def) {
+    const rows = def.map;
+    const AH = rows.length;
+    const AW = Math.max(...rows.map(r => r.length));
+    const ch = (x, y) => (rows[y] && rows[y][x]) || ' ';
+    const wallish = c => c === '#' || c === 'D';
+
+    this.w = AW * 2 - 1;
+    this.h = AH * 2 - 1;
+    const N = this.w * this.h;
+    this.tiles = new Uint8Array(N);     // 0 sol, 1 mur, 2 vide
+    this.floorType = new Uint8Array(N); // 0 béton, 1 parquet, 2 carrelage
+    this.explored = new Uint8Array(N);
+    this.nearWall = new Uint8Array(N);
+    this.newlyExplored = []; // cases découvertes depuis le dernier rendu du brouillard
+    this.doors = [];
+    this.doorAt = new Map();
+    this.props = [];
+    this.propAt = new Map();
+    this.spawns = [];
+    this.enemySpawns = [];
+    this.hostageSpawns = [];
+
+    // Type de sol des cases ASCII : caractère du sol, sinon majorité des voisins.
+    const aFloor = new Uint8Array(AW * AH);
+    for (let y = 0; y < AH; y++) for (let x = 0; x < AW; x++) {
+      const c = ch(x, y);
+      if (c in FLOOR) { aFloor[y * AW + x] = FLOOR[c]; continue; }
+      const votes = [0, 0, 0];
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, -1], [1, -1], [-1, 1]]) {
+        const n = ch(x + dx, y + dy);
+        if (n in FLOOR) votes[FLOOR[n]]++;
+      }
+      aFloor[y * AW + x] = votes.indexOf(Math.max(...votes));
+    }
+
+    // Conversion en grille fine.
+    for (let sy = 0; sy < this.h; sy++) for (let sx = 0; sx < this.w; sx++) {
+      // cases ASCII qui contribuent à cette petite case
+      const xs = sx % 2 ? [(sx - 1) / 2, (sx + 1) / 2] : [sx / 2];
+      const ys = sy % 2 ? [(sy - 1) / 2, (sy + 1) / 2] : [sy / 2];
+      const contrib = [];
+      for (const ay of ys) for (const ax of xs) contrib.push({ x: ax, y: ay, c: ch(ax, ay) });
+      let t;
+      if (contrib.every(k => wallish(k.c))) t = 1;
+      else if (contrib.some(k => k.c === ' ')) t = 2;
+      else t = 0;
+      const i = sy * this.w + sx;
+      this.tiles[i] = t;
+      const fl = contrib.find(k => !wallish(k.c) && k.c !== ' ');
+      this.floorType[i] = fl ? aFloor[fl.y * AW + fl.x] : 0;
+    }
+
+    const facing = { '^': -Math.PI / 2, 'v': Math.PI / 2, '<': Math.PI, '>': 0 };
+    for (let y = 0; y < AH; y++) for (let x = 0; x < AW; x++) {
+      const c = ch(x, y);
+      const sx = 2 * x, sy = 2 * y;
+      switch (c) {
+        case 'D': {
+          const horizontal = wallish(ch(x - 1, y)) && wallish(ch(x + 1, y));
+          const d = {
+            x: sx, y: sy, cx: (sx + 0.5) * TILE, cy: (sy + 0.5) * TILE, len: DOOR_LEN, horizontal,
+            open: false, ajar: false, opening: false, progress: 0, target: 0, duration: 0.4, cells: [],
+          };
+          const half = (DOOR_LEN - 1) / 2;
+          for (let k = -half; k <= half; k++) {
+            const cx = horizontal ? sx + k : sx, cy = horizontal ? sy : sy + k;
+            if (!this.inBounds(cx, cy)) continue;
+            const idx = cy * this.w + cx;
+            this.tiles[idx] = 0;
+            this.floorType[idx] = this.floorType[(horizontal ? sy + 1 : sy) * this.w + (horizontal ? sx : sx + 1)] || 0;
+            this.doorAt.set(idx, d);
+            d.cells.push({ x: cx, y: cy });
+          }
+          this.doors.push(d);
+          break;
+        }
+        case 'S': this.spawns.push({ x: sx, y: sy }); break;
+        case 'E': this.enemySpawns.push({ x: sx, y: sy, angle: null }); break;
+        case 'H': this.hostageSpawns.push({ x: sx, y: sy }); break;
+        default:
+          if (c in facing) this.enemySpawns.push({ x: sx, y: sy, angle: facing[c] });
+          else if (c in PROPS) {
+            // un meuble occupe un bloc 2×2 de petites cases
+            const p = { x: sx, y: sy, cx: (sx + 1) * TILE, cy: (sy + 1) * TILE, type: PROPS[c] };
+            this.props.push(p);
+            for (const [dx, dy] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
+              const px = sx + dx, py = sy + dy;
+              if (this.inBounds(px, py) && this.tiles[py * this.w + px] === 0) this.propAt.set(py * this.w + px, p);
+            }
+          }
+      }
+    }
+
+    // Cases collées à un obstacle : pénalisées par l'A* pour garder les trajets centrés.
+    for (let y = 0; y < this.h; y++) for (let x = 0; x < this.w; x++) {
+      if (this.blocksMove(x, y)) continue;
+      let near = 0;
+      for (let dy = -1; dy <= 1 && !near; dy++) for (let dx = -1; dx <= 1; dx++) {
+        if ((dx || dy) && this.blocksMove(x + dx, y + dy)) { near = 1; break; }
+      }
+      this.nearWall[y * this.w + x] = near;
+    }
+  }
+
+  inBounds(x, y) { return x >= 0 && y >= 0 && x < this.w && y < this.h; }
+  tile(x, y) { return this.inBounds(x, y) ? this.tiles[y * this.w + x] : 2; }
+  floor(x, y) { return this.inBounds(x, y) ? this.floorType[y * this.w + x] : 0; }
+  isWall(x, y) { return this.tile(x, y) !== 0; }
+  door(x, y) { return this.inBounds(x, y) ? this.doorAt.get(y * this.w + x) : undefined; }
+  prop(x, y) { return this.propAt.get(y * this.w + x); }
+  blocksSight(x, y) {
+    if (this.isWall(x, y)) return true;
+    const d = this.door(x, y);
+    return d ? !(d.open || d.ajar) : false;
+  }
+  blocksMove(x, y) { return this.isWall(x, y) || this.propAt.has(y * this.w + x); }
+  markExplored(x, y) {
+    if (!this.inBounds(x, y)) return;
+    const i = y * this.w + x;
+    if (!this.explored[i]) { this.explored[i] = 1; this.newlyExplored.push(i); }
+  }
+  isExplored(x, y) { return this.inBounds(x, y) && this.explored[y * this.w + x] === 1; }
+
+  // Un cercle de rayon r centré en (cx,cy) ne touche aucun obstacle (test par AABB, conservateur).
+  // solidDoors : les portes fermées bloquent aussi (déplacement du joueur).
+  circleFree(cx, cy, r, solidDoors) {
+    const x0 = Math.floor((cx - r) / TILE), x1 = Math.floor((cx + r) / TILE);
+    const y0 = Math.floor((cy - r) / TILE), y1 = Math.floor((cy + r) / TILE);
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+      if (this.blocksMove(x, y)) return false;
+      if (solidDoors) { const d = this.door(x, y); if (d && !d.open) return false; }
+    }
+    return true;
+  }
+
+  // Lance un rayon (DDA) et s'arrête au premier obstacle visuel ou à maxDist.
+  castRay(x, y, angle, maxDist, mark) {
+    const dx = Math.cos(angle), dy = Math.sin(angle);
+    let tx = Math.floor(x / TILE), ty = Math.floor(y / TILE);
+    const stepX = dx > 0 ? 1 : -1, stepY = dy > 0 ? 1 : -1;
+    const tDeltaX = dx !== 0 ? Math.abs(TILE / dx) : Infinity;
+    const tDeltaY = dy !== 0 ? Math.abs(TILE / dy) : Infinity;
+    let tMaxX = dx !== 0 ? (dx > 0 ? (tx + 1) * TILE - x : x - tx * TILE) / Math.abs(dx) : Infinity;
+    let tMaxY = dy !== 0 ? (dy > 0 ? (ty + 1) * TILE - y : y - ty * TILE) / Math.abs(dy) : Infinity;
+    let t = 0, hit = false;
+    if (mark) this.markExplored(tx, ty);
+    for (let i = 0; i < 800; i++) {
+      if (tMaxX < tMaxY) { t = tMaxX; tMaxX += tDeltaX; tx += stepX; }
+      else { t = tMaxY; tMaxY += tDeltaY; ty += stepY; }
+      if (t >= maxDist) { t = maxDist; break; }
+      if (mark) this.markExplored(tx, ty);
+      if (this.blocksSight(tx, ty)) { hit = true; break; }
+    }
+    return { x: x + dx * t, y: y + dy * t, dist: t, hit, tx, ty };
+  }
+
+  hasLOS(x0, y0, x1, y1) {
+    const d = dist(x0, y0, x1, y1);
+    if (d < 1) return true;
+    const r = this.castRay(x0, y0, Math.atan2(y1 - y0, x1 - x0), d, false);
+    return r.dist >= d - 0.01;
+  }
+
+  // A* sur la grille (8 directions, pas de coupe de coin, portes traversées en ligne droite).
+  // opts.noClosedDoors : les portes non ouvertes sont infranchissables (coéquipiers en suivi).
+  // opts.avoid : [{x, y, r}] zones à contourner (alliés), fortement pénalisées.
+  findPath(sx, sy, tx, ty, opts) {
+    const noClosed = !!(opts && opts.noClosedDoors);
+    const avoid = (opts && opts.avoid) || [];
+    if (!this.inBounds(tx, ty) || this.blocksMove(tx, ty)) return null;
+    if (!this.inBounds(sx, sy)) return null;
+    const w = this.w, N = w * this.h;
+    const g = new Float32Array(N).fill(Infinity);
+    const came = new Int32Array(N).fill(-1);
+    const closed = new Uint8Array(N);
+    const heur = (x, y) => { const ax = Math.abs(x - tx), ay = Math.abs(y - ty); return Math.max(ax, ay) + 0.414 * Math.min(ax, ay); };
+    const open = new MinHeap();
+    const start = sy * w + sx, goal = ty * w + tx;
+    g[start] = 0;
+    open.push(heur(sx, sy), start);
+    while (open.size) {
+      const ck = open.pop();
+      if (closed[ck]) continue;
+      closed[ck] = 1;
+      if (ck === goal) {
+        const out = [];
+        let k = ck;
+        while (k !== -1) { out.push({ x: k % w, y: (k / w) | 0 }); k = came[k]; }
+        return out.reverse();
+      }
+      const cx = ck % w, cy = (ck / w) | 0;
+      const curDoor = this.doorAt.has(ck);
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        if (!dx && !dy) continue;
+        const nx = cx + dx, ny = cy + dy;
+        if (!this.inBounds(nx, ny) || this.blocksMove(nx, ny)) continue;
+        const nk = ny * w + nx;
+        if (closed[nk]) continue;
+        const diag = dx !== 0 && dy !== 0;
+        const dObj = this.doorAt.get(nk);
+        if (noClosed && dObj && !dObj.open) continue;
+        if (diag) {
+          if (this.blocksMove(cx + dx, cy) || this.blocksMove(cx, cy + dy)) continue;
+          if (curDoor || dObj) continue;
+        }
+        let cost = (diag ? 1.414 : 1) + (dObj ? 1 : 0) + (this.nearWall[nk] ? 2.5 : 0);
+        if (avoid.length && nk !== goal) {
+          const wx = (nx + 0.5) * TILE, wy = (ny + 0.5) * TILE;
+          for (const a of avoid) if (Math.abs(wx - a.x) < a.r && Math.abs(wy - a.y) < a.r && Math.hypot(wx - a.x, wy - a.y) < a.r) { cost += 40; break; }
+        }
+        const ng = g[ck] + cost;
+        if (ng < g[nk]) { g[nk] = ng; came[nk] = ck; open.push(ng + heur(nx, ny), nk); }
+      }
+    }
+    return null;
+  }
+
+  segmentFree(ax, ay, bx, by, r) {
+    const allowed = new Set([
+      Math.floor(ay / TILE) * this.w + Math.floor(ax / TILE),
+      Math.floor(by / TILE) * this.w + Math.floor(bx / TILE),
+    ]);
+    const d = dist(ax, ay, bx, by);
+    const steps = Math.max(1, Math.ceil(d / 4));
+    for (let i = 0; i <= steps; i++) {
+      const x = lerp(ax, bx, i / steps), y = lerp(ay, by, i / steps);
+      if (!this.circleFree(x, y, r, false)) return false;
+      const k = Math.floor(y / TILE) * this.w + Math.floor(x / TILE);
+      if (this.doorAt.has(k) && !allowed.has(k)) return false;
+    }
+    return true;
+  }
+
+  // Lissage glouton vers l'avant (coût linéaire) : on prolonge tant que le segment reste libre.
+  smoothPath(pts, r) {
+    if (pts.length < 3) return pts.slice();
+    const out = [pts[0]];
+    let i = 0;
+    while (i < pts.length - 1) {
+      let j = i + 1;
+      while (j + 1 < pts.length && j + 1 - i <= 48 && this.segmentFree(pts[i].x, pts[i].y, pts[j + 1].x, pts[j + 1].y, r)) j++;
+      out.push(pts[j]);
+      i = j;
+    }
+    return out;
+  }
+
+  // Chemin monde depuis (sx,sy) vers la case (tx,ty). Retourne les waypoints sans le point de départ.
+  routeTo(sx, sy, tx, ty, r, opts) {
+    const tiles = this.findPath(Math.floor(sx / TILE), Math.floor(sy / TILE), tx, ty, opts);
+    if (!tiles) return null;
+    const pts = tiles.map(t => {
+      const p = { x: (t.x + 0.5) * TILE, y: (t.y + 0.5) * TILE };
+      // on passe les portes par leur milieu
+      const d = this.door(t.x, t.y);
+      if (d) { if (d.horizontal) p.x = d.cx; else p.y = d.cy; }
+      return p;
+    });
+    pts[0] = { x: sx, y: sy };
+    const sm = this.smoothPath(pts, r);
+    sm.shift();
+    return sm;
+  }
+}

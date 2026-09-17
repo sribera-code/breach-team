@@ -1,0 +1,58 @@
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: #0b0d10; color: #d7dbe0; font-family: "Segoe UI", system-ui, sans-serif; overflow: hidden; }
+button { background: #1d232b; color: #d7dbe0; border: 1px solid #333b46; border-radius: 4px; padding: 8px 14px; font: inherit; cursor: pointer; }
+button:hover { background: #2a323d; }
+button.primary { background: #2f7d4f; border-color: #3f9d65; color: #fff; }
+button.primary:hover { background: #38945d; }
+
+#app { position: relative; width: 100%; height: 100%; }
+#game { display: block; width: 100%; height: 100%; cursor: none; }
+
+#hud { position: absolute; inset: 0; pointer-events: none; }
+#hudTop { position: absolute; top: 0; left: 0; right: 0; display: flex; align-items: center; gap: 22px; padding: 10px 16px; background: linear-gradient(rgba(5,7,9,0.75), rgba(5,7,9,0)); }
+.brand { font-weight: 800; letter-spacing: 2px; color: #f2f4f6; }
+.brand span { color: #ffb347; margin-left: 4px; }
+#levelName { color: #b6bec8; }
+#objective { color: #ffd27a; font-weight: 600; }
+#timer { font-family: Consolas, monospace; font-size: 18px; color: #fff; margin-left: auto; }
+
+#hudBottom { position: absolute; left: 0; right: 0; bottom: 0; display: flex; align-items: flex-end; justify-content: space-between; padding: 16px 20px; background: linear-gradient(rgba(5,7,9,0), rgba(5,7,9,0.75)); }
+#hpBox { width: 240px; }
+.label { font-size: 11px; letter-spacing: 2px; color: #9aa4b1; margin-bottom: 4px; }
+.hpbar { height: 12px; background: rgba(0,0,0,0.5); border: 1px solid #3a4250; border-radius: 3px; overflow: hidden; }
+#hpFill { height: 100%; width: 100%; background: #4caf50; transition: width 0.12s, background 0.3s; }
+#flashBox { margin-top: 8px; color: #ffd54f; }
+#flashBox b { font-size: 18px; }
+#flashBox small { color: #9aa4b1; }
+#squad { margin-top: 10px; display: flex; flex-direction: column; gap: 4px; }
+.mate { display: grid; grid-template-columns: 62px 70px auto; align-items: center; gap: 8px; font-size: 12px; }
+.mate .mname { font-weight: 700; letter-spacing: 1px; }
+.mate .mhp { height: 6px; background: rgba(0,0,0,0.5); border: 1px solid #3a4250; border-radius: 3px; overflow: hidden; }
+.mate .mhp div { height: 100%; background: #4caf50; }
+.mate .morder { color: #9aa4b1; }
+.mate.down { opacity: 0.45; }
+#squadHint { font-size: 11px; color: #8e99a6; margin-top: 4px; }
+.mode { display: inline-block; margin-left: 14px; padding: 1px 8px; border-radius: 3px; font-size: 12px; font-weight: 700; letter-spacing: 1px; background: #3a4250; color: #e0e5ea; }
+.mode.walk { background: #2f7d4f; color: #fff; }
+#message { flex: 1; text-align: center; font-size: 20px; font-weight: 700; color: #fff; text-shadow: 0 2px 6px #000; padding: 0 20px 6px; min-height: 30px; }
+#weaponBox { text-align: right; }
+#weaponName { color: #d7dbe0; font-weight: 600; }
+#ammo { font-family: Consolas, monospace; color: #fff; }
+#ammo b { font-size: 34px; }
+#ammo span { font-size: 18px; color: #9aa4b1; }
+#ammo.low b { color: #ff7043; }
+#reloadHint { font-size: 11px; color: #8e99a6; }
+
+#overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.65); display: flex; align-items: center; justify-content: center; z-index: 10; }
+#overlay.hidden { display: none; }
+.panel { background: #151a20; border: 1px solid #2c3540; border-radius: 8px; padding: 24px 28px; min-width: 440px; max-width: 660px; box-shadow: 0 10px 40px rgba(0,0,0,0.6); }
+.panel h1 { margin: 0 0 6px; font-size: 24px; }
+.panel h1.win { color: #6fcf7a; }
+.panel h1.lose { color: #ef6a5a; }
+.panel p { color: #aab3bf; line-height: 1.55; }
+.panel .row { display: flex; gap: 8px; margin-top: 16px; flex-wrap: wrap; }
+.levelbtn { display: flex; justify-content: space-between; width: 100%; text-align: left; padding: 10px 12px; margin-top: 6px; }
+.levelbtn small { color: #8e99a6; }
+.stats { display: grid; grid-template-columns: auto auto; gap: 4px 18px; margin-top: 10px; }
+.stats b { color: #fff; }
+kbd { background: #2a323d; border-radius: 3px; padding: 1px 6px; font-family: Consolas, monospace; }
