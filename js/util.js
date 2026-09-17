@@ -48,7 +48,7 @@ const Sound = {
     const g = c.createGain(); g.gain.value = vol;
     src.connect(f); f.connect(g); g.connect(c.destination); src.start();
   },
-  shot(vol, heavy) { this.noise(heavy ? 0.2 : 0.09, vol, heavy ? 800 : 2400, 3); },
+  shot(vol, w) { const [dur, cutoff] = w.snd || (w.heavy ? [0.2, 800] : [0.09, 2400]); this.noise(dur, vol, cutoff, 3); },
   door() { this.noise(0.12, 0.15, 400, 2); },
   tick(vol) { this.noise(0.03, vol || 0.15, 3500, 1); },
   reload() { this.noise(0.05, 0.12, 1500, 1); setTimeout(() => this.noise(0.06, 0.14, 1200, 1), 350); },

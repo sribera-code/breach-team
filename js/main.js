@@ -16,12 +16,15 @@
     Sound.init();
     if (e.button === 0) { inp.mouse.down = true; inp.pressed.Mouse0 = true; }
     if (e.button === 1) { e.preventDefault(); inp.pressed.Mouse1 = true; }
-    if (e.button === 2) inp.pressed.Mouse2 = true;
+    if (e.button === 2) { inp.pressed.Mouse2 = true; inp.mouse.rdown = true; }
   });
-  window.addEventListener('mouseup', e => { if (e.button === 0) inp.mouse.down = false; });
+  window.addEventListener('mouseup', e => {
+    if (e.button === 0) inp.mouse.down = false;
+    if (e.button === 2 && inp.mouse.rdown) { inp.mouse.rdown = false; inp.pressed.Mouse2Up = true; }
+  });
   canvas.addEventListener('contextmenu', e => e.preventDefault());
   canvas.addEventListener('wheel', e => { e.preventDefault(); inp.pressed[e.deltaY > 0 ? 'WheelDown' : 'WheelUp'] = true; }, { passive: false });
-  window.addEventListener('blur', () => { inp.keys = {}; inp.mouse.down = false; if (!game.over && !ui.isOpen()) game.setPaused(true); });
+  window.addEventListener('blur', () => { inp.keys = {}; inp.mouse.down = false; inp.mouse.rdown = false; if (!game.over && !ui.isOpen()) game.setPaused(true); });
 
   const NO_DEFAULT = ['Space', 'Tab', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'AltLeft', 'AltRight'];
   window.addEventListener('keydown', e => {

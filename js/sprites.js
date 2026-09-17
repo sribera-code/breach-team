@@ -49,7 +49,7 @@ const POSE_LIE = {
 };
 const DROPPED_GUN = { x: 14, y: -22, rot: -0.35 };
 // Arme tenue : avancée devant la tête et un peu épaissie pour rester lisible vue de dessus.
-const GUN_SHIFT = 2.5, GUN_THICK = 1.3;
+const GUN_SHIFT = 2.5, GUN_THICK = 1.18;
 // Distance du centre du personnage à la bouche du canon (utilisée aussi par le jeu pour les tirs).
 const muzzleDist = gunLen => 13 + GUN_SHIFT + gunLen;
 
@@ -250,15 +250,19 @@ const Sprites = {
   },
 
   // ---- Armes (repère local : le personnage regarde vers +x, axe de l'arme à y = AXIS) ----
-  gun(ctx, kind, gl) {
+  // t : variante de couleurs / de forme (WEAPONS[..].tint)
+  gun(ctx, kind, gl, t = {}) {
     const A = 1.5;          // axe de l'arme (épaulée à droite)
     const M = 13 + gl;      // bouche du canon : doit correspondre à Game.fireWeapon
-    const OUT = 'rgba(0,0,0,0.65)';
+    const OUT = 'rgba(0,0,0,0.45)';
+    // Vue de dessus, une arme est étroite et longue : boîtier ~3, garde-main ~2.6, canon ~1.1
+    // (l'épaisseur dessinée est encore multipliée par GUN_THICK quand l'arme est tenue).
+    const STEEL = '#2a2d32', STEEL_D = '#1d1f23', BARREL = '#15171a', POLY = '#26292e', WOOD = '#6b4726';
     // pièce rectangulaire arrondie, centrée sur l'axe (dy = décalage latéral)
-    const part = (x0, x1, h, fill, dy = 0, r = 0.8) => {
+    const part = (x0, x1, h, fill, dy = 0, r = 0.4) => {
       roundRect(ctx, x0, A + dy - h / 2, x1 - x0, h, Math.min(r, h / 2));
       ctx.fillStyle = fill; ctx.fill();
-      ctx.lineWidth = 0.6; ctx.strokeStyle = OUT; ctx.stroke();
+      ctx.lineWidth = 0.5; ctx.strokeStyle = OUT; ctx.stroke();
     };
     // polygone en coordonnées relatives à l'axe
     const poly = (pts, fill) => {
@@ -266,98 +270,165 @@ const Sprites = {
       pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, A + y) : ctx.moveTo(x, A + y)));
       ctx.closePath();
       ctx.fillStyle = fill; ctx.fill();
-      ctx.lineWidth = 0.6; ctx.strokeStyle = OUT; ctx.stroke();
+      ctx.lineWidth = 0.5; ctx.strokeStyle = OUT; ctx.stroke();
     };
-    const shine = (x0, x1, dy, a = 0.16) => { ctx.fillStyle = `rgba(255,255,255,${a})`; ctx.fillRect(x0, A + dy, x1 - x0, 0.5); };
+    const shine = (x0, x1, dy, a = 0.12) => { ctx.fillStyle = `rgba(255,255,255,${a})`; ctx.fillRect(x0, A + dy, x1 - x0, 0.4); };
     const dark = (x, dy, w, h, a = 0.45) => { ctx.fillStyle = `rgba(0,0,0,${a})`; ctx.fillRect(x, A + dy, w, h); };
     const grain = (x0, x1, dys) => {
-      ctx.strokeStyle = 'rgba(40,20,5,0.35)'; ctx.lineWidth = 0.35;
-      for (const dy of dys) { ctx.beginPath(); ctx.moveTo(x0, A + dy); ctx.quadraticCurveTo((x0 + x1) / 2, A + dy + 0.35, x1, A + dy - 0.1); ctx.stroke(); }
+      ctx.strokeStyle = 'rgba(40,20,5,0.35)'; ctx.lineWidth = 0.3;
+      for (const dy of dys) { ctx.beginPath(); ctx.moveTo(x0, A + dy); ctx.quadraticCurveTo((x0 + x1) / 2, A + dy + 0.3, x1, A + dy - 0.1); ctx.stroke(); }
+    };
+    // rainures régulières : rail supérieur, fentes de garde-main, stries
+    const ribs = (x0, x1, step, dy, h, a = 0.3) => { for (let x = x0; x <= x1; x += step) dark(x, dy - h / 2, step * 0.45, h, a); };
+    // Optique vue de dessus : boîtier sombre et verre noir à peine reflétant.
+    // (Le point rouge n'est visible que par le tireur, pas d'en haut.)
+    const optic = (x0, x1, h) => {
+      part(x0, x1, h, '#16181b', 0, 0.3);
+      const cx = (x0 + x1) / 2, r = Math.min(h, x1 - x0) * 0.3;
+      ctx.fillStyle = '#0a0c0f'; circle(ctx, cx, A, r); ctx.fill();
+      ctx.strokeStyle = 'rgba(150,170,190,0.35)'; ctx.lineWidth = 0.22; ctx.stroke();
+      ctx.fillStyle = 'rgba(150,180,205,0.2)'; circle(ctx, cx - r * 0.3, A - r * 0.3, r * 0.45); ctx.fill();
+    };
+    // Lampe tactique : petit tube sombre, lentille grise (jamais allumée d'en haut).
+    const light = (x0, x1, dy) => {
+      part(x0, x1, 1.2, '#1b1d21', dy, 0.3);
+      ctx.fillStyle = '#bcc3c9'; ctx.fillRect(x1 - 0.55, A + dy - 0.4, 0.5, 0.8);
     };
 
     switch (kind) {
       case 'pistol': {
-        part(8.5, 12.5, 3, '#1f2226', 0.2, 1);                 // carcasse / poignée
-        part(10, M, 3.4, '#474d56', 0, 0.7);                  // culasse
-        for (let x = 10.6; x < 12.8; x += 0.7) dark(x, -1.5, 0.3, 3, 0.5); // stries arrière
-        dark(14.2, 0.35, 3, 1.1, 0.6);                        // fenêtre d'éjection
-        shine(10.5, M - 0.8, -1.3, 0.22);
-        ctx.fillStyle = '#e8e8e8';                            // points de visée
-        ctx.fillRect(10.4, A - 0.9, 0.5, 0.5); ctx.fillRect(10.4, A + 0.4, 0.5, 0.5); ctx.fillRect(M - 1.2, A - 0.25, 0.6, 0.5);
-        ctx.fillStyle = '#0c0d0f'; ctx.fillRect(M - 0.5, A - 0.6, 0.5, 1.2); // bouche
+        part(8.2, 12.8, 2.3, '#17191c', 0.5, 0.45);            // carcasse / poignée
+        part(12.6, M - 2.6, 1.3, '#1c1f22', 1, 0.3);           // rail sous le canon
+        part(9.8, M, 2, t.slide || '#3e434b', 0, 0.3);         // culasse
+        for (let x = 10.3; x < 12.4; x += 0.55) dark(x, -0.9, 0.22, 1.8, 0.45); // stries de manœuvre
+        dark(14.2, 0.2, 2.6, 0.7, 0.6);                        // fenêtre d'éjection
+        shine(10.2, M - 0.8, -0.8, 0.18);
+        ctx.fillStyle = '#dfe3e6';                             // points de visée
+        ctx.fillRect(10.2, A - 0.6, 0.35, 0.35); ctx.fillRect(10.2, A + 0.25, 0.35, 0.35); ctx.fillRect(M - 1, A - 0.18, 0.4, 0.36);
+        ctx.fillStyle = '#0a0b0d'; ctx.fillRect(M - 0.4, A - 0.4, 0.4, 0.8); // bouche
         break;
       }
 
-      case 'shotgun': {
-        poly([[-6, -1.9], [-4.6, -2.1], [5.2, -1.4], [5.2, 1.4], [-4.6, 2.1], [-6, 1.9]], '#6e4527'); // crosse bois
-        grain(-4.5, 5, [-0.9, 0.2, 1.1]);
-        part(-6.4, -5.2, 4.4, '#1b1c1f', 0, 0.5);             // plaque de couche
-        part(5, 13.5, 4.2, '#2d3137', 0, 0.9);                // boîtier
-        dark(8, 0.6, 3.6, 1.2, 0.6);                          // fenêtre d'éjection
-        shine(5.6, 13, -1.8);
-        part(13, M, 1.9, '#1b1d21', -0.8, 0.6);               // canon
-        part(13, M - 2.5, 1.6, '#23262b', 1.05, 0.6);         // tube magasin
-        part(M - 2.8, M - 1.8, 1.8, '#15171a', 1.05, 0.3);    // bouchon de tube
-        shine(13.5, M - 0.5, -1.6, 0.2);
-        part(15, 23.5, 4.6, '#7a4d2b', 0.1, 1.2);             // pompe
-        for (let x = 16; x < 23; x += 1.3) dark(x, -2.1, 0.45, 4.4, 0.35); // rainures
-        ctx.fillStyle = '#d9b44a'; circle(ctx, M - 0.8, A - 0.8, 0.45); ctx.fill(); // guidon (bille)
+      case 'shotgun': { // Remington 870, ou Benelli M4 (t.semi)
+        if (t.semi) {
+          part(-6.5, -5.4, 2.9, '#131418', 0, 0.3);            // talon caoutchouc
+          poly([[-5.4, -1.5], [-1.4, -1.6], [4.4, -1.1], [4.4, 1.1], [-1.4, 1.6], [-5.4, 1.5]], '#212327'); // crosse synthétique
+          dark(-5, -0.35, 4.6, 0.7, 0.35);                     // appui-joue
+          dark(-1.2, -1.5, 0.45, 3, 0.45); dark(0.2, -1.4, 0.45, 2.8, 0.45); // crans de réglage
+        } else {
+          part(-6.4, -5.4, 2.9, '#1a1b1e', 0, 0.3);            // plaque de couche
+          poly([[-5.4, -1.45], [-4.4, -1.6], [4.6, -1.15], [4.6, 1.15], [-4.4, 1.6], [-5.4, 1.45]], WOOD); // crosse bois
+          grain(-4.3, 4.4, [-0.75, 0.15, 0.95]);
+        }
+        part(4.4, 13.4, 3.2, '#2b2e33', 0, 0.4);               // boîtier
+        dark(7.6, 0.95, 3, 0.7, 0.6);                          // fenêtre d'éjection
+        shine(5, 13.2, -1.45);
+        part(13.2, M, 1.45, '#191b1e', -0.85, 0.3);            // canon
+        part(13.2, M - 3.2, 1.3, '#23262b', 1, 0.3);           // tube magasin
+        part(M - 3.6, M - 2.8, 1.5, '#15171a', 1, 0.25);       // bouchon de tube
+        shine(13.6, M - 1, -1.35, 0.15);
+        if (t.semi) {
+          part(15, 21.8, 2.8, '#1f2125', 0.1, 0.8);            // garde-main synthétique
+          ribs(16, 21, 1.5, 0.1, 2.2);
+          part(8.2, 11, 2.7, '#16181b', 0, 0.4);               // hausse à œilleton
+          ctx.fillStyle = '#0c0d0f'; circle(ctx, 9.6, A, 0.6); ctx.fill();
+          part(9, 10.6, 0.9, '#8d949c', 2.1, 0.25);            // levier d'armement
+          part(M - 2.4, M - 1.4, 2.1, '#16181b', -0.85, 0.25); // guidon à ailettes
+        } else {
+          part(15.2, 22.6, 3, '#75491f', 0.1, 0.9);            // pompe bois
+          for (let x = 16; x < 22.2; x += 1.15) dark(x, -1.35, 0.4, 3, 0.32); // rainures
+          ctx.fillStyle = '#c8a54a'; circle(ctx, M - 0.9, A - 0.85, 0.36); ctx.fill(); // guidon (bille)
+        }
         break;
       }
 
-      case 'ak': {
-        poly([[-6, -1.7], [-4.8, -2], [5.2, -1.3], [5.2, 1.3], [-4.8, 2], [-6, 1.7]], '#7b4a25'); // crosse bois
-        grain(-4.6, 5, [-0.8, 0.3, 1.1]);
-        part(-6.4, -5.3, 4.1, '#2a2a2c', 0, 0.4);             // plaque de couche
-        // chargeur courbe (bakélite) qui dépasse sur le côté
-        poly([[8.4, 2.1], [11.8, 2.1], [14.4, 7.6], [11.2, 8.2]], '#4a3322');
-        ctx.strokeStyle = 'rgba(0,0,0,0.35)'; ctx.lineWidth = 0.4;
-        for (let k = 1; k <= 3; k++) { ctx.beginPath(); ctx.moveTo(8.4 + k * 0.8, A + 2.1 + k * 1.4); ctx.lineTo(11.8 + k * 0.7, A + 2.1 + k * 1.4); ctx.stroke(); }
-        part(5, 14.5, 4.4, '#2b2e33', 0, 0.8);                // boîtier
-        for (let x = 6.5; x < 13.5; x += 1.4) dark(x, -1.6, 0.35, 3.2, 0.3); // nervures du couvercle
-        dark(10, 0.6, 3, 1.1, 0.6);                           // fenêtre d'éjection
-        part(13.8, 14.8, 5, '#23252a', 0, 0.3);               // hausse
-        shine(5.5, 14, -1.9);
-        part(14.5, 21.5, 4.2, '#8a5329', 0, 1.3);             // garde-main inférieur bois
-        grain(15, 21, [-1, 0.9]);
-        part(14.5, 23, 1.9, '#6d4222', 0, 0.7);               // cache du tube à gaz
-        part(21.5, M - 3, 1.6, '#1c1e22', 0, 0.5);            // canon
-        part(23, 24.4, 2.8, '#1c1e22', 0, 0.3);               // bloc de gaz
-        poly([[M - 5.2, -1.6], [M - 4.4, -1.6], [M - 4, 0], [M - 5.6, 0]], '#1c1e22'); // guidon
-        part(M - 3, M, 2.2, '#16181b', 0, 0.3);               // frein de bouche
-        dark(M - 2.2, -1.1, 0.4, 2.2, 0.6);
+      case 'smg': { // HK MP5
+        part(-5.3, -4.3, 2.5, '#131418', 0, 0.3);              // plaque de crosse
+        part(-4.3, 4.2, 2.4, STEEL_D, 0, 0.3);                 // crosse rétractable (rentrée)
+        dark(-4, -0.3, 8, 0.6, 0.4);                           // jointure des deux rails
+        part(4, 14, 2.9, STEEL, 0, 0.35);                      // boîtier
+        part(4.3, 5.9, 2.3, '#191b1f', 0, 0.5);                // hausse à tambour
+        ctx.fillStyle = '#0d0f12'; circle(ctx, 5.1, A, 0.55); ctx.fill();
+        dark(9.1, 0.8, 2.3, 0.6, 0.55);                        // fenêtre d'éjection
+        shine(4.6, 13.8, -1.3);
+        poly([[9.5, 1.3], [11.6, 1.3], [12.6, 4.5], [10.7, 4.8]], '#202327'); // chargeur courbe
+        ctx.strokeStyle = 'rgba(255,255,255,0.1)'; ctx.lineWidth = 0.3;
+        ctx.beginPath(); ctx.moveTo(10.3, A + 1.8); ctx.lineTo(11.4, A + 4.4); ctx.stroke();
+        part(14, 20.6, 2.6, '#22252a', 0, 0.8);                // garde-main
+        ribs(15, 20, 1.1, 0, 1.6, 0.25);
+        part(14.4, 19.4, 0.9, STEEL_D, -1.7, 0.3);             // tube du levier d'armement
+        part(15.1, 16.2, 1.1, '#141619', -1.95, 0.3);          // poignée d'armement
+        part(20.6, 22.2, 2.5, '#191b1f', 0, 0.6);              // guidon annulaire
+        ctx.fillStyle = '#0d0f12'; circle(ctx, 21.4, A, 0.5); ctx.fill();
+        part(22.2, M, 1.15, BARREL, 0, 0.3);                   // canon
+        part(M - 1.4, M, 1.5, '#0f1114', 0, 0.25);             // ergots de fixation
         break;
       }
 
-      default: { // fusil d'assaut moderne
-        part(-6.4, -5, 4.3, '#141518', 0, 0.6);               // talon caoutchouc
-        poly([[-5, -2.1], [-1, -2.1], [3.5, -0.9], [3.5, 0.9], [-1, 2.1], [-5, 2.1]], '#383d45'); // crosse
-        dark(-4.5, -0.3, 4.5, 0.6, 0.35);                     // appui-joue
-        part(3, 6, 1.9, '#24272c', 0, 0.5);                   // tube de crosse
-        part(5, 14.5, 4.4, '#4b515b', 0, 0.9);                // boîtier
-        part(4.4, 5.6, 2.8, '#2a2d33', 0, 0.3);               // levier d'armement
-        dark(8.2, 1.1, 3.4, 1, 0.65);                         // fenêtre d'éjection
-        shine(5.5, 14, -1.9);
-        // chargeur (dépasse sur le côté)
-        poly([[9.2, 2.2], [11.8, 2.2], [12.6, 6.4], [9.8, 6.6]], '#3b4047');
-        dark(9.6, 5.2, 2.6, 0.5, 0.35);
-        part(14, 23.5, 3.9, '#424952', 0, 1);                 // garde-main
-        for (let x = 15; x < 23; x += 1.6) { dark(x, -1.6, 0.8, 0.6, 0.5); dark(x, 1, 0.8, 0.6, 0.5); } // fentes
-        shine(14.5, 23, -1.7, 0.18);
-        // lampe tactique sur le flanc gauche
-        part(18, 21.6, 1.7, '#1d1f23', -2.6, 0.6);
-        ctx.fillStyle = '#fff3b0'; ctx.fillRect(21.2, A - 3.2, 0.5, 1.2);
-        // viseur holographique sur l'axe
-        part(7, 12, 3.2, '#1a1c20', 0, 0.6);
-        ctx.fillStyle = '#4fa3e0'; ctx.fillRect(7.8, A - 1, 3.4, 2);
-        ctx.fillStyle = 'rgba(255,255,255,0.55)'; ctx.fillRect(8.2, A - 0.8, 1.1, 0.5);
-        ctx.fillStyle = '#ff4040'; ctx.fillRect(9.9, A - 0.15, 0.35, 0.3);
-        part(22.2, 23, 1.6, '#16181b', 0, 0.2);               // guidon rabattable
-        part(23.5, M - 3.2, 1.5, '#1a1d21', 0, 0.5);          // canon
-        part(24.4, 25.8, 2.3, '#202328', 0, 0.3);             // bloc de gaz
-        part(M - 3.4, M, 2.4, '#111316', 0, 0.5);             // cache-flamme
-        dark(M - 2.6, -1, 0.35, 0.7, 0.8); dark(M - 1.4, -1, 0.35, 0.7, 0.8);
-        dark(M - 2.6, 0.3, 0.35, 0.7, 0.8); dark(M - 1.4, 0.3, 0.35, 0.7, 0.8);
+      case 'pdw': { // HK MP7 (chargeur logé dans la poignée : invisible d'en haut)
+        part(-2.6, -1.7, 2.5, '#131418', 0, 0.3);              // plaque de crosse
+        part(-1.7, 3.4, 2.2, STEEL_D, 0, 0.3);                 // crosse télescopique rentrée
+        dark(-1.4, -0.28, 4.6, 0.56, 0.4);
+        poly([[3, -1.5], [13.4, -1.5], [15.2, -1], [15.2, 1], [13.4, 1.5], [3, 1.5]], POLY); // carcasse polymère
+        ribs(4.2, 13, 0.85, 0, 1);                             // rail supérieur
+        dark(9.4, 0.5, 1.9, 0.5, 0.5);                         // fenêtre d'éjection
+        shine(3.4, 13, -1, 0.1);
+        part(4.2, 5.4, 0.9, '#16181b', 1.55, 0.2);             // levier d'armement
+        optic(7, 10.4, 2);                                     // point rouge compact
+        part(15.2, 18.2, 1.9, '#212428', 0, 0.4);              // manchon avant
+        part(18.2, M, 1, BARREL, 0, 0.3);                      // canon
+        part(M - 1.2, M, 1.35, '#0f1114', 0, 0.25);
+        break;
+      }
+
+      case 'ak': { // AKM
+        part(-6.4, -5.4, 2.9, '#26282b', 0, 0.3);              // plaque de couche
+        poly([[-5.4, -1.4], [-4.4, -1.55], [4.8, -1.2], [4.8, 1.2], [-4.4, 1.55], [-5.4, 1.4]], '#70441f'); // crosse bois
+        grain(-4.3, 4.6, [-0.7, 0.2, 1]);
+        part(4.6, 14, 3.1, '#2c2e32', 0, 0.35);                // boîtier
+        ribs(6, 13.4, 1.15, 0, 1.4, 0.25);                     // nervures du couvercle
+        dark(9.6, 0.9, 2.8, 0.7, 0.55);                        // fenêtre d'éjection
+        shine(5.2, 13.8, -1.4);
+        poly([[8.5, 1.4], [11.2, 1.4], [12.7, 4.8], [10.3, 5.1]], '#4a3220'); // chargeur bakélite courbe
+        ctx.strokeStyle = 'rgba(0,0,0,0.3)'; ctx.lineWidth = 0.32;
+        for (let k = 1; k <= 2; k++) { ctx.beginPath(); ctx.moveTo(8.9 + k * 0.5, A + 1.9 + k * 1.05); ctx.lineTo(11.4 + k * 0.45, A + 1.9 + k * 1.05); ctx.stroke(); }
+        part(13.8, 14.8, 3.1, '#23252a', 0, 0.25);             // hausse
+        part(14.8, 20.8, 2.7, '#7a4a24', 0, 0.9);              // garde-main bois
+        grain(15.2, 20.4, [-0.8, 0.7]);
+        part(14.8, 22.4, 1.4, '#5e3a1d', 0, 0.4);              // cache du tube à gaz
+        part(20.8, M - 2.6, 1.2, '#1a1c1f', 0, 0.3);           // canon
+        part(22.4, 23.6, 1.9, '#1c1e22', 0, 0.25);             // bloc de gaz
+        poly([[M - 4.6, -1.2], [M - 3.8, -1.2], [M - 3.5, 0], [M - 4.9, 0]], '#1c1e22'); // guidon
+        part(M - 2.6, M, 1.8, '#141619', 0, 0.3);              // frein de bouche
+        dark(M - 2, -0.85, 0.35, 1.7, 0.55);
+        break;
+      }
+
+      default: { // fusil d'assaut moderne : HK416, ou SCAR-H (variante sable, chargeur droit)
+        const body = t.body || '#3a3f47', furn = t.dark || '#2e333a', magc = t.mag || '#31363d';
+        part(-6.3, -5.3, 2.4, '#131418', 0, 0.3);              // talon caoutchouc
+        poly([[-5.3, -1.15], [-1.6, -1.35], [2.6, -0.95], [2.6, 0.95], [-1.6, 1.35], [-5.3, 1.15]], furn); // crosse télescopique
+        dark(-4.9, -0.35, 4.4, 0.7, 0.3);                      // appui-joue
+        part(2.4, 5.4, 1.5, STEEL_D, 0, 0.4);                  // tube de crosse
+        part(5, 14.2, 3, body, 0, 0.35);                       // boîtier
+        part(4.4, 5.4, 2.1, STEEL_D, 0, 0.2);                  // levier d'armement
+        ribs(6, 13.8, 0.85, 0, 1.1);                           // rail supérieur
+        dark(9.6, 0.85, 2.6, 0.65, 0.55);                      // fenêtre d'éjection
+        shine(5.4, 14, -1.35);
+        if (t.straightMag) poly([[9.3, 1.3], [11.5, 1.3], [11.4, 3.9], [9.4, 3.9]], magc); // 7,62 : chargeur droit
+        else poly([[9.3, 1.3], [11.5, 1.3], [11.9, 4.1], [9.9, 4.2]], magc);               // 5,56 : légèrement courbe
+        dark(9.7, 3.2, 1.8, 0.35, 0.3);
+        part(14.2, 23.8, 2.6, body, 0, 0.35);                  // garde-main
+        ribs(15, 23, 1.05, 0, 0.9);
+        for (let x = 15.4; x < 23; x += 1.7) { dark(x, -1.25, 0.9, 0.35, 0.45); dark(x, 0.9, 0.9, 0.35, 0.45); } // fentes de ventilation
+        light(18.6, 21.8, -2);                                 // lampe tactique sur le flanc
+        optic(7.4, 11.6, 2.4);                                 // viseur holographique
+        part(23.8, M - 2.6, 1.1, BARREL, 0, 0.3);              // canon
+        part(24.5, 25.9, 1.7, '#202328', 0, 0.25);             // bloc de gaz
+        part(23.4, 24.3, 1.9, STEEL_D, 0, 0.2);                // guidon rabattable
+        part(M - 2.6, M, 1.6, '#101215', 0, 0.3);              // cache-flamme
+        dark(M - 2, -0.75, 0.3, 0.5, 0.75); dark(M - 2, 0.25, 0.3, 0.5, 0.75);
+        dark(M - 1.1, -0.75, 0.3, 0.5, 0.75); dark(M - 1.1, 0.25, 0.3, 0.5, 0.75);
       }
     }
   },
@@ -366,18 +437,20 @@ const Sprites = {
     const S = GUN_SHIFT;
     if (kind === 'pistol') return [[13.5 + S, -1.2], [12.5 + S, 2.8]];
     if (kind === 'shotgun') return [[16.5 + S, -0.4], [8.5 + S, 3.8]];
+    if (kind === 'smg') return [[16 + S, -0.5], [8.5 + S, 3.6]];
+    if (kind === 'pdw') return [[14.5 + S, -0.8], [9 + S, 3.4]];
     return [[17 + S, -0.6], [9 + S, 3.8]];
   },
   // Arme lâchée au sol (repère local, centrée)
-  droppedGun(ctx, kind, gl) {
+  droppedGun(ctx, kind, gl, t) {
     ctx.save(); ctx.translate(-(13 + gl) / 2 + 4, -1.5);
-    this.gun(ctx, kind, gl);
+    this.gun(ctx, kind, gl, t);
     ctx.restore();
   },
 
   // ---- Personnages ----
   // Dessin générique d'un personnage à partir d'une pose (voir POSE_STAND / POSE_LIE).
-  // st : { body, shoulder, vest, vestLight, pack, sleeve, gloves, skin, boots, helmet | hair/head, band, gun, gunLen }
+  // st : { body, shoulder, vest, vestLight, pack, sleeve, gloves, skin, boots, helmet | hair/head, band, gun, gunLen, gunTint }
   // held : true si l'arme est tenue (mains dessus), walk : phase de marche, moving : bool
   figure(ctx, x, y, angle, st, pose, held, walk, moving) {
     ctx.save();
@@ -436,7 +509,7 @@ const Sprites = {
     if (held) {
       ctx.save();
       ctx.translate(GUN_SHIFT, 1.5); ctx.scale(1, GUN_THICK); ctx.translate(0, -1.5);
-      this.gun(ctx, st.gun, st.gunLen || 18);
+      this.gun(ctx, st.gun, st.gunLen || 18, st.gunTint);
       ctx.restore();
     }
     // mains
@@ -530,7 +603,7 @@ const Sprites = {
     const rot = a.bodyAngle === undefined ? a.angle + 0.9 : a.bodyAngle;
     if (st.gun) {
       ctx.save(); ctx.translate(a.x, a.y); ctx.rotate(rot); ctx.translate(DROPPED_GUN.x, DROPPED_GUN.y); ctx.rotate(DROPPED_GUN.rot);
-      this.droppedGun(ctx, st.gun, st.gunLen || 18);
+      this.droppedGun(ctx, st.gun, st.gunLen || 18, st.gunTint);
       ctx.restore();
     }
     this.figure(ctx, a.x, a.y, rot, st, POSE_LIE, false, 0, false);
@@ -557,7 +630,7 @@ const Sprites = {
       const ex = a.x + Math.cos(bodyAngle) * DROPPED_GUN.x - Math.sin(bodyAngle) * DROPPED_GUN.y, ey = a.y + Math.sin(bodyAngle) * DROPPED_GUN.x + Math.cos(bodyAngle) * DROPPED_GUN.y;
       const gx = lerp(sx, ex, g), gy = lerp(sy, ey, g) - Math.sin(g * Math.PI) * 10;
       ctx.save(); ctx.translate(gx, gy); ctx.rotate(lerp(a.angle, bodyAngle + DROPPED_GUN.rot, g) + (1 - g) * d.spin * 3);
-      this.droppedGun(ctx, st.gun, st.gunLen || 18);
+      this.droppedGun(ctx, st.gun, st.gunLen || 18, st.gunTint);
       ctx.restore();
     }
     this.figure(ctx, a.x, a.y, rot, st, pose, held, 0, false);

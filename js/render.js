@@ -1,4 +1,5 @@
 'use strict';
+const gunStyle = w => ({ gun: w.kind, gunLen: w.gunLen, gunTint: w.tint });
 // Rendu canvas : calque statique (sols, murs, mobilier), décalques, entités, brouillard, HUD canvas.
 class Renderer {
   constructor(canvas, game) {
@@ -92,18 +93,27 @@ class Renderer {
     this.drawBullets();
     for (const a of [...g.ops, ...g.enemies]) a.walk = (a.walk || 0) + (a.alive && a.moving ? dt * (a.walkMode ? 8 : 13) : 0);
     if (g.orderMarker) this.drawOrderMarker(g.orderMarker);
+    if (g.orderDrag) this.drawOrderDrag(g.orderDrag);
     for (const mt of g.mates) {
-      const st = { ...mt.style, gun: mt.weapon.kind, gunLen: mt.weapon.gunLen };
+      const st = { ...mt.style, ...gunStyle(mt.weapon) };
       if (mt.dying) Sprites.dying(ctx, mt, st, mt.dying);
       else if (mt.alive) {
         const k = this.kickOffset(mt);
         Sprites.character(ctx, mt.x + k.x, mt.y + k.y, mt.angle, st, mt.muzzleT, mt.walk, mt.moving);
         ctx.fillStyle = mt.accent; ctx.font = 'bold 7px sans-serif'; ctx.textAlign = 'center';
         ctx.fillText(mt.name.toUpperCase(), mt.x, mt.y - 17);
+        // rappel discret de la direction imposée, tant qu'il n'a pas de contact
+        if (mt.coverAngle !== null && !mt.target) {
+          const cs = Math.cos(mt.coverAngle), sn = Math.sin(mt.coverAngle);
+          ctx.save();
+          ctx.globalAlpha = 0.3; ctx.strokeStyle = mt.accent; ctx.lineWidth = 1; ctx.setLineDash([3, 4]);
+          ctx.beginPath(); ctx.moveTo(mt.x + cs * 15, mt.y + sn * 15); ctx.lineTo(mt.x + cs * 1.7 * U, mt.y + sn * 1.7 * U); ctx.stroke();
+          ctx.restore();
+        }
         if (mt.stun > 0) { ctx.strokeStyle = 'rgba(255,240,120,0.9)'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(mt.x, mt.y, 15, 0, TAU); ctx.stroke(); }
       }
     }
-    const pst = { ...STYLE_PLAYER, gun: g.player.weapon.kind, gunLen: g.player.weapon.gunLen };
+    const pst = { ...STYLE_PLAYER, ...gunStyle(g.player.weapon) };
     const p = g.player;
     if (p.dying) Sprites.dying(ctx, p, pst, p.dying);
     else if (p.alive) {
@@ -146,21 +156,55 @@ class Renderer {
     const g = this.game, m = g.map;
     for (const e of g.enemies) if (!e.alive && !e.dying && m.isExplored(e.tx, e.ty)) Sprites.body(this.ctx, e, this.enemyStyle(e));
     if (!g.player.alive && !g.player.dying) Sprites.body(this.ctx, g.player, STYLE_PLAYER);
-    for (const mt of g.mates) if (!mt.alive && !mt.dying) Sprites.body(this.ctx, mt, { ...mt.style, gun: mt.weapon.kind, gunLen: mt.weapon.gunLen });
+    for (const mt of g.mates) if (!mt.alive && !mt.dying) Sprites.body(this.ctx, mt, { ...mt.style, ...gunStyle(mt.weapon) });
     for (const h of g.hostages) if (!h.alive) Sprites.body(this.ctx, h, { body: '#8a97a8', sleeve: '#8a97a8', hair: '#3b2a1a', pants: '#3b4250', skin: '#d9b48f' });
   }
 
   enemyStyle(e) {
     const l = e.look;
-    return { body: l.jacket, shoulder: l.jacket, vest: null, pack: null, sleeve: l.jacket, skin: l.skin, hair: l.head === 'mask' ? '#1c1c20' : l.hair, head: l.head, pants: l.pants, band: l.head === 'hair' ? '#b33a2b' : null, gun: e.weapon.kind, gunLen: e.weapon.gunLen };
+    return { body: l.jacket, shoulder: l.jacket, vest: null, pack: null, sleeve: l.jacket, skin: l.skin, hair: l.head === 'mask' ? '#1c1c20' : l.hair, head: l.head, pants: l.pants, band: l.head === 'hair' ? '#b33a2b' : null, ...gunStyle(e.weapon) };
   }
 
   drawOrderMarker(o) {
     const ctx = this.ctx, t = this.game.time;
-    ctx.strokeStyle = 'rgba(127,209,138,0.9)'; ctx.lineWidth = 1.5;
+    const col = o.mate && o.mate.alive ? o.mate.accent : '#7fd18a';
+    ctx.strokeStyle = col; ctx.globalAlpha = 0.9; ctx.lineWidth = 1.5;
     ctx.beginPath(); ctx.arc(o.x, o.y, 9 + Math.sin(t * 6) * 1.5, 0, TAU); ctx.stroke();
-    ctx.fillStyle = 'rgba(127,209,138,0.9)';
+    ctx.fillStyle = col;
     ctx.beginPath(); ctx.moveTo(o.x, o.y - 4); ctx.lineTo(o.x + 4, o.y); ctx.lineTo(o.x, o.y + 4); ctx.lineTo(o.x - 4, o.y); ctx.closePath(); ctx.fill();
+    if (o.angle !== null && o.angle !== undefined) this.drawCoverArrow(o.x, o.y, o.angle, col, 0.85);
+    ctx.globalAlpha = 1;
+  }
+
+  // Direction à couvrir : cône léger et flèche partant du point d'arrivée.
+  drawCoverArrow(x, y, angle, col, alpha) {
+    const ctx = this.ctx, L = 1.9 * U, cs = Math.cos(angle), sn = Math.sin(angle);
+    ctx.save();
+    ctx.globalAlpha = alpha * 0.18;
+    ctx.fillStyle = col;
+    ctx.beginPath(); ctx.moveTo(x, y); ctx.arc(x, y, L, angle - 22 * DEG, angle + 22 * DEG); ctx.closePath(); ctx.fill();
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = col; ctx.lineWidth = 1.6; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(x + cs * 10, y + sn * 10); ctx.lineTo(x + cs * L, y + sn * L); ctx.stroke();
+    const hx = x + cs * L, hy = y + sn * L;
+    ctx.beginPath();
+    ctx.moveTo(hx, hy);
+    ctx.lineTo(hx - Math.cos(angle - 0.4) * 7, hy - Math.sin(angle - 0.4) * 7);
+    ctx.lineTo(hx - Math.cos(angle + 0.4) * 7, hy - Math.sin(angle + 0.4) * 7);
+    ctx.closePath(); ctx.fillStyle = col; ctx.fill();
+    ctx.restore();
+  }
+
+  // Ordre en cours de tracé : clic droit maintenu, la souris fixe la direction à couvrir.
+  drawOrderDrag(o) {
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.globalAlpha = 0.85; ctx.strokeStyle = '#7fd18a'; ctx.lineWidth = 1.5;
+    ctx.setLineDash([4, 3]);
+    ctx.beginPath(); ctx.arc(o.x, o.y, 9, 0, TAU); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
+    if (o.angle !== null) this.drawCoverArrow(o.x, o.y, o.angle, '#7fd18a', 0.9);
   }
 
   // Recul visuel : le personnage est repoussé de quelques pixels à l'opposé du tir.

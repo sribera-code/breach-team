@@ -4,12 +4,30 @@ class Game {
   constructor() {
     this.levelIndex = 0;
     this.listeners = {};
-    this.input = { keys: {}, pressed: {}, mouse: { x: 0, y: 0, down: false } };
+    this.input = { keys: {}, pressed: {}, mouse: { x: 0, y: 0, down: false, rdown: false } };
+    this.orderDrag = null; // ordre de déplacement en cours de tracé (clic droit maintenu)
     this.visionPolys = [];
     this.camShake = 0;
     this.camKick = { x: 0, y: 0 };
     this.paused = false;
     this.over = null;
+    this.loadout = Game.loadSavedLoadout();
+  }
+
+  // Équipement choisi au briefing, mémorisé dans le navigateur quand c'est possible.
+  static loadSavedLoadout() {
+    try {
+      const l = JSON.parse(localStorage.getItem('breach.loadout'));
+      if (l && PRIMARY_WEAPONS.includes(l.primary) && SIDEARMS.includes(l.sidearm)) return l;
+    } catch (e) { /* stockage indisponible */ }
+    return { ...DEFAULT_LOADOUT };
+  }
+
+  setLoadout(l) {
+    this.loadout = { ...this.loadout, ...l };
+    try { localStorage.setItem('breach.loadout', JSON.stringify(this.loadout)); } catch (e) { /* stockage indisponible */ }
+    this.player.equip(this.loadout);
+    this.emit('weapon');
   }
 
   on(evt, fn) { (this.listeners[evt] = this.listeners[evt] || []).push(fn); }
@@ -22,7 +40,7 @@ class Game {
     this.map = new GameMap(def);
     const c = t => ({ x: (t.x + 0.5) * TILE, y: (t.y + 0.5) * TILE });
     const s = this.map.spawns[0] || { x: 1, y: 1 };
-    this.player = new Player(c(s).x, c(s).y);
+    this.player = new Player(c(s).x, c(s).y, this.loadout);
     this.player.angle = Math.atan2(this.map.h * TILE / 2 - this.player.y, this.map.w * TILE / 2 - this.player.x);
     const weps = def.enemyWeapons || ['ak'];
     this.enemies = this.map.enemySpawns.map(sp => {
@@ -170,7 +188,7 @@ class Game {
     this.unstick(p);
     if (dx || dy) {
       const l = Math.hypot(dx, dy); dx /= l; dy /= l;
-      const spd = (p.walkMode ? p.walkSpeed : p.runSpeed) * (p.reloadT > 0 ? 0.8 : 1);
+      const spd = (p.walkMode ? p.walkSpeed : p.runSpeed) * p.weapon.mobility * (p.reloadT > 0 ? 0.8 : 1);
       const bx = p.x, by = p.y;
       this.tryMove(p, dx * spd * dt, dy * spd * dt);
       p.moving = true;
@@ -205,10 +223,19 @@ class Game {
     if (pr.Digit2) this.switchWeapon(p, 1);
     if (pr.AltLeft || pr.AltRight) this.switchWeapon(p, (p.cur + 1) % p.slots.length);
     if (pr.Space || pr.KeyG) this.throwFlash(p);
-    if (pr.Mouse2) {
+    // Clic droit : ordre de déplacement. Maintenu puis tiré, il fixe en plus une direction
+    // à couvrir, confiée au coéquipier placé de ce côté.
+    if (pr.Mouse2) this.orderDrag = { x: m.x, y: m.y, angle: null, onSelf: dist(m.x, m.y, p.x, p.y) <= p.radius + 6 };
+    if (this.orderDrag && this.input.mouse.rdown) {
+      const d = dist(this.orderDrag.x, this.orderDrag.y, m.x, m.y);
+      this.orderDrag.angle = d >= 0.7 * U ? Math.atan2(m.y - this.orderDrag.y, m.x - this.orderDrag.x) : null;
+    }
+    if (pr.Mouse2Up && this.orderDrag) {
+      const o = this.orderDrag;
+      this.orderDrag = null;
       // clic droit sur soi : l'équipe reprend le suivi ; ailleurs : ordre de déplacement
-      if (dist(m.x, m.y, p.x, p.y) <= p.radius + 6) this.orderFollow();
-      else this.orderMove(m.x, m.y);
+      if (o.onSelf) this.orderFollow();
+      else this.orderMove(o.x, o.y, o.angle);
     }
     if (pr.KeyT) this.toggleHold();
 
@@ -216,11 +243,19 @@ class Game {
     p.fireT -= dt;
     p.switchT -= dt;
     p.bloom = Math.max(0, p.bloom - dt * 7 * DEG);
+    // Chargement cartouche par cartouche : un tir interrompt le rechargement s'il reste une cartouche.
+    if (p.reloadT > 0 && w.reloadType === 'shell' && pr.Mouse0 && s.mag > 0) p.reloadT = 0;
     if (p.reloadT > 0) {
       p.reloadT -= dt;
       if (p.reloadT <= 0) {
-        const take = Math.min(w.mag - s.mag, s.reserve);
-        s.mag += take; s.reserve -= take;
+        if (w.reloadType === 'shell') {
+          s.mag++; s.reserve--;
+          Sound.tick(0.2);
+          if (s.mag < w.mag && s.reserve > 0) p.reloadT = w.reload;
+        } else {
+          const take = Math.min(w.mag - s.mag, s.reserve);
+          s.mag += take; s.reserve -= take;
+        }
       }
     } else if (p.switchT <= 0 && p.stun <= 0) {
       const want = w.auto ? m.down : pr.Mouse0;
@@ -250,7 +285,7 @@ class Game {
     const s = p.slot, w = s.def;
     if (p.reloadT > 0 || s.mag >= w.mag || s.reserve <= 0) return;
     p.reloadT = w.reload;
-    Sound.reload();
+    if (w.reloadType === 'shell') Sound.tick(0.2); else Sound.reload();
   }
 
   switchWeapon(p, i) {
@@ -405,7 +440,7 @@ class Game {
     shooter.bloom = Math.min(shooter.bloom + w.bloom, w.bloomMax || 8 * DEG);
     shooter.kick = 1;
     s.mag--;
-    shooter.fireT = 1 / w.rof;
+    shooter.fireT = Math.max(shooter.fireT, -0.02) + 1 / w.rof; // report du reste : cadence réelle malgré le pas de 1/60 s
     shooter.muzzleT = 0.06;
     if (shooter === this.player) {
       const r = w.recoil || 4;
@@ -416,7 +451,7 @@ class Game {
     this.casings.push({ x: shooter.x + Math.cos(shooter.angle) * 8, y: shooter.y + Math.sin(shooter.angle) * 8, vx: Math.cos(ca) * rand(70, 130), vy: Math.sin(ca) * rand(70, 130), rot: rand(0, TAU), spin: rand(-12, 12), t: 0, life: 0.45 });
     if (shooter === this.player) { this.stats.shots++; this.camShake = Math.max(this.camShake, w.heavy ? 4 : 1.5); }
     this.noise(shooter.x, shooter.y, 11 * U, shooter);
-    Sound.shot(shooter.team === 'ops' ? 0.3 : 0.2, w.heavy);
+    Sound.shot(shooter.team === 'ops' ? 0.3 : 0.2, w);
   }
 
   updateBullets(dt) {
@@ -686,7 +721,8 @@ class Game {
   }
 
   // ---- Coéquipiers ----
-  orderMove(wx, wy) {
+  // coverAngle : direction imposée à l'un des coéquipiers une fois sur place (null = au choix de l'IA).
+  orderMove(wx, wy, coverAngle) {
     // case la plus proche du clic où un corps tient sans toucher de mur
     let tx = -1, ty = -1, bd = Infinity;
     const ctx0 = Math.floor(wx / TILE), cty0 = Math.floor(wy / TILE);
@@ -703,21 +739,38 @@ class Game {
     if (!alive.length) return;
     const p = this.player;
     const dir = Math.atan2(wy - p.y, wx - p.x);
-    alive.forEach((m, i) => {
+    const spots = alive.map((m, i) => {
       // légère dispersion perpendiculaire pour ne pas s'empiler
       const side = (i - (alive.length - 1) / 2) * 0.8 * U;
       let x = wx - Math.sin(dir) * side, y = wy + Math.cos(dir) * side;
       if (!this.map.circleFree(x, y, m.radius, false)) { x = (tx + 0.5) * TILE; y = (ty + 0.5) * TILE; }
-      m.order = 'move'; m.orderPos = { x, y }; m.holdAngle = dir; m.repathT = 0; m.destTile = null; m.watchSpot = null;
+      return { x, y };
     });
-    this.orderMarker = { x: wx, y: wy, t: 0 };
-    this.say('Équipe : allez-y', 1);
+    // Le coéquipier chargé de la direction est celui qui se place déjà de ce côté :
+    // il n'a pas à traverser la ligne de l'autre.
+    let cover = null;
+    if (coverAngle !== null && coverAngle !== undefined) {
+      let best = -Infinity;
+      alive.forEach((m, i) => {
+        const side = spots[i];
+        const away = dist(side.x, side.y, wx, wy) < 1 ? dir : Math.atan2(side.y - wy, side.x - wx);
+        const s = Math.cos(angleDiff(coverAngle, away));
+        if (s > best) { best = s; cover = m; }
+      });
+    }
+    alive.forEach((m, i) => {
+      m.order = 'move'; m.orderPos = spots[i]; m.repathT = 0; m.destTile = null; m.watchSpot = null;
+      m.coverAngle = m === cover ? coverAngle : null;
+      m.holdAngle = m === cover ? coverAngle : dir;
+    });
+    this.orderMarker = { x: wx, y: wy, t: 0, angle: coverAngle === undefined ? null : coverAngle, mate: cover };
+    this.say(cover ? `${cover.name} : couvrez cette direction` : 'Équipe : allez-y', 1.4);
   }
 
   orderFollow() {
     const alive = this.mates.filter(m => m.alive);
     if (!alive.length) return;
-    for (const m of alive) { m.order = 'follow'; m.holdAngle = null; m.watchSpot = null; m.path = []; m.destTile = null; m.repathT = 0; }
+    for (const m of alive) { m.order = 'follow'; m.holdAngle = null; m.coverAngle = null; m.watchSpot = null; m.path = []; m.destTile = null; m.repathT = 0; }
     this.orderMarker = null;
     this.say('Équipe : suivez-moi', 1.2);
   }
@@ -729,6 +782,7 @@ class Game {
     for (const m of alive) {
       m.order = hold ? 'hold' : 'follow';
       m.holdAngle = hold ? m.angle : null;
+      m.coverAngle = null;
       m.watchSpot = null;
       m.path = []; m.destTile = null; m.repathT = 0;
     }
@@ -848,6 +902,8 @@ class Game {
   // Chaque coéquipier évite la direction déjà couverte par un autre et toute ligne masquée par un allié :
   // soit il change de point d'intérêt, soit (si le point masqué vaut nettement mieux) il se décale.
   pickWatch(m) {
+    // Direction imposée par le joueur : elle prime sur le choix automatique du point d'intérêt.
+    if (m.coverAngle !== null) { m.watchKind = 'consigne'; return m.coverAngle; }
     const base = m.order === 'follow' ? this.player.moveDir + m.sector : (m.holdAngle === null ? m.angle : m.holdAngle);
     const cands = this.watchCandidates(m.x, m.y);
     cands.push({ angle: base, score: 0.6, kind: 'sector', tx: m.x + Math.cos(base) * 5 * U, ty: m.y + Math.sin(base) * 5 * U });
@@ -916,17 +972,41 @@ class Game {
   }
 
   // Aucun allié ni otage sur la ligne de tir.
-  lineOfFireClear(shooter, target) {
-    const d = dist(shooter.x, shooter.y, target.x, target.y);
-    const cs = (target.x - shooter.x) / d, sn = (target.y - shooter.y) / d;
+  // x, y : position de tir supposée (par défaut celle du tireur).
+  lineOfFireClear(shooter, target, x, y) {
+    if (x === undefined) { x = shooter.x; y = shooter.y; }
+    const d = dist(x, y, target.x, target.y);
+    const cs = (target.x - x) / d, sn = (target.y - y) / d;
     for (const f of [...this.ops, ...this.hostages]) {
       if (f === shooter || !f.alive) continue;
-      const rx = f.x - shooter.x, ry = f.y - shooter.y;
+      const rx = f.x - x, ry = f.y - y;
       const t = rx * cs + ry * sn;
       if (t < 0 || t > d) continue;
       if (Math.abs(rx * sn - ry * cs) < f.radius + 6) return false;
     }
     return true;
+  }
+
+  // Case proche d'où la cible est visible sans allié ni otage dans l'axe (recalculée par à-coups).
+  firingSpot(m, t) {
+    if (m.fireSpotT > this.time && m.fireSpot) return m.fireSpot;
+    m.fireSpotT = this.time + 0.5;
+    let best = null, bd = Infinity;
+    for (let dy = -4; dy <= 4; dy++) for (let dx = -4; dx <= 4; dx++) {
+      const tx = m.tx + dx, ty = m.ty + dy;
+      if (!this.map.inBounds(tx, ty) || this.map.blocksMove(tx, ty) || this.map.door(tx, ty)) continue;
+      const x = (tx + 0.5) * TILE, y = (ty + 0.5) * TILE;
+      if (!this.map.circleFree(x, y, m.radius + 1, true)) continue;
+      if (dist(x, y, this.player.x, this.player.y) < 0.8 * U) continue;
+      if (this.inAimCone(x, y, 30 * DEG)) continue;
+      if (dist(x, y, t.x, t.y) > m.weapon.range) continue;
+      if (!this.map.hasLOS(x, y, t.x, t.y)) continue;
+      if (!this.lineOfFireClear(m, t, x, y)) continue;
+      const score = dist(x, y, m.x, m.y);
+      if (score < bd) { bd = score; best = { x, y }; }
+    }
+    m.fireSpot = best;
+    return best;
   }
 
   mateCombat(m, dt) {
@@ -936,6 +1016,7 @@ class Game {
     m.target = t;
     if (!t) {
       m.engaged = false;
+      m.blockedT = 0; m.blockedLine = false; m.fireSpot = null;
       if (m.alertAngle !== null && turnToward(m, m.alertAngle, m.turnRate, dt)) m.alertAngle = null;
       return;
     }
@@ -944,11 +1025,16 @@ class Game {
     const d = dist(m.x, m.y, t.x, t.y);
     m.aimDist = d;
     m.engaged = d <= m.weapon.range;
+    // Discipline de tir : un allié ou un otage dans l'axe interdit le tir. Si ça dure, le coéquipier
+    // ne doit pas rester planté : il redevient mobile (ordres, repli de côté) tout en gardant sa cible.
+    const clear = this.lineOfFireClear(m, t);
+    m.blockedT = clear ? 0 : m.blockedT + dt;
+    m.blockedLine = m.blockedT > 0.35;
     turnToward(m, a, m.turnRate, dt);
     m.reactT -= dt;
     if (m.engaged && m.reactT <= 0 && m.fireT <= 0 && m.reloadT <= 0 && Math.abs(angleDiff(m.angle, a)) < 0.15) {
       if (m.slot.mag <= 0) { m.reloadT = m.weapon.reload; return; }
-      if (!this.lineOfFireClear(m, t)) return; // discipline de tir : un allié ou un otage est dans l'axe
+      if (!clear) return;
       this.fireWeapon(m);
       if (++m.burst >= 3) { m.burst = 0; m.fireT = 0.4; } // rafales de trois
     }
@@ -990,6 +1076,7 @@ class Game {
       if (invalid) m.watchSpot = null;
     }
     if (m.order === 'move') dest = m.orderPos;
+    else if (m.blockedLine && m.target) dest = this.firingSpot(m, m.target);
     else if (m.watchSpot) dest = m.watchSpot;
     else if (m.order === 'follow') dest = this.formationPos(m);
     else if (m.order === 'hold' && this.inAimCone(m.x, m.y, 18 * DEG)) {
@@ -1001,10 +1088,12 @@ class Game {
       // déjà en place mais le joueur vise à travers lui : on laisse formationPos choisir une autre case
       m.aimT = this.inAimCone(m.x, m.y, 18 * DEG) ? (m.aimT || 0) + dt : 0;
     }
-    if (m.engaged) { m.path = []; m.moving = false; }
+    // Au contact on s'arrête pour tirer, sauf sous un ordre de déplacement (il reste prioritaire)
+    // et sauf si l'axe est bouché (il faut alors se décaler).
+    if (m.engaged && !m.blockedLine && m.order !== 'move') { m.path = []; m.moving = false; }
     else if (dest) {
       const d = dist(m.x, m.y, dest.x, dest.y);
-      const arrive = m.order === 'move' || dest === m.watchSpot ? 4 : 12;
+      const arrive = m.order === 'move' || dest === m.watchSpot || dest === m.fireSpot ? 4 : 12;
       if (d > arrive) {
         const tile = { x: Math.floor(dest.x / TILE), y: Math.floor(dest.y / TILE) };
         const changed = !m.destTile || m.destTile.x !== tile.x || m.destTile.y !== tile.y;
@@ -1032,7 +1121,8 @@ class Game {
       m.watchT = (m.watchT || 0) - dt;
       if (m.watchT <= 0) { m.watchT = rand(0.8, 1.3); m.watchAngle = this.pickWatch(m); }
       m.sweepT = (m.sweepT === undefined ? rand(2.5, 4.5) : m.sweepT) - dt;
-      if (m.sweepT <= 0 && !m.sweep) { m.sweep = { t: 0, dur: rand(1.4, 2), amp: rand(0.5, 0.85) * (Math.random() < 0.5 ? -1 : 1) }; m.sweepT = rand(3.5, 6.5); }
+      // pas de balayage quand la direction est imposée par le joueur
+      if (m.sweepT <= 0 && !m.sweep && m.coverAngle === null) { m.sweep = { t: 0, dur: rand(1.4, 2), amp: rand(0.5, 0.85) * (Math.random() < 0.5 ? -1 : 1) }; m.sweepT = rand(3.5, 6.5); }
       let want = m.watchAngle === undefined || m.watchAngle === null ? m.angle : m.watchAngle;
       if (m.sweep) {
         m.sweep.t += dt;

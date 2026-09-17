@@ -46,7 +46,7 @@ Bindings use `KeyboardEvent.code`, i.e. physical keys. `KeyW/A/S/D` is therefore
 | Squad | `T` toggles hold/follow; right click orders a move (right click on the player: follow) |
 | Walk/run | `Q`/`Shift` toggles |
 
-The README's controls table is outdated; trust the code and the HUD hints in `index.html`.
+If the controls change, update the README table, the HUD hints in `index.html` and the help text in `js/ui.js` too.
 
 **Pathfinding and vision** are implemented in `GameMap` (`js/map.js`):
 - A* with a `MinHeap`: `findPath`, then `smoothPath`, then `routeTo`.
@@ -54,7 +54,19 @@ The README's controls table is outdated; trust the code and the HUD hints in `in
 - Collision via `circleFree`.
 - Props block movement but not sight. Closed doors block both.
 
-**Entities** (`js/entities.js`): the `WEAPONS` table holds per-weapon tuning (spread, bloom, range falloff, burst/pause for enemy weapons), and `Game.spreadOf` combines these values. The file also defines `Agent`, plus `Player`, `Teammate` (configured by `TEAMMATE_DEFS`) and `Enemy`, which extend it; `Hostage` is standalone. Enemy weapons have `mag: Infinity`.
+**Entities** (`js/entities.js`): the file defines `Agent`, plus `Player`, `Teammate` (configured by `TEAMMATE_DEFS`, including each mate's weapon) and `Enemy`, which extend it; `Hostage` is standalone.
+
+**Fire discipline** (`js/game.js`): `Game.lineOfFireClear(shooter, target, x, y)` blocks a mate's shot when an ally or hostage is in the axis. A mate that stays blocked past 0.35 s gets `m.blockedLine`, which frees it to move again and sends it to `Game.firingSpot` — the nearest tile with a clear line — instead of standing still. A move order also takes priority over contact, so an engaged mate still obeys. Keep these escapes in mind when touching `updateMate`: without them a mate freezes in front of a hostage.
+
+**Teammate orders** (`js/game.js`): `Game.orderFollow`, `Game.orderMove(wx, wy, coverAngle)` and `Game.toggleHold` set `m.order` (`follow` | `hold` | `move`). A held right click builds `game.orderDrag` in `Game.updatePlayer`; on release, the dragged angle is passed as `coverAngle` and stored on the one mate placed on that side as `m.coverAngle`. `Game.pickWatch` returns that angle unchanged instead of scoring watch candidates, and no scan sweep is started while it is set. Any new order clears it.
+
+**Weapons** are real firearms, defined in the `WEAPONS` table in `js/entities.js`:
+- Display data (`name`, `maker`, `caliber`, `mode`, `rpm`, `weight`, `note`) follows manufacturer specs. `rof` is derived from `rpm`, and `mobility` (a player speed multiplier) from `weight`. Keep new weapons consistent with real data.
+- Tuning fields (spread, bloom, range falloff, `pellets`) are combined by `Game.spreadOf` and `Game.fireWeapon`. Enemy weapons (`ak`, `pistolE`) have `mag: Infinity` and burst/pause.
+- `kind` selects the drawing in `Sprites.gun` (`rifle`, `smg`, `pdw`, `shotgun`, `pistol`, `ak`); `tint` selects a colour/shape variant; `snd` sets the shot sound.
+- `reloadType: 'shell'` loads one shell per `reload` seconds, and firing interrupts it.
+- `PRIMARY_WEAPONS` and `SIDEARMS` list what the briefing screen offers. The player's choice is `game.loadout`, stored in `localStorage` under `breach.loadout` and applied via `Game.setLoadout` → `Player.equip`.
+- The briefing icons (`UI.drawWeapon`) reuse `Sprites.gun` at one shared scale, so relative sizes match the in-game drawings.
 
 ## Adding a mission
 
