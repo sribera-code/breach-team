@@ -432,6 +432,29 @@ const Sprites = {
       }
     }
   },
+  // Geste à deux mains : la pose est modifiée sur place et le style renvoyé porte l'inclinaison
+  // de l'arme (tenue d'une seule main) et, pour une grenade, sa position dans la main.
+  // st.act = { type: 'door' | 'grenade', k } avec k l'avancement du geste (0..1).
+  actionPose(st, pose, h) {
+    const k = clamp(st.act.k, 0, 1);
+    if (st.act.type === 'fiber') {
+      // bras tendu vers le bas de la porte, et qui y reste tant qu'on observe
+      pose.arms[0] = [[-2, -9.5], [9, -7.5], [h[0][0] + k * 10, h[0][1] - k * 2]];
+      return { ...st, gunRot: 0.55 * k };
+    }
+    if (st.act.type === 'door') {
+      // la main avant lâche le garde-main, va sur la poignée et revient
+      const e = Math.sin(k * Math.PI);
+      pose.arms[0] = [[-2, -9.5], [9 + e * 2, -8.2], [h[0][0] + e * 8, h[0][1] - e * 4]];
+      return { ...st, gunRot: 0.5 * e };
+    }
+    // grenade : armé du bras en arrière (w) puis lancer vers l'avant (f)
+    const w = clamp(k / 0.55, 0, 1), f = clamp((k - 0.55) / 0.45, 0, 1);
+    const hx = lerp(lerp(h[1][0], -2, w), 19, f), hy = lerp(lerp(h[1][1], 13.5, w), 3.5, f);
+    pose.arms[1] = [[-2, 9.5], [lerp(3, -4, w) + f * 11, lerp(11, 14, w) - f * 3], [hx, hy]];
+    return { ...st, gunRot: 0.35 + 0.3 * w - f * 0.15, grenade: f < 0.98 ? [hx, hy] : null };
+  },
+
   // Position des mains selon l'arme : [main avant (gauche), main arrière (droite)]
   hands(kind) {
     const S = GUN_SHIFT;
@@ -508,12 +531,19 @@ const Sprites = {
     // arme tenue
     if (held) {
       ctx.save();
+      // arme abaissée pendant un geste : pivot près de la main arrière, avant l'épaississement
+      if (st.gunRot) { ctx.translate(11, 2.5); ctx.rotate(st.gunRot); ctx.translate(-11, -2.5); }
       ctx.translate(GUN_SHIFT, 1.5); ctx.scale(1, GUN_THICK); ctx.translate(0, -1.5);
       this.gun(ctx, st.gun, st.gunLen || 18, st.gunTint);
       ctx.restore();
     }
     // mains
     for (const arm of pose.arms) dot(arm[2][0], arm[2][1], 3.1, skin);
+    // grenade encore en main pendant le lancer
+    if (st.grenade) {
+      dot(st.grenade[0], st.grenade[1], 2.5, '#47543c');
+      ctx.fillStyle = 'rgba(255,255,255,0.3)'; ctx.fillRect(st.grenade[0] - 0.7, st.grenade[1] - 2.3, 1.4, 1.1);
+    }
     // tête
     ctx.save(); ctx.translate(pose.head.x - 1, pose.head.y); const hs = pose.head.r / 6.9; ctx.scale(hs, hs);
     if (pose.side < 0.5) { if (st.helmet) this.helmet(ctx, st); else this.head(ctx, st); }
@@ -523,7 +553,9 @@ const Sprites = {
   },
 
   character(ctx, x, y, angle, st, muzzle, walk, moving) {
-    const pose = { ...POSE_STAND, arms: [[[-2, -9.5], [7, -6.5], this.hands(st.gun)[0]], [[-2, 9.5], [4.5, 7], this.hands(st.gun)[1]]] };
+    const h = this.hands(st.gun);
+    const pose = { ...POSE_STAND, arms: [[[-2, -9.5], [7, -6.5], h[0]], [[-2, 9.5], [4.5, 7], h[1]]] };
+    if (st.act) st = this.actionPose(st, pose, h);
     this.figure(ctx, x, y, angle, st, pose, true, walk, moving);
     if (muzzle > 0) this.muzzleFlash(ctx, x, y, angle, muzzleDist(st.gunLen || 18), muzzle);
   },
@@ -685,6 +717,16 @@ const Sprites = {
         break;
     }
   },
+};
+
+// Tenue du groupe armé (mode siège) : ni casque ni gilet, des vêtements civils.
+const STYLE_MILITANT = {
+  body: '#4a3d33', shoulder: '#3f342c', vest: null, vestLight: null, pack: null,
+  sleeve: '#4a3d33', gloves: '#2a2520', skin: '#c4906a', boots: '#22201d', head: 'mask', hair: '#1c1c20',
+};
+// Le chef (celui que l'on incarne) : veste sombre et bandeau rouge, pour se repérer d'un coup d'œil.
+const STYLE_BOSS = {
+  ...STYLE_MILITANT, body: '#3b3f46', shoulder: '#33373d', sleeve: '#3b3f46', head: 'hair', hair: '#241a12', band: '#b33a2b',
 };
 
 const STYLE_PLAYER = {

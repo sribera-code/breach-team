@@ -34,6 +34,8 @@ button.primary:hover { background: #38945d; }
 #squadHint { font-size: 11px; color: #8e99a6; margin-top: 4px; }
 .mode { display: inline-block; margin-left: 14px; padding: 1px 8px; border-radius: 3px; font-size: 12px; font-weight: 700; letter-spacing: 1px; background: #3a4250; color: #e0e5ea; }
 .mode.walk { background: #2f7d4f; color: #fff; }
+.mode.fiber { background: #2b6ea8; color: #fff; display: none; }
+.mode.fiber.on { display: inline-block; }
 #message { flex: 1; text-align: center; font-size: 20px; font-weight: 700; color: #fff; text-shadow: 0 2px 6px #000; padding: 0 20px 6px; min-height: 30px; }
 #weaponBox { text-align: right; }
 #weaponName { color: #d7dbe0; font-weight: 600; }
@@ -52,6 +54,9 @@ button.primary:hover { background: #38945d; }
 .panel h1.lose { color: #ef6a5a; }
 .panel p { color: #aab3bf; line-height: 1.55; }
 .panel .row { display: flex; gap: 8px; margin-top: 16px; flex-wrap: wrap; }
+.modes { display: flex; gap: 8px; margin: 10px 0 4px; }
+.modebtn { flex: 1; text-align: center; padding: 9px 10px; font-weight: 600; }
+.modebtn.sel { border-color: #ffb347; background: #262017; color: #ffd27a; }
 .levelbtn { display: flex; justify-content: space-between; width: 100%; text-align: left; padding: 10px 12px; margin-top: 6px; }
 .levelbtn small { color: #8e99a6; }
 .stats { display: grid; grid-template-columns: auto auto; gap: 4px 18px; margin-top: 10px; }

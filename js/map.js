@@ -8,6 +8,8 @@
 const FLOOR = { '.': 0, ',': 1, ':': 2 }; // béton, parquet, carrelage
 const PROPS = { c: 'crate', B: 'barrel', T: 'table', p: 'plant', b: 'bed', k: 'desk' };
 const DOOR_LEN = 3; // largeur d'une porte, en petites cases
+// Crans d'ouverture : fermée, entrebâillée (un filet de vue), entrouverte (on voit une part de la pièce), ouverte.
+const DOOR_STEPS = [0, 0.25, 0.55, 1];
 
 // Tas binaire minimal pour l'A*.
 class MinHeap {
@@ -159,7 +161,38 @@ class GameMap {
   blocksSight(x, y) {
     if (this.isWall(x, y)) return true;
     const d = this.door(x, y);
+    // Une porte même à peine entrouverte ne bloque plus l'embrasure : c'est le battant lui-même
+    // (leafSeg / leafBlock) qui arrête le regard, sauf par l'entrebâillement.
     return d ? !(d.open || d.ajar) : false;
+  }
+
+  // Battant d'une porte : segment partant du gond, le long de l'embrasure quand elle est fermée,
+  // perpendiculaire quand elle est grande ouverte.
+  leafSeg(d) {
+    const L = d.len * TILE, a = d.progress;
+    const hx = d.horizontal ? d.cx - L / 2 : d.cx, hy = d.horizontal ? d.cy : d.cy - L / 2;
+    const ang = d.horizontal ? -a * Math.PI / 2 : Math.PI / 2 + a * Math.PI / 2;
+    return { x0: hx, y0: hy, x1: hx + Math.cos(ang) * L, y1: hy + Math.sin(ang) * L };
+  }
+
+  // Distance à laquelle un battant coupe le rayon (maxT si aucun). Les portes fermées sont déjà
+  // traitées par les cases ; ici on ne regarde que celles qui ont commencé à s'ouvrir.
+  leafBlock(x, y, dx, dy, maxT) {
+    let best = maxT, hit = null;
+    for (const d of this.doors) {
+      if (d.progress <= 0) continue;
+      const rx = d.cx - x, ry = d.cy - y, reach = best + d.len * TILE;
+      if (rx * rx + ry * ry > reach * reach) continue;
+      const s = this.leafSeg(d);
+      const ex = s.x1 - s.x0, ey = s.y1 - s.y0;
+      const den = dx * ey - dy * ex;
+      if (Math.abs(den) < 1e-9) continue;
+      const px = s.x0 - x, py = s.y0 - y;
+      const t = (px * ey - py * ex) / den;   // distance le long du rayon
+      const u = (px * dy - py * dx) / den;   // position sur le battant (0 au gond, 1 au bord libre)
+      if (t > 0.01 && t < best && u >= 0 && u <= 1) { best = t; hit = d; }
+    }
+    return { t: best, door: hit };
   }
   blocksMove(x, y) { return this.isWall(x, y) || this.propAt.has(y * this.w + x); }
   markExplored(x, y) {
@@ -184,6 +217,9 @@ class GameMap {
   // Lance un rayon (DDA) et s'arrête au premier obstacle visuel ou à maxDist.
   castRay(x, y, angle, maxDist, mark) {
     const dx = Math.cos(angle), dy = Math.sin(angle);
+    const lb = this.leafBlock(x, y, dx, dy, maxDist); // arrêté par un battant ?
+    const lim = lb.t, leafHit = lim < maxDist;
+    let door = null;
     let tx = Math.floor(x / TILE), ty = Math.floor(y / TILE);
     const stepX = dx > 0 ? 1 : -1, stepY = dy > 0 ? 1 : -1;
     const tDeltaX = dx !== 0 ? Math.abs(TILE / dx) : Infinity;
@@ -195,11 +231,12 @@ class GameMap {
     for (let i = 0; i < 800; i++) {
       if (tMaxX < tMaxY) { t = tMaxX; tMaxX += tDeltaX; tx += stepX; }
       else { t = tMaxY; tMaxY += tDeltaY; ty += stepY; }
-      if (t >= maxDist) { t = maxDist; break; }
+      if (t >= lim) { t = lim; hit = leafHit; door = leafHit ? lb.door : null; break; }
       if (mark) this.markExplored(tx, ty);
-      if (this.blocksSight(tx, ty)) { hit = true; break; }
+      if (this.blocksSight(tx, ty)) { hit = true; door = this.door(tx, ty) || null; break; }
     }
-    return { x: x + dx * t, y: y + dy * t, dist: t, hit, tx, ty };
+    // door : l'obstacle touché est une porte (battant ou embrasure), donc perforable
+    return { x: x + dx * t, y: y + dy * t, dist: t, hit, tx, ty, door };
   }
 
   hasLOS(x0, y0, x1, y1) {

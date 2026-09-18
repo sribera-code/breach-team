@@ -50,6 +50,7 @@ const Sound = {
   },
   shot(vol, w) { const [dur, cutoff] = w.snd || (w.heavy ? [0.2, 800] : [0.09, 2400]); this.noise(dur, vol, cutoff, 3); },
   door() { this.noise(0.12, 0.15, 400, 2); },
+  pierce() { this.noise(0.07, 0.2, 900, 2); }, // balle qui traverse un battant
   tick(vol) { this.noise(0.03, vol || 0.15, 3500, 1); },
   reload() { this.noise(0.05, 0.12, 1500, 1); setTimeout(() => this.noise(0.06, 0.14, 1200, 1), 350); },
   flash() {

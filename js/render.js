@@ -1,5 +1,8 @@
 'use strict';
 const gunStyle = w => ({ gun: w.kind, gunLen: w.gunLen, gunTint: w.tint });
+// Geste en cours (porte, grenade) transmis au dessin du personnage.
+const actStyle = a => (a.act ? { act: { type: a.act.type, k: a.act.t / a.act.dur } }
+  : a.fiber ? { act: { type: 'fiber', k: 1 } } : null);
 // Rendu canvas : calque statique (sols, murs, mobilier), décalques, entités, brouillard, HUD canvas.
 class Renderer {
   constructor(canvas, game) {
@@ -95,7 +98,7 @@ class Renderer {
     if (g.orderMarker) this.drawOrderMarker(g.orderMarker);
     if (g.orderDrag) this.drawOrderDrag(g.orderDrag);
     for (const mt of g.mates) {
-      const st = { ...mt.style, ...gunStyle(mt.weapon) };
+      const st = { ...mt.style, ...gunStyle(mt.weapon), ...actStyle(mt) };
       if (mt.dying) Sprites.dying(ctx, mt, st, mt.dying);
       else if (mt.alive) {
         const k = this.kickOffset(mt);
@@ -113,13 +116,14 @@ class Renderer {
         if (mt.stun > 0) { ctx.strokeStyle = 'rgba(255,240,120,0.9)'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(mt.x, mt.y, 15, 0, TAU); ctx.stroke(); }
       }
     }
-    const pst = { ...STYLE_PLAYER, ...gunStyle(g.player.weapon) };
+    const pst = { ...(g.player.style || STYLE_PLAYER), ...gunStyle(g.player.weapon), ...actStyle(g.player) };
     const p = g.player;
     if (p.dying) Sprites.dying(ctx, p, pst, p.dying);
     else if (p.alive) {
       const k = this.kickOffset(p);
       Sprites.character(ctx, p.x + k.x, p.y + k.y, p.angle, pst, p.muzzleT, p.walk, p.moving);
     }
+    if (p.fiber) this.drawFiber(p, p.fiber);
     this.drawEffects();
     this.drawFog();
     this.drawFlashes();
@@ -155,14 +159,30 @@ class Renderer {
   drawBodies() {
     const g = this.game, m = g.map;
     for (const e of g.enemies) if (!e.alive && !e.dying && m.isExplored(e.tx, e.ty)) Sprites.body(this.ctx, e, this.enemyStyle(e));
-    if (!g.player.alive && !g.player.dying) Sprites.body(this.ctx, g.player, STYLE_PLAYER);
+    if (!g.player.alive && !g.player.dying) Sprites.body(this.ctx, g.player, { ...(g.player.style || STYLE_PLAYER), ...gunStyle(g.player.weapon) });
     for (const mt of g.mates) if (!mt.alive && !mt.dying) Sprites.body(this.ctx, mt, { ...mt.style, ...gunStyle(mt.weapon) });
     for (const h of g.hostages) if (!h.alive) Sprites.body(this.ctx, h, { body: '#8a97a8', sleeve: '#8a97a8', hair: '#3b2a1a', pants: '#3b4250', skin: '#d9b48f' });
   }
 
   enemyStyle(e) {
+    if (e.style) return { ...e.style, ...gunStyle(e.weapon), ...actStyle(e) }; // opérateurs du mode siège
     const l = e.look;
-    return { body: l.jacket, shoulder: l.jacket, vest: null, pack: null, sleeve: l.jacket, skin: l.skin, hair: l.head === 'mask' ? '#1c1c20' : l.hair, head: l.head, pants: l.pants, band: l.head === 'hair' ? '#b33a2b' : null, ...gunStyle(e.weapon) };
+    return { body: l.jacket, shoulder: l.jacket, vest: null, pack: null, sleeve: l.jacket, skin: l.skin, hair: l.head === 'mask' ? '#1c1c20' : l.hair, head: l.head, pants: l.pants, band: l.head === 'hair' ? '#b33a2b' : null, ...gunStyle(e.weapon), ...actStyle(e) };
+  }
+
+  // Fibre optique : le câble passe sous le battant, l'objectif est de l'autre côté.
+  drawFiber(p, f) {
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.strokeStyle = 'rgba(120,200,255,0.75)'; ctx.lineWidth = 1.2;
+    ctx.setLineDash([3, 2]);
+    ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(f.x, f.y); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = 'rgba(160,220,255,0.95)';
+    ctx.beginPath(); ctx.arc(f.x, f.y, 2.2, 0, TAU); ctx.fill();
+    ctx.strokeStyle = 'rgba(120,200,255,0.5)';
+    ctx.beginPath(); ctx.arc(f.x, f.y, 4 + Math.sin(this.game.time * 6) * 0.8, 0, TAU); ctx.stroke();
+    ctx.restore();
   }
 
   drawOrderMarker(o) {
@@ -271,6 +291,14 @@ class Renderer {
         ctx.globalAlpha = 1 - k;
         ctx.fillStyle = '#c62828';
         for (let i = 0; i < 4; i++) { ctx.beginPath(); ctx.arc(f.x + Math.cos(i * 1.7 + f.life) * 8 * k, f.y + Math.sin(i * 1.7 + f.life) * 8 * k, 2.2 * (1 - k), 0, TAU); ctx.fill(); }
+      } else if (f.type === 'splinter') {
+        // éclats de bois projetés de l'autre côté du battant
+        ctx.globalAlpha = 1 - k;
+        ctx.fillStyle = '#8a5a2b';
+        for (let i = 0; i < 5; i++) {
+          const a = f.angle + (i - 2) * 0.22, d = 14 * k;
+          ctx.fillRect(f.x + Math.cos(a) * d, f.y + Math.sin(a) * d, 1.6, 1.6);
+        }
       } else if (f.type === 'spark') {
         ctx.globalAlpha = 1 - k;
         ctx.fillStyle = '#ffe082';
@@ -346,7 +374,7 @@ class Renderer {
     const spread = g.spreadOf(p);
     const gap = Math.max(5 * this.dpr, Math.tan(spread) * (p.aimDist || 0) * this.zoom + 3 * this.dpr);
     const len = 10 * this.dpr;
-    const color = p.reloadT > 0 ? 'rgba(255,170,60,0.95)' : p.walkMode ? 'rgba(140,255,170,0.95)' : 'rgba(255,255,255,0.95)';
+    const color = p.reloadT > 0 || p.act ? 'rgba(255,170,60,0.95)' : p.walkMode ? 'rgba(140,255,170,0.95)' : 'rgba(255,255,255,0.95)';
     ctx.lineCap = 'round';
     const ticks = () => {
       ctx.beginPath();
@@ -357,8 +385,8 @@ class Renderer {
     ctx.strokeStyle = color; ctx.lineWidth = 3.2 * this.dpr; ticks();
     ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.beginPath(); ctx.arc(x, y, 3 * this.dpr, 0, TAU); ctx.fill();
     ctx.fillStyle = color; ctx.beginPath(); ctx.arc(x, y, 1.8 * this.dpr, 0, TAU); ctx.fill();
-    if (p.reloadT > 0) {
-      const k = 1 - p.reloadT / w.reload;
+    if (p.reloadT > 0 || p.act) {
+      const k = p.act ? clamp(p.act.t / p.act.dur, 0, 1) : 1 - p.reloadT / w.reload;
       const r = gap + len + 8 * this.dpr;
       ctx.strokeStyle = 'rgba(0,0,0,0.5)'; ctx.lineWidth = 6 * this.dpr;
       ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.stroke();

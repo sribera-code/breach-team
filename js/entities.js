@@ -7,13 +7,14 @@
 // les dégâts suivent le calibre, la mobilité découle de la masse.
 // kind : dessin (Sprites.gun), tint : variante de couleurs, snd : [durée, coupure] du son de tir.
 // reloadType 'shell' : chargement cartouche par cartouche (reload = durée par cartouche), interrompu par un tir.
+// pierce : part des dégâts conservée après avoir traversé une porte (les murs, eux, arrêtent tout).
 const WEAPONS = {
   // ---- Fusils d'assaut ----
   hk416: {
     kind: 'rifle', cat: 'ar', name: 'HK416 A5', maker: 'Heckler & Koch', caliber: '5,56×45 mm OTAN', mode: 'Auto', rpm: 850, weight: 3.6,
     note: "Fusil de dotation des forces spéciales françaises. Précis, contrôlable, polyvalent.",
     damage: 30, auto: true, spread: 0.6 * DEG, moveSpread: 3.5 * DEG, bloom: 1.4 * DEG, bloomMax: 9 * DEG, recoil: 4,
-    effRange: 10 * U, rangeSpread: 3 * DEG, mag: 30, reserve: 120, reload: 2.2, speed: 1150, gunLen: 20, heavy: false, range: 16 * U,
+    effRange: 10 * U, rangeSpread: 3 * DEG, mag: 30, reserve: 120, reload: 2.2, pierce: 0.55, speed: 1150, gunLen: 20, heavy: false, range: 16 * U,
     snd: [0.1, 2200],
   },
   scarh: {
@@ -21,7 +22,7 @@ const WEAPONS = {
     note: "Calibre lourd : deux impacts suffisent, mais le recul est sévère en rafale et le chargeur court.",
     tint: { body: '#a38b62', dark: '#8a7450', mag: '#2e2f33', straightMag: true },
     damage: 42, auto: true, spread: 0.5 * DEG, moveSpread: 4.5 * DEG, bloom: 2.6 * DEG, bloomMax: 11 * DEG, recoil: 7,
-    effRange: 12 * U, rangeSpread: 2.5 * DEG, mag: 20, reserve: 80, reload: 2.5, speed: 1250, gunLen: 21, heavy: true, range: 18 * U,
+    effRange: 12 * U, rangeSpread: 2.5 * DEG, mag: 20, reserve: 80, reload: 2.5, pierce: 0.7, speed: 1250, gunLen: 21, heavy: true, range: 18 * U,
     snd: [0.16, 1400],
   },
   // ---- Pistolets mitrailleurs ----
@@ -29,14 +30,14 @@ const WEAPONS = {
     kind: 'smg', cat: 'smg', name: 'HK MP5A3', maker: 'Heckler & Koch', caliber: '9×19 mm Parabellum', mode: 'Auto', rpm: 800, weight: 3.1,
     note: "La référence des unités d'intervention. Recul très doux, maniable, mais portée limitée.",
     damage: 22, auto: true, spread: 0.9 * DEG, moveSpread: 2 * DEG, bloom: 1 * DEG, bloomMax: 6 * DEG, recoil: 2.5,
-    effRange: 6 * U, rangeSpread: 4 * DEG, mag: 30, reserve: 120, reload: 2.0, speed: 900, gunLen: 16, heavy: false, range: 11 * U,
+    effRange: 6 * U, rangeSpread: 4 * DEG, mag: 30, reserve: 120, reload: 2.0, pierce: 0.4, speed: 900, gunLen: 16, heavy: false, range: 11 * U,
     snd: [0.08, 2600],
   },
   mp7: {
     kind: 'pdw', cat: 'smg', name: 'HK MP7A1', maker: 'Heckler & Koch', caliber: '4,6×30 mm HK', mode: 'Auto', rpm: 950, weight: 2.1,
     note: "Arme de défense compacte à très haute cadence. Munition légère et tendue, chargeur de 40.",
     damage: 19, auto: true, spread: 1 * DEG, moveSpread: 2 * DEG, bloom: 0.9 * DEG, bloomMax: 6.5 * DEG, recoil: 2,
-    effRange: 7 * U, rangeSpread: 3.5 * DEG, mag: 40, reserve: 160, reload: 1.8, speed: 1050, gunLen: 13, heavy: false, range: 12 * U,
+    effRange: 7 * U, rangeSpread: 3.5 * DEG, mag: 40, reserve: 160, reload: 1.8, pierce: 0.5, speed: 1050, gunLen: 13, heavy: false, range: 12 * U,
     snd: [0.07, 3000],
   },
   // ---- Fusils à pompe ----
@@ -44,7 +45,7 @@ const WEAPONS = {
     kind: 'shotgun', cat: 'sg', name: 'Remington 870', maker: 'Remington', caliber: '12/70 chevrotine 00', mode: 'Pompe', rpm: 75, weight: 3.8,
     note: "Pompe classique : dévastateur à courte portée, lent à réarmer et à recharger (cartouche par cartouche).",
     damage: 15, pellets: 9, auto: false, spread: 5.5 * DEG, moveSpread: 3 * DEG, bloom: 3 * DEG, bloomMax: 8 * DEG, recoil: 12,
-    effRange: 4 * U, rangeSpread: 2 * DEG, mag: 6, reserve: 30, reloadType: 'shell', reload: 0.55, speed: 900, gunLen: 22, heavy: true, range: 7 * U,
+    effRange: 4 * U, rangeSpread: 2 * DEG, mag: 6, reserve: 30, reloadType: 'shell', reload: 0.55, pierce: 0.2, speed: 900, gunLen: 22, heavy: true, range: 7 * U,
     snd: [0.22, 800],
   },
   m4super90: {
@@ -52,7 +53,7 @@ const WEAPONS = {
     note: "Semi-automatique : enchaîne les tirs bien plus vite qu'un pompe, au prix d'une gerbe plus large.",
     tint: { semi: true },
     damage: 15, pellets: 9, auto: false, spread: 6.5 * DEG, moveSpread: 3 * DEG, bloom: 4.5 * DEG, bloomMax: 12 * DEG, recoil: 11,
-    effRange: 4 * U, rangeSpread: 2 * DEG, mag: 7, reserve: 28, reloadType: 'shell', reload: 0.5, speed: 900, gunLen: 22, heavy: true, range: 7 * U,
+    effRange: 4 * U, rangeSpread: 2 * DEG, mag: 7, reserve: 28, reloadType: 'shell', reload: 0.5, pierce: 0.2, speed: 900, gunLen: 22, heavy: true, range: 7 * U,
     snd: [0.2, 850],
   },
   // ---- Armes de poing ----
@@ -60,7 +61,7 @@ const WEAPONS = {
     kind: 'pistol', cat: 'hg', name: 'Glock 17', maker: 'Glock', caliber: '9×19 mm Parabellum', mode: 'Semi', rpm: 360, weight: 0.9,
     note: "Pistolet de service fiable, 17 coups. Plus rapide à manier qu'une arme d'épaule.",
     damage: 22, auto: false, spread: 0.9 * DEG, moveSpread: 3 * DEG, bloom: 2.6 * DEG, bloomMax: 9 * DEG, recoil: 4,
-    effRange: 5 * U, rangeSpread: 4 * DEG, mag: 17, reserve: 51, reload: 1.5, speed: 900, gunLen: 10, heavy: false, range: 10 * U,
+    effRange: 5 * U, rangeSpread: 4 * DEG, mag: 17, reserve: 51, reload: 1.5, pierce: 0.4, speed: 900, gunLen: 10, heavy: false, range: 10 * U,
     snd: [0.07, 2600],
   },
   usp45: {
@@ -68,12 +69,31 @@ const WEAPONS = {
     note: "Balle lourde et lente : plus d'arrêt, moins de coups et un relèvement plus marqué.",
     tint: { slide: '#2c2f34' },
     damage: 30, auto: false, spread: 0.8 * DEG, moveSpread: 3 * DEG, bloom: 3.6 * DEG, bloomMax: 10 * DEG, recoil: 5.5,
-    effRange: 5 * U, rangeSpread: 4 * DEG, mag: 12, reserve: 48, reload: 1.6, speed: 800, gunLen: 11, heavy: false, range: 10 * U,
+    effRange: 5 * U, rangeSpread: 4 * DEG, mag: 12, reserve: 48, reload: 1.6, pierce: 0.3, speed: 800, gunLen: 11, heavy: false, range: 10 * U,
     snd: [0.1, 1900],
   },
+  // ---- Armes du groupe armé, utilisables par le joueur (mode siège) ----
+  akP: {
+    kind: 'ak', cat: 'ar', name: 'AKM', maker: 'Kalachnikov', caliber: '7,62×39 mm', mode: 'Auto', rpm: 600, weight: 4.3,
+    note: "Le fusil du groupe : brutal, dur à tenir en rafale, mais il perce le bois et les gilets.",
+    damage: 34, auto: true, spread: 1.3 * DEG, moveSpread: 4.5 * DEG, bloom: 2.6 * DEG, bloomMax: 11 * DEG, recoil: 7,
+    effRange: 8 * U, rangeSpread: 3.5 * DEG, mag: 30, reserve: 90, reload: 2.8, pierce: 0.6, speed: 950, gunLen: 20, heavy: true, range: 14 * U,
+    snd: [0.12, 1700],
+  },
+  makarovP: {
+    kind: 'pistol', cat: 'hg', name: 'Makarov PM', maker: 'Ijmach', caliber: '9×18 mm', mode: 'Semi', rpm: 300, weight: 0.8,
+    note: "Huit coups, sans plus. De quoi finir un chargeur vide, pas de quoi tenir un couloir.",
+    tint: { slide: '#3a3d42' },
+    damage: 20, auto: false, spread: 1.1 * DEG, moveSpread: 3 * DEG, bloom: 3 * DEG, bloomMax: 9 * DEG, recoil: 4,
+    effRange: 4 * U, rangeSpread: 4.5 * DEG, mag: 8, reserve: 32, reload: 1.6, pierce: 0.3, speed: 900, gunLen: 10, heavy: false, range: 9 * U,
+    snd: [0.07, 2400],
+  },
+  // ---- Armes de l'équipe d'intervention quand elle donne l'assaut (mode siège) ----
+  hk416op: { kind: 'rifle', name: 'HK416 A5', damage: 26, rof: 12, auto: true, spread: 1.2 * DEG, moveSpread: 3.5 * DEG, bloom: 1.6 * DEG, bloomMax: 8 * DEG, effRange: 9 * U, rangeSpread: 3 * DEG, mag: Infinity, reserve: 0, reload: 0, pierce: 0.55, speed: 1150, gunLen: 20, heavy: false, burst: 4, pause: 0.75, range: 15 * U, snd: [0.1, 2200] },
+  mp5op:   { kind: 'smg',   name: 'HK MP5A3', damage: 20, rof: 13, auto: true, spread: 1.4 * DEG, moveSpread: 2 * DEG,   bloom: 1.2 * DEG, bloomMax: 7 * DEG, effRange: 6 * U, rangeSpread: 4 * DEG, mag: Infinity, reserve: 0, reload: 0, pierce: 0.4,  speed: 900,  gunLen: 16, heavy: false, burst: 4, pause: 0.7,  range: 11 * U, snd: [0.08, 2600] },
   // ---- Armes ennemies (munitions illimitées, tir en rafales) ----
-  ak:      { kind: 'ak',      name: 'AKM',        damage: 18, rof: 10,  auto: true,  spread: 4.5 * DEG,   moveSpread: 4 * DEG, bloom: 2 * DEG, bloomMax: 12 * DEG, effRange: 6 * U, rangeSpread: 4 * DEG, mag: Infinity, reserve: 0, reload: 0, speed: 950, gunLen: 20, heavy: false, burst: 5, pause: 0.9, range: 12 * U, snd: [0.12, 1700] },
-  pistolE: { kind: 'pistol',  name: 'Makarov PM', damage: 18, rof: 4,   auto: true,  spread: 4 * DEG,   moveSpread: 3 * DEG, bloom: 1.5 * DEG, bloomMax: 9 * DEG, effRange: 4 * U, rangeSpread: 4 * DEG, mag: Infinity, reserve: 0, reload: 0, speed: 900, gunLen: 10, heavy: false, burst: 2, pause: 0.8, range: 8 * U, snd: [0.07, 2400] },
+  ak:      { kind: 'ak',      name: 'AKM',        damage: 18, rof: 10,  auto: true,  spread: 4.5 * DEG,   moveSpread: 4 * DEG, bloom: 2 * DEG, bloomMax: 12 * DEG, effRange: 6 * U, rangeSpread: 4 * DEG, mag: Infinity, reserve: 0, reload: 0, pierce: 0.6, speed: 950, gunLen: 20, heavy: false, burst: 5, pause: 0.9, range: 12 * U, snd: [0.12, 1700] },
+  pistolE: { kind: 'pistol',  name: 'Makarov PM', damage: 18, rof: 4,   auto: true,  spread: 4 * DEG,   moveSpread: 3 * DEG, bloom: 1.5 * DEG, bloomMax: 9 * DEG, effRange: 4 * U, rangeSpread: 4 * DEG, mag: Infinity, reserve: 0, reload: 0, pierce: 0.3, speed: 900, gunLen: 10, heavy: false, burst: 2, pause: 0.8, range: 8 * U, snd: [0.07, 2400] },
 };
 // Cadence de jeu tirée de la cadence réelle ; mobilité tirée de la masse.
 for (const w of Object.values(WEAPONS)) {
@@ -85,6 +105,12 @@ const WEAPON_CATS = { ar: "Fusils d'assaut", smg: 'Pistolets mitrailleurs', sg: 
 const PRIMARY_WEAPONS = ['hk416', 'scarh', 'mp5', 'mp7', 'm870', 'm4super90'];
 const SIDEARMS = ['glock17', 'usp45'];
 const DEFAULT_LOADOUT = { primary: 'hk416', sidearm: 'glock17' };
+
+// Deux modes de jeu : l'assaut (on incarne l'opérateur) et le siège (on incarne le groupe armé).
+const MODES = {
+  assault: { name: 'Assaut', primaries: PRIMARY_WEAPONS, sidearms: SIDEARMS, loadout: DEFAULT_LOADOUT },
+  siege:   { name: 'Siège',  primaries: ['akP', 'm870'], sidearms: ['makarovP', 'glock17'], loadout: { primary: 'akP', sidearm: 'makarovP' } },
+};
 
 const makeSlot = key => ({ def: WEAPONS[key], mag: WEAPONS[key].mag, reserve: WEAPONS[key].reserve });
 
@@ -113,6 +139,8 @@ class Agent {
     this.reaction = 0.5;
     this.muzzleT = 0; // flash de bouche récent
     this.kick = 0;    // recul visuel (0..1)
+    this.act = null;  // geste à deux mains en cours (porte, grenade) : voir Game.startAction
+    this.handBloom = 0; // visée perturbée juste après un geste
   }
   get tx() { return Math.floor(this.x / TILE); }
   get ty() { return Math.floor(this.y / TILE); }
@@ -133,6 +161,7 @@ class Player extends Agent {
     this.reloadT = 0;
     this.switchT = 0;
     this.flashbangs = 3;
+    this.fiber = null; // fibre optique glissée sous une porte (voir Game.updateFiber)
     this.flashT = 0; // aveuglé (écran blanc)
   }
   get slot() { return this.slots[this.cur]; }
@@ -149,12 +178,21 @@ const TEAMMATE_DEFS = [
   { name: 'Charlie', accent: '#ffb74d', weapon: 'mp5',   slot: [-1.3, 0.85],  sector: 160 * DEG,  helmet: '#4a5563', vest: '#2a3542' },
 ];
 
+// Complices du mode siège : mêmes ordres que l'équipe, mais armés et habillés en civils.
+const SIEGE_MATE_DEFS = [
+  { name: 'Marko', accent: '#e07a5f', weapon: 'ak',      slot: [-1.3, -0.85], sector: -100 * DEG, militant: true, jacket: '#5b4a3a', pants: '#2b2f38' },
+  { name: 'Ilya',  accent: '#d9b44a', weapon: 'ak',      slot: [-1.3, 0.85],  sector: 160 * DEG,  militant: true, jacket: '#3d4a3a', pants: '#3a3630' },
+  { name: 'Sacha', accent: '#9a8fc7', weapon: 'pistolE', slot: [1.2, -1.1],   sector: 60 * DEG,   militant: true, jacket: '#4a3d4a', pants: '#2f3a33' },
+];
+
 class Teammate extends Agent {
   constructor(x, y, def) {
     super(x, y, 'ops');
     this.name = def.name;
     this.accent = def.accent;
-    this.style = { ...STYLE_PLAYER, helmet: def.helmet, vest: def.vest };
+    this.style = def.militant
+      ? { ...STYLE_MILITANT, body: def.jacket, shoulder: def.jacket, sleeve: def.jacket, pants: def.pants }
+      : { ...STYLE_PLAYER, helmet: def.helmet, vest: def.vest };
     this.slot = { ...makeSlot(def.weapon), reserve: Infinity };
     this.fov = 130 * DEG;
     this.viewRange = 13 * U;
@@ -212,6 +250,22 @@ class Enemy extends Agent {
       head: pick(['hair', 'hair', 'cap', 'mask']),
       skin: pick(['#d2a583', '#c4906a', '#a9714f']),
     };
+  }
+}
+
+// Opérateur d'intervention pendant un siège : même moteur que les suspects (Game.updateAssault
+// pilote sa progression), mais plus résistant, plus réactif et bien plus précis.
+class Operator extends Enemy {
+  constructor(x, y, angle, weaponKey) {
+    super(x, y, angle, weaponKey);
+    this.name = 'Opérateur';
+    this.hp = this.maxHp = 110; // gilet
+    this.fov = 110 * DEG;
+    this.viewRange = 14 * U;
+    this.reaction = 0.35;
+    this.turnRate = 7;
+    this.speed = 108;
+    this.style = { ...STYLE_PLAYER };
   }
 }
 

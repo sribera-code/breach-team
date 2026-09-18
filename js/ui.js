@@ -15,7 +15,12 @@ class UI {
     const g = this.game, p = g.player;
     this.$('timer').textContent = fmtTime(g.time);
     const alive = g.enemies.filter(e => e.alive).length;
-    this.$('objective').textContent = `Suspects : ${alive} / ${g.enemies.length}`;
+    if (g.siege) {
+      const s = g.siege;
+      this.$('objective').textContent = s.prep > 0
+        ? `Préparation : ${fmtTime(Math.max(0, s.prep)).slice(0, 5)} — placez vos hommes`
+        : `Tenir : ${fmtTime(Math.max(0, s.hold)).slice(0, 5)} · Assaut : ${alive}`;
+    } else this.$('objective').textContent = `Suspects : ${alive} / ${g.enemies.length}`;
     const fill = this.$('hpFill');
     fill.style.width = (100 * p.hp / p.maxHp) + '%';
     fill.style.background = p.hp > 60 ? '#4caf50' : p.hp > 30 ? '#ffb300' : '#ef5350';
@@ -23,6 +28,8 @@ class UI {
     const mode = this.$('moveMode');
     mode.textContent = p.walkMode ? 'MARCHE' : 'COURSE';
     mode.classList.toggle('walk', p.walkMode);
+    const fib = this.$('fiberMode');
+    if (fib) fib.classList.toggle('on', !!p.fiber);
     this.updateSquad();
     const s = p.slot, w = s.def;
     if (this._weaponShown !== w) {
@@ -50,7 +57,7 @@ class UI {
       const bar = el.querySelector('.mhp div');
       bar.style.width = (100 * m.hp / m.maxHp) + '%';
       bar.style.background = m.hp > 60 ? '#4caf50' : m.hp > 30 ? '#ffb300' : '#ef5350';
-      let s = !m.alive ? 'À terre' : m.stun > 0 ? 'Aveuglé' : m.target ? (m.blockedLine ? 'Axe bouché' : 'Au contact') : m.reloadT > 0 ? 'Recharge'
+      let s = !m.alive ? 'À terre' : m.stun > 0 ? 'Aveuglé' : m.act ? 'Ouvre la porte' : m.target ? (m.blockedLine ? 'Axe bouché' : 'Au contact') : m.reloadT > 0 ? 'Recharge'
         : m.coverAngle !== null ? (m.order === 'move' ? 'Se déplace ▸ couvre' : 'Couvre') : orders[m.order];
       el.querySelector('.morder').textContent = s;
     });
@@ -60,19 +67,33 @@ class UI {
   hideOverlay() { this.overlay.classList.add('hidden'); }
   isOpen() { return !this.overlay.classList.contains('hidden'); }
 
+  // Texte d'ambiance du mode siège (le briefing des missions est écrit côté intervention).
+  siegeBriefing() {
+    return `Vous tenez le bâtiment avec vos hommes et vos otages. Une équipe d'intervention va donner
+      l'assaut par l'entrée principale. Placez vos complices (clic droit maintenu : direction à couvrir),
+      fermez ou entrebâillez les portes, choisissez votre poste — puis tenez trois minutes, le temps que
+      les négociations aboutissent. Les otages sont votre seule protection : s'ils meurent, tout est perdu.`;
+  }
+
   showBriefing() {
     const g = this.game;
     g.paused = true;
-    this.showOverlay(`<h1>Mission ${g.levelIndex + 1} — ${g.def.name}</h1><p>${g.def.briefing}</p>
-      <p><small><kbd>ZQSD</kbd>/<kbd>WASD</kbd> se déplacer · <kbd>A</kbd> marche/course · souris viser · <kbd>clic</kbd> tirer · <kbd>R</kbd> / clic molette recharger · <kbd>E</kbd> ouvrir/fermer une porte · molette haut/bas ouvrir/fermer par étapes · <kbd>Alt</kbd> changer d'arme · <kbd>Espace</kbd> flash · <kbd>T</kbd> équipe suivre/tenir · clic droit envoyer l'équipe (maintenir et tirer : direction à couvrir ; sur vous : suivre) · <kbd>Échap</kbd> pause</small></p>
+    const siege = g.mode === 'siege';
+    this.showOverlay(`<h1>Mission ${g.levelIndex + 1} — ${g.def.name}</h1>
+      <div class="modes">${Object.keys(MODES).map(m => `<button class="modebtn${m === g.mode ? ' sel' : ''}" data-mode="${m}">${m === 'siege' ? '☠ Siège — vous tenez le bâtiment' : '🛡 Assaut — vous menez l\'intervention'}</button>`).join('')}</div>
+      <p>${siege ? this.siegeBriefing() : g.def.briefing}</p>
+      <p><small><kbd>ZQSD</kbd>/<kbd>WASD</kbd> se déplacer · <kbd>A</kbd> marche/course · souris viser · <kbd>clic</kbd> tirer · <kbd>R</kbd> / clic molette recharger · <kbd>E</kbd> ouvrir/fermer une porte · molette haut/bas ouvrir/fermer par étapes · <kbd>Alt</kbd> changer d'arme · <kbd>Espace</kbd> flash · <kbd>F</kbd> fibre sous la porte · <kbd>T</kbd> équipe suivre/tenir · clic droit envoyer l'équipe (maintenir et tirer : direction à couvrir ; sur vous : suivre) · <kbd>Échap</kbd> pause</small></p>
       <h2>Équipement</h2>
       <div class="loadout">
-        ${['ar', 'smg', 'sg'].map(c => this.weaponGroup(c, PRIMARY_WEAPONS, 'primary')).join('')}
-        ${this.weaponGroup('hg', SIDEARMS, 'sidearm')}
+        ${['ar', 'smg', 'sg'].map(c => this.weaponGroup(c, MODES[g.mode].primaries, 'primary')).join('')}
+        ${this.weaponGroup('hg', MODES[g.mode].sidearms, 'sidearm')}
       </div>
       <div id="wdetail"></div>
-      <div class="row"><button class="primary" id="ovGo">Lancer l'assaut</button><button id="ovLevels">Missions</button></div>`);
+      <div class="row"><button class="primary" id="ovGo">${siege ? 'Prendre position' : "Lancer l'assaut"}</button><button id="ovLevels">Missions</button></div>`);
     this.panel.classList.add('wide');
+    this.panel.querySelectorAll('.modebtn').forEach(b => {
+      b.onclick = () => { g.setMode(b.dataset.mode); this.showBriefing(); };
+    });
     this.panel.querySelectorAll('.wcard').forEach(b => {
       UI.drawWeapon(b.querySelector('canvas'), WEAPONS[b.dataset.key]);
       b.onclick = () => { g.setLoadout({ [b.dataset.slot]: b.dataset.key }); this.refreshLoadout(); };
@@ -89,6 +110,7 @@ class UI {
 
   // ---- Équipement ----
   weaponGroup(cat, keys, slot) {
+    if (!keys.some(k => WEAPONS[k].cat === cat)) return '';
     const cards = keys.filter(k => WEAPONS[k].cat === cat).map(k => {
       const w = WEAPONS[k];
       return `<button class="wcard" data-slot="${slot}" data-key="${k}"><canvas></canvas><span class="wname">${w.name}</span><small>${w.caliber}</small></button>`;
@@ -114,9 +136,10 @@ class UI {
     const kg = w.weight.toFixed(1).replace('.', ',');
     const cap = w.reloadType === 'shell' ? `${w.mag} cartouches (tube)` : `${w.mag} coups`;
     const dmg = w.pellets ? `${w.pellets} × ${w.damage}` : w.damage;
+    const pierce = Math.round((w.pierce === undefined ? 0.4 : w.pierce) * 100);
     return `<div class="wd">
       <div class="wd-head"><b>${w.name}</b> ${w.name.startsWith(w.maker) ? '' : `<small>${w.maker}</small>`}</div>
-      <div class="wd-specs">${w.caliber} · ${cap} · ${w.mode === 'Pompe' ? 'pompe' : w.rpm + ' cps/min'} · ${w.mode} · ${kg} kg · dégâts ${dmg}</div>
+      <div class="wd-specs">${w.caliber} · ${cap} · ${w.mode === 'Pompe' ? 'pompe' : w.rpm + ' cps/min'} · ${w.mode} · ${kg} kg · dégâts ${dmg} · à travers une porte ${pierce} %</div>
       <p>${w.note}</p>
       <div class="wd-bars">${bars.map(([k, v]) => `<span>${k}</span><div class="bar"><div style="width:${Math.round(v * 100)}%"></div></div>`).join('')}</div>
     </div>`;
@@ -170,15 +193,20 @@ class UI {
   showEnd(result) {
     const g = this.game, s = g.stats;
     const win = result === 'win';
-    const html = `<h1 class="${win ? 'win' : 'lose'}">${win ? 'Mission accomplie' : 'Mission échouée'}</h1>
-      <p>${win ? 'Tous les suspects sont neutralisés.' : g.loseReason}</p>
+    const siege = !!g.siege;
+    const title = siege ? (win ? 'Assaut repoussé' : 'Bâtiment repris') : (win ? 'Mission accomplie' : 'Mission échouée');
+    const intro = win
+      ? (siege ? 'Vous avez tenu jusqu\'au bout des négociations.' : 'Tous les suspects sont neutralisés.')
+      : g.loseReason;
+    const html = `<h1 class="${win ? 'win' : 'lose'}">${title}</h1>
+      <p>${intro}</p>
       <div class="stats">
         <span>Temps</span><b>${fmtTime(g.time)}</b>
-        <span>Suspects neutralisés</span><b>${s.kills} / ${g.enemies.length}</b>
+        <span>${siege ? 'Opérateurs neutralisés' : 'Suspects neutralisés'}</span><b>${s.kills} / ${g.enemies.length}</b>
         <span>Tirs / touchés</span><b>${s.shots} / ${s.hits}</b>
         <span>Précision</span><b>${s.shots ? Math.round(100 * s.hits / s.shots) : 0} %</b>
         <span>Flashs utilisées</span><b>${s.flashes}</b>
-        <span>Coéquipiers perdus</span><b>${s.losses} / ${g.mates.length}</b>
+        <span>${siege ? 'Complices perdus' : 'Coéquipiers perdus'}</span><b>${s.losses} / ${g.mates.length}</b>
       </div>
       <div class="row">
         <button id="ovRetry">↺ Rejouer</button>
@@ -198,11 +226,19 @@ class UI {
       <p><b>Déplacement</b> : <kbd>ZQSD</kbd> / <kbd>WASD</kbd> / flèches. <kbd>A</kbd> (ou <kbd>Maj</kbd>) bascule entre course et marche : en marchant on est lent mais précis.<br>
       <b>Précision</b> : le viseur montre la zone réelle où les balles peuvent tomber. Elle grandit avec la distance, en courant, et à chaque tir (recul) ; au-delà de la portée efficace de l'arme elle s'ouvre encore. Tirez par courtes rafales et laissez le viseur se resserrer.<br>
       <b>Tir</b> : clic gauche (maintenu pour les armes automatiques). <kbd>R</kbd> ou clic molette recharge, <kbd>Alt</kbd> (ou <kbd>1</kbd>/<kbd>2</kbd>) change d'arme.<br>
-      <b>Portes</b> : <kbd>E</kbd> ouvre en grand la porte la plus proche, ou la ferme si elle est ouverte. La molette agit par étapes : vers le haut, fermée puis entrouverte puis ouverte ; vers le bas, l'inverse. Une porte entrouverte laisse passer le regard (le vôtre et celui des ennemis) mais pas le passage, et s'entrouvre sans bruit. On ne peut pas fermer une porte si quelqu'un se trouve dans l'embrasure.<br>
+      <b>Gestes</b> : manœuvrer une porte ou lancer une flash occupe les deux mains. Le geste dure un instant (l'anneau du viseur montre où il en est), pendant lequel on ne tire pas et on avance au ralenti, et la visée reste perturbée juste après : ne le faites pas nez à nez avec un suspect. Les coéquipiers et les suspects sont soumis aux mêmes délais.<br>
+      <b>Portes</b> : <kbd>E</kbd> ouvre en grand la porte la plus proche, ou la ferme si elle est ouverte. La molette agit par crans : fermée, entrebâillée, entrouverte, ouverte ; vers le bas, l'inverse. Une porte qui n'est pas grande ouverte ne laisse ni passer ni voir autrement que par l'entrebâillement : le battant arrête le regard, et vous ne découvrez qu'un mince cône de la pièce (le vôtre comme celui des ennemis s'élargit avec le cran). Entrebâiller est silencieux et plus rapide qu'ouvrir en grand, puisque le battant a moins de chemin à faire ; comptez un second geste pour entrer. On ne peut pas fermer une porte si quelqu'un se trouve dans l'embrasure.<br>
+      <b>Fibre optique</b> : devant une porte fermée ou entrouverte, maintenez <kbd>F</kbd> pour glisser une fibre sous le battant : vous découvrez un large cône de la pièce voisine, suspects compris, sans ouvrir ni faire de bruit. La mise en place demande un geste ; tant que vous observez, vous ne tirez pas et vous ne pouvez pas bouger — le moindre pas retire la fibre.<br>
       <b>Flash</b> : <kbd>Espace</kbd> (ou <kbd>G</kbd>) lance une grenade aveuglante vers le curseur : la distance au curseur règle la force du lancer. Elle vole, retombe, roule et rebondit sur les murs, le mobilier et les portes fermées, puis explose au bout d'environ 1,7 s. Attention aux retours contre un mur proche. Collé à une porte entrouverte, visez l'embrasure pour glisser la grenade par l'entrebâillement ; de plus loin, elle rebondit sur le battant. Les ennemis aveuglés ne tirent plus pendant quelques secondes. Ne regardez pas l'explosion.<br>
-      <b>Otages</b> : ne tirez pas dessus.<br>
+      <b>À travers les portes</b> : un battant n'est pas un abri. Les balles le traversent en perdant de l'énergie (un tiers pour du 7,62, les quatre cinquièmes pour de la chevrotine) et en déviant un peu. Vous pouvez arroser une porte fermée — et un suspect peut faire de même. Les murs, eux, arrêtent tout.<br>
+      <b>Otages</b> : ne tirez pas dessus, y compris à travers une porte.<br>
       <b>Équipe</b> : Bravo et Charlie vous suivent en formation et couvrent vos flancs et vos arrières. <kbd>T</kbd> leur fait tenir la position (ou reprendre le suivi), le clic droit les envoie sur un point (ils ouvrent les portes sur ce trajet), et un clic droit sur vous-même les rappelle en suivi. En <b>maintenant</b> le clic droit puis en tirant vers une direction, vous ajoutez une consigne de couverture : celui des deux qui se place de ce côté gardera cet angle au lieu de choisir lui-même son point d'intérêt (jusqu'à l'ordre suivant ; un contact reste prioritaire). Ils tirent sur tout suspect visible, mais jamais à travers vous ou un otage : quand l'axe reste bouché, ils se décalent pour dégager l'angle (le HUD indique « Axe bouché »). Un ordre de déplacement reste prioritaire sur un contact : ils rompent et progressent en gardant le suspect en joue. Attention, vos propres balles peuvent les blesser.<br>
       <kbd>Échap</kbd> pause.</p>
+      <p><b>Mode siège</b> : vous incarnez le chef du groupe armé. L'équipe d'intervention entre par l'entrée
+      de la carte après un court temps de préparation, progresse secteur par secteur et converge sur le moindre coup
+      de feu. Vos complices obéissent aux mêmes ordres que l'équipe en mode assaut. Vous ne gagnez pas en les tuant
+      tous — des renforts arrivent régulièrement — mais en tenant jusqu'au bout du chrono. Portes, fibre optique et
+      tir à travers les battants sont vos meilleurs outils ; les otages sont votre protection, jamais une cible.</p>
       <div class="row"><button class="primary" id="ovClose">Compris</button></div>`);
     this.panel.querySelector('#ovClose').onclick = () => { if (this.game.paused) this.showPause(); else this.hideOverlay(); };
   }
