@@ -1,5 +1,5 @@
 'use strict';
-const gunStyle = w => ({ gun: w.kind, gunLen: w.gunLen, gunTint: w.tint });
+const gunStyle = w => (w ? { gun: w.kind, gunLen: w.gunLen, gunTint: w.tint } : { gun: null });
 // Geste en cours (porte, grenade) transmis au dessin du personnage.
 const actStyle = a => (a.act ? { act: { type: a.act.type, k: a.act.t / a.act.dur } }
   : a.fiber ? { act: { type: 'fiber', k: 1 } } : null);
@@ -43,6 +43,7 @@ class Renderer {
     for (let y = 0; y < m.h; y++) for (let x = 0; x < m.w; x++) if (m.tile(x, y) === 0) Sprites.paintShadows(ctx, m, x, y);
     for (let y = 0; y < m.h; y++) for (let x = 0; x < m.w; x++) if (m.tile(x, y) === 1) Sprites.paintWall(ctx, m, x, y);
     for (const d of m.doors) Sprites.paintDoorFrame(ctx, d);
+    for (const w of m.windows) Sprites.paintWindow(ctx, w);
     for (const p of m.props) Sprites.paintProp(ctx, p.type, p.cx, p.cy);
     this.decalC.getContext('2d').clearRect(0, 0, W, H);
     this.cam.x = this.game.player.x; this.cam.y = this.game.player.y;
@@ -258,7 +259,7 @@ class Renderer {
       const h = gr.h || 0;
       ctx.fillStyle = `rgba(0,0,0,${0.3 - h * 0.012})`; ctx.beginPath(); ctx.arc(gr.x + 2 + h * 0.3, gr.y + 3 + h * 0.3, 3.5 - h * 0.08, 0, TAU); ctx.fill();
       ctx.save(); ctx.translate(gr.x, gr.y - h); ctx.rotate(gr.spin || 0);
-      ctx.fillStyle = '#9aa7ae'; ctx.beginPath(); ctx.arc(0, 0, 3.6, 0, TAU); ctx.fill();
+      ctx.fillStyle = gr.kind === 'frag' ? '#4f5b3a' : '#9aa7ae'; ctx.beginPath(); ctx.arc(0, 0, 3.6, 0, TAU); ctx.fill();
       ctx.strokeStyle = '#2f3a40'; ctx.lineWidth = 0.9; ctx.stroke();
       ctx.fillStyle = '#3e4c55'; ctx.fillRect(-1.6, -6, 3.2, 3);
       ctx.fillStyle = '#c9a227'; ctx.fillRect(2, -1.5, 2, 1.2);
@@ -311,6 +312,15 @@ class Renderer {
   drawFlashes() {
     const ctx = this.ctx;
     for (const f of this.game.effects) {
+      if (f.type === 'frag') {
+        // boule de feu brève puis fumée
+        const k = f.t / f.life, r = 18 + 70 * Math.sqrt(k);
+        ctx.globalAlpha = (1 - k) * 0.9;
+        const g = ctx.createRadialGradient(f.x, f.y, 0, f.x, f.y, r);
+        g.addColorStop(0, k < 0.25 ? '#fff3c4' : '#6b6259'); g.addColorStop(0.45, k < 0.35 ? 'rgba(255,140,40,0.85)' : 'rgba(70,64,58,0.7)'); g.addColorStop(1, 'rgba(40,36,32,0)');
+        ctx.fillStyle = g; ctx.beginPath(); ctx.arc(f.x, f.y, r, 0, TAU); ctx.fill();
+        continue;
+      }
       if (f.type !== 'flash') continue;
       const k = f.t / f.life;
       ctx.globalAlpha = (1 - k) * 0.95;

@@ -448,6 +448,12 @@ const Sprites = {
       pose.arms[0] = [[-2, -9.5], [9 + e * 2, -8.2], [h[0][0] + e * 8, h[0][1] - e * 4]];
       return { ...st, gunRot: 0.5 * e };
     }
+    if (st.act.type === 'pickup') {
+      // arme basse, la main avant descend saisir l'arme au sol puis revient
+      const e = Math.sin(k * Math.PI);
+      pose.arms[0] = [[-2, -9.5], [8, -10 - e * 3], [h[0][0] + e * 5, h[0][1] - e * 9]];
+      return { ...st, gunRot: 0.75 * e };
+    }
     // grenade : armé du bras en arrière (w) puis lancer vers l'avant (f)
     const w = clamp(k / 0.55, 0, 1), f = clamp((k - 0.55) / 0.45, 0, 1);
     const hx = lerp(lerp(h[1][0], -2, w), 19, f), hy = lerp(lerp(h[1][1], 13.5, w), 3.5, f);
@@ -469,6 +475,21 @@ const Sprites = {
     ctx.save(); ctx.translate(-(13 + gl) / 2 + 4, -1.5);
     this.gun(ctx, kind, gl, t);
     ctx.restore();
+  },
+
+  // Fenêtre : encadrement dans le mur et vitre. On la voit de l'intérieur, on ne la franchit pas.
+  paintWindow(ctx, w) {
+    const L = w.len * TILE, T = TILE;
+    const x = w.cx - (w.horizontal ? L / 2 : T / 2), y = w.cy - (w.horizontal ? T / 2 : L / 2);
+    const ww = w.horizontal ? L : T, hh = w.horizontal ? T : L;
+    ctx.fillStyle = '#2b3138'; ctx.fillRect(x, y, ww, hh);                   // tableau
+    ctx.fillStyle = '#6f8b9a'; ctx.fillRect(x + 1.5, y + 1.5, ww - 3, hh - 3); // vitre
+    ctx.fillStyle = 'rgba(255,255,255,0.22)';
+    if (w.horizontal) ctx.fillRect(x + 2, y + 2.5, ww - 4, 2); else ctx.fillRect(x + 2.5, y + 2, 2, hh - 4);
+    ctx.fillStyle = '#39424a';                                              // montants
+    if (w.horizontal) { ctx.fillRect(x + ww / 3 - 0.8, y, 1.6, hh); ctx.fillRect(x + 2 * ww / 3 - 0.8, y, 1.6, hh); }
+    else { ctx.fillRect(x, y + hh / 3 - 0.8, ww, 1.6); ctx.fillRect(x, y + 2 * hh / 3 - 0.8, ww, 1.6); }
+    ctx.strokeStyle = 'rgba(0,0,0,0.5)'; ctx.lineWidth = 1; ctx.strokeRect(x + 0.5, y + 0.5, ww - 1, hh - 1);
   },
 
   // ---- Personnages ----
@@ -689,12 +710,24 @@ const Sprites = {
     ctx.strokeStyle = 'rgba(0,0,0,0.5)'; ctx.lineWidth = 1; ctx.stroke();
     ctx.fillStyle = '#3b2a1a'; ctx.beginPath(); ctx.ellipse(-0.5, 0, 4.5, 5.8, 0, 0, TAU); ctx.fill();
     ctx.fillStyle = '#d9b48f'; circle(ctx, 4, -5.5, 2.7); ctx.fill(); circle(ctx, 4, 5.5, 2.7); ctx.fill();
+    if (h.wounded) {
+      // blessé : chemise tachée de sang
+      ctx.fillStyle = 'rgba(150,12,14,0.85)';
+      ctx.beginPath(); ctx.ellipse(-4, 3, 3.6, 2.6, 0.4, 0, TAU); ctx.fill();
+      circle(ctx, -6.5, -2, 1.3); ctx.fill();
+    }
     ctx.restore();
   },
 
   // ---- Décalques persistants ----
   decal(ctx, d) {
     switch (d.type) {
+      case 'scorch': {
+        const g = ctx.createRadialGradient(d.x, d.y, 0, d.x, d.y, 26);
+        g.addColorStop(0, 'rgba(12,10,8,0.7)'); g.addColorStop(1, 'rgba(12,10,8,0)');
+        ctx.fillStyle = g; circle(ctx, d.x, d.y, 26); ctx.fill();
+        break;
+      }
       case 'blood':
         ctx.fillStyle = `rgba(${110 + Math.floor(rand(0, 30))},8,10,${rand(0.5, 0.8)})`;
         circle(ctx, d.x, d.y, d.r); ctx.fill();

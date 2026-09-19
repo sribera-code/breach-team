@@ -89,11 +89,11 @@ const WEAPONS = {
     snd: [0.07, 2400],
   },
   // ---- Armes de l'équipe d'intervention quand elle donne l'assaut (mode siège) ----
-  hk416op: { kind: 'rifle', name: 'HK416 A5', damage: 26, rof: 12, auto: true, spread: 1.2 * DEG, moveSpread: 3.5 * DEG, bloom: 1.6 * DEG, bloomMax: 8 * DEG, effRange: 9 * U, rangeSpread: 3 * DEG, mag: Infinity, reserve: 0, reload: 0, pierce: 0.55, speed: 1150, gunLen: 20, heavy: false, burst: 4, pause: 0.75, range: 15 * U, snd: [0.1, 2200] },
-  mp5op:   { kind: 'smg',   name: 'HK MP5A3', damage: 20, rof: 13, auto: true, spread: 1.4 * DEG, moveSpread: 2 * DEG,   bloom: 1.2 * DEG, bloomMax: 7 * DEG, effRange: 6 * U, rangeSpread: 4 * DEG, mag: Infinity, reserve: 0, reload: 0, pierce: 0.4,  speed: 900,  gunLen: 16, heavy: false, burst: 4, pause: 0.7,  range: 11 * U, snd: [0.08, 2600] },
+  hk416op: { kind: 'rifle', pickup: 'hk416', name: 'HK416 A5', damage: 26, rof: 12, auto: true, spread: 1.2 * DEG, moveSpread: 3.5 * DEG, bloom: 1.6 * DEG, bloomMax: 8 * DEG, effRange: 9 * U, rangeSpread: 3 * DEG, mag: Infinity, reserve: 0, reload: 0, pierce: 0.55, speed: 1150, gunLen: 20, heavy: false, burst: 4, pause: 0.75, range: 15 * U, snd: [0.1, 2200] },
+  mp5op:   { kind: 'smg', pickup: 'mp5',   name: 'HK MP5A3', damage: 20, rof: 13, auto: true, spread: 1.4 * DEG, moveSpread: 2 * DEG,   bloom: 1.2 * DEG, bloomMax: 7 * DEG, effRange: 6 * U, rangeSpread: 4 * DEG, mag: Infinity, reserve: 0, reload: 0, pierce: 0.4,  speed: 900,  gunLen: 16, heavy: false, burst: 4, pause: 0.7,  range: 11 * U, snd: [0.08, 2600] },
   // ---- Armes ennemies (munitions illimitées, tir en rafales) ----
-  ak:      { kind: 'ak',      name: 'AKM',        damage: 18, rof: 10,  auto: true,  spread: 4.5 * DEG,   moveSpread: 4 * DEG, bloom: 2 * DEG, bloomMax: 12 * DEG, effRange: 6 * U, rangeSpread: 4 * DEG, mag: Infinity, reserve: 0, reload: 0, pierce: 0.6, speed: 950, gunLen: 20, heavy: false, burst: 5, pause: 0.9, range: 12 * U, snd: [0.12, 1700] },
-  pistolE: { kind: 'pistol',  name: 'Makarov PM', damage: 18, rof: 4,   auto: true,  spread: 4 * DEG,   moveSpread: 3 * DEG, bloom: 1.5 * DEG, bloomMax: 9 * DEG, effRange: 4 * U, rangeSpread: 4 * DEG, mag: Infinity, reserve: 0, reload: 0, pierce: 0.3, speed: 900, gunLen: 10, heavy: false, burst: 2, pause: 0.8, range: 8 * U, snd: [0.07, 2400] },
+  ak:      { kind: 'ak', pickup: 'akP',      name: 'AKM',        damage: 18, rof: 10,  auto: true,  spread: 4.5 * DEG,   moveSpread: 4 * DEG, bloom: 2 * DEG, bloomMax: 12 * DEG, effRange: 6 * U, rangeSpread: 4 * DEG, mag: Infinity, reserve: 0, reload: 0, pierce: 0.6, speed: 950, gunLen: 20, heavy: false, burst: 5, pause: 0.9, range: 12 * U, snd: [0.12, 1700] },
+  pistolE: { kind: 'pistol', pickup: 'makarovP',  name: 'Makarov PM', damage: 18, rof: 4,   auto: true,  spread: 4 * DEG,   moveSpread: 3 * DEG, bloom: 1.5 * DEG, bloomMax: 9 * DEG, effRange: 4 * U, rangeSpread: 4 * DEG, mag: Infinity, reserve: 0, reload: 0, pierce: 0.3, speed: 900, gunLen: 10, heavy: false, burst: 2, pause: 0.8, range: 8 * U, snd: [0.07, 2400] },
 };
 // Cadence de jeu tirée de la cadence réelle ; mobilité tirée de la masse.
 for (const w of Object.values(WEAPONS)) {
@@ -144,7 +144,7 @@ class Agent {
   }
   get tx() { return Math.floor(this.x / TILE); }
   get ty() { return Math.floor(this.y / TILE); }
-  get weapon() { return this.slot.def; }
+  get weapon() { return this.slot ? this.slot.def : null; } // un corps peut avoir été délesté de son arme
 }
 
 class Player extends Agent {
@@ -180,9 +180,14 @@ const TEAMMATE_DEFS = [
 
 // Complices du mode siège : mêmes ordres que l'équipe, mais armés et habillés en civils.
 const SIEGE_MATE_DEFS = [
-  { name: 'Marko', accent: '#e07a5f', weapon: 'ak',      slot: [-1.3, -0.85], sector: -100 * DEG, militant: true, jacket: '#5b4a3a', pants: '#2b2f38' },
-  { name: 'Ilya',  accent: '#d9b44a', weapon: 'ak',      slot: [-1.3, 0.85],  sector: 160 * DEG,  militant: true, jacket: '#3d4a3a', pants: '#3a3630' },
-  { name: 'Sacha', accent: '#9a8fc7', weapon: 'pistolE', slot: [1.2, -1.1],   sector: 60 * DEG,   militant: true, jacket: '#4a3d4a', pants: '#2f3a33' },
+  { name: 'Marko', accent: '#e07a5f', weapon: 'akP',      slot: [-1.3, -0.85], sector: -100 * DEG, militant: true, jacket: '#5b4a3a', pants: '#2b2f38' },
+  { name: 'Ilya',  accent: '#d9b44a', weapon: 'akP',      slot: [-1.3, 0.85],  sector: 160 * DEG,  militant: true, jacket: '#3d4a3a', pants: '#3a3630' },
+  { name: 'Sacha', accent: '#9a8fc7', weapon: 'makarovP', slot: [1.2, -1.1],   sector: 60 * DEG,   militant: true, jacket: '#4a3d4a', pants: '#2f3a33' },
+  { name: 'Dimitri', accent: '#6fb3a8', weapon: 'akP',    slot: [1.2, 1.1],    sector: -60 * DEG,  militant: true, jacket: '#575047', pants: '#2b2f38' },
+  { name: 'Goran', accent: '#c98bb0', weapon: 'akP',      slot: [-2.4, -0.9],  sector: -140 * DEG, militant: true, jacket: '#3b4553', pants: '#3a3630' },
+  { name: 'Lev',   accent: '#b0c46a', weapon: 'akP',      slot: [-2.4, 0.9],   sector: 140 * DEG,  militant: true, jacket: '#5b4a3a', pants: '#2f3a33' },
+  { name: 'Petar', accent: '#e0a070', weapon: 'akP',      slot: [0, -1.6],     sector: -90 * DEG,  militant: true, jacket: '#3d4a3a', pants: '#2b2f38' },
+  { name: 'Yuri',  accent: '#8fb0e0', weapon: 'makarovP', slot: [0, 1.6],      sector: 90 * DEG,   militant: true, jacket: '#4a3d4a', pants: '#3a3630' },
 ];
 
 class Teammate extends Agent {
@@ -266,13 +271,19 @@ class Operator extends Enemy {
     this.turnRate = 7;
     this.speed = 108;
     this.style = { ...STYLE_PLAYER };
+    this.flashbangs = 2; // ils dégoupillent avant d'entrer dans une pièce tenue
+    this.flashCd = rand(4, 10);
   }
 }
 
 class Hostage {
   constructor(x, y) {
     this.x = x; this.y = y;
-    this.radius = 10;
+    this.found = false;   // repéré par l'intervention (mode siège)
+    this.secured = false; // récupéré : autant de perdu pour le preneur d'otages
+    this.secureT = 0;
+    this.radius = 7;        // à genoux, tête baissée : une petite cible
+    this.wounded = false;   // une première blessure légère ne tue pas (voir Game.damage)
     this.alive = true;
     this.visible = false;
     this.angle = rand(0, TAU);

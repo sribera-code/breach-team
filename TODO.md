@@ -1,49 +1,44 @@
 # Reste à faire
 
-État des chantiers ouverts au 18 septembre 2026. Les points sont classés par ordre d'intérêt au sein
+État des chantiers ouverts au 19 septembre 2026. Les points sont classés par ordre d'intérêt au sein
 de chaque section.
 
 ## Mode siège
 
-Le mode est jouable de bout en bout, mais c'est un premier jet.
-
-- **L'équipe d'intervention ne lance pas de grenades flash.** C'est le manque le plus visible : l'IA de
-  grenade n'existe que pour le joueur (`Game.throwFlash`). Il faudrait qu'un opérateur bloqué devant une
-  porte fermée ou un couloir tenu dégoupille avant d'entrer — ce qui rendrait l'assaut bien plus crédible
-  et donnerait un sens défensif aux portes entrebâillées.
-- **Équilibrage à faire.** Tout est en dur dans `Game.startSiege` (20 s de préparation, 180 s à tenir,
-  renforts de 2 toutes les 45 s, 3 vagues) et dans les armes `hk416op` / `mp5op`. Aucune de ces valeurs
+- **Équilibrage à faire.** Tout est en dur dans `SIEGE_WAVES` et `Game.startSiege` (10 s de préparation,
+  3 vagues de 3 opérateurs contre 9 défenseurs, 6 s de répit après une vague éliminée, 30 s au plus entre deux
+  vagues) et dans les armes `hk416op` / `mp5op`. Aucune de ces valeurs
   n'a été jouée par un humain : elles sortent de parties simulées.
-- **Les opérateurs n'ont pas d'objectif d'extraction.** Ils nettoient le bâtiment secteur par secteur et
-  traquent le bruit ; ils ignorent les otages. Prévu à la conception : atteindre un otage et le sortir
-  devrait faire perdre la partie au joueur.
-- **Les complices ne réagissent pas au bruit.** `Game.noise` ne parcourt que `this.enemies` ; en siège,
-  les complices (des `Teammate`) n'entendent donc rien et attendent les ordres.
-- **Munitions infinies pour les complices.** Ils portent les armes ennemies (`mag: Infinity`) et ne
-  rechargent jamais. Acceptable, mais incohérent avec le reste.
-- **Briefing générique.** Le texte du mode siège est le même pour les trois missions ; les `LEVELS` n'ont
-  qu'un briefing, écrit côté intervention. La liste des missions annonce « n suspects » quel que soit le mode.
-- **Un seul point d'entrée.** L'assaut arrive toujours par le `S` de la carte. Plusieurs entrées, ou une
-  entrée tirée au sort, rendraient la préparation moins mécanique.
+- **Grenades à fragmentation à régler** : 200 de dégâts au centre, rayon de 3,5 cases, 2 s de mèche. Les complices
+  n'en lancent pas, seul le joueur (ou celui qui reprend la main) en a.
+- **Les otages ne bougent pas.** Ils attendent sur place qu'on vienne les chercher. Les voir fuir vers
+  l'intervention, ou pouvoir les regrouper, changerait beaucoup la tension.
+- **Les opérateurs entrent par une ouverture, ils ne l'ouvrent pas depuis dehors.** L'extérieur n'existe
+  pas dans le jeu : ils apparaissent dans l'embrasure ou la fenêtre, avec un geste d'entrée. On ne peut
+  donc ni les voir approcher, ni les surprendre avant qu'ils ne soient dedans.
+- **Rien n'empêche de camper une seule ouverture** si la carte n'en a que deux. Plus d'entrées par carte,
+  ou des vagues qui entrent par deux endroits à la fois, rendraient la défense moins statique.
 
-## Portes et visibilité
+## Portes, fenêtres et visibilité
 
 - **`E` n'referme pas une porte entrouverte** : il l'ouvre en grand (pour enchaîner après avoir jeté un
   œil), et il faut redescendre les crans à la molette pour fermer. C'est un choix, pas un bug, mais il
   mérite d'être rejoué : c'est le geste le plus fréquent.
-- **Le premier cran d'entrebâillement est très avare.** À 0,25, on ne voit rien de face et il faut se
-  placer du côté de l'ouverture. C'est géométriquement juste (l'épaisseur du mur fait tunnel), mais si
-  ça frustre, c'est une seule valeur à bouger : `DOOR_STEPS` dans `js/map.js`.
+- **Le premier cran d'entrebâillement reste avare.** À 0,3, on ne voit rien de face et il faut se placer
+  du côté de l'ouverture. C'est géométriquement juste (l'épaisseur du mur fait tunnel) ; si ça frustre,
+  c'est une seule valeur à bouger : `DOOR_STEPS` dans `js/map.js`.
 - **La fibre optique n'est pas réglée finement** : 150° sur 6 cases, 0,7 s de mise en place. Elle est
   peut-être trop généreuse par rapport au coup d'œil par l'entrebâillement.
-- **Les suspects et les opérateurs n'utilisent ni fibre ni entrebâillement.** Ils ouvrent toujours en grand.
+- **Les suspects et les opérateurs n'utilisent ni fibre ni entrebâillement.** Ils ouvrent toujours en
+  grand — ils lancent en revanche une flash avant d'entrer quand ils savent où était la menace.
+- **Une fenêtre ne se casse pas.** On voit et on tire au travers, on ne la franchit pas à pied, et elle
+  reste intacte quoi qu'il arrive.
 
 ## Outillage
 
-- **Aucun test dans le dépôt.** Les scénarios utilisés pendant le développement (traversée des portes,
-  champ de vision par cran, gestes, ordres de couverture, enchaînement des écrans de fin, partie de siège
-  complète) tournent dans Chrome sans interface, mais vivent hors du dépôt. Les verser dans un dossier
-  `tests/` avec une page d'index permettrait de les rejouer après chaque changement.
+- **Couverture des tests.** `tests/index.html` couvre les armes, les portes, la visibilité, la traversée,
+  la fibre, les ordres, les entrées, le siège et les écrans. Manquent : le rendu (rien ne vérifie ce qui
+  est réellement dessiné) et les entrées clavier/souris réelles, simulées ici au niveau de `game.input`.
 - **Mesurer les performances dans un vrai navigateur.** Les mesures faites jusqu'ici viennent du mode sans
   interface, où le rendu logiciel domine tout et varie du simple au quadruple. La simulation, elle, reste
   sous 0,3 ms par image.
@@ -54,3 +49,11 @@ Le mode est jouable de bout en bout, mais c'est un premier jet.
 - **Pas de sauvegarde de progression** : les missions sont toutes accessibles, rien n'est débloqué ni retenu.
 - **Le son est minimal** : bruits synthétisés, pas de spatialisation. En siège, entendre d'où vient un bruit
   compte pourtant beaucoup.
+
+## Fait depuis la dernière version
+
+Entrées multiples par carte (portes extérieures et fenêtres, avec choix du point d'entrée en assaut et
+vagues qui alternent en siège) · pièce d'entrée toujours vide en assaut (cartes revues, garde dans le code) · siège en
+vagues comptées au lieu d'un chrono, sans temps mort entre deux vagues · flashs lancées par l'IA d'assaut · otages récupérables par l'intervention
+(et partie perdue quand il n'en reste plus) · complices qui réagissent au bruit et rechargent · briefing de
+siège propre à chaque mission · suite de tests dans `tests/`.

@@ -25,6 +25,9 @@ button.primary:hover { background: #38945d; }
 #flashBox b { font-size: 18px; }
 #flashBox small { color: #9aa4b1; }
 #squad { margin-top: 10px; display: flex; flex-direction: column; gap: 4px; }
+#squad.many { display: grid; grid-template-columns: auto auto; gap: 3px 16px; }
+#squad.many .mate { grid-template-columns: 56px 40px auto; gap: 6px; font-size: 11px; }
+#squad.many .morder { white-space: nowrap; }
 .mate { display: grid; grid-template-columns: 62px 70px auto; align-items: center; gap: 8px; font-size: 12px; }
 .mate .mname { font-weight: 700; letter-spacing: 1px; }
 .mate .mhp { height: 6px; background: rgba(0,0,0,0.5); border: 1px solid #3a4250; border-radius: 3px; overflow: hidden; }
@@ -57,6 +60,9 @@ button.primary:hover { background: #38945d; }
 .modes { display: flex; gap: 8px; margin: 10px 0 4px; }
 .modebtn { flex: 1; text-align: center; padding: 9px 10px; font-weight: 600; }
 .modebtn.sel { border-color: #ffb347; background: #262017; color: #ffd27a; }
+.entries { display: flex; flex-wrap: wrap; gap: 6px; }
+.entrybtn { padding: 6px 12px; font-size: 13px; }
+.entrybtn.sel { border-color: #ffb347; background: #262017; color: #ffd27a; }
 .levelbtn { display: flex; justify-content: space-between; width: 100%; text-align: left; padding: 10px 12px; margin-top: 6px; }
 .levelbtn small { color: #8e99a6; }
 .stats { display: grid; grid-template-columns: auto auto; gap: 4px 18px; margin-top: 10px; }

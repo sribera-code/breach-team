@@ -6,10 +6,11 @@
 // cases intermédiaires relient les murs voisins. Les murs n'ont donc plus qu'une petite case d'épaisseur,
 // les portes font trois petites cases de large.
 const FLOOR = { '.': 0, ',': 1, ':': 2 }; // béton, parquet, carrelage
+const WINDOW_LEN = 3; // largeur d'une fenêtre, en petites cases
 const PROPS = { c: 'crate', B: 'barrel', T: 'table', p: 'plant', b: 'bed', k: 'desk' };
 const DOOR_LEN = 3; // largeur d'une porte, en petites cases
 // Crans d'ouverture : fermée, entrebâillée (un filet de vue), entrouverte (on voit une part de la pièce), ouverte.
-const DOOR_STEPS = [0, 0.25, 0.55, 1];
+const DOOR_STEPS = [0, 0.3, 0.6, 1];
 
 // Tas binaire minimal pour l'A*.
 class MinHeap {
@@ -52,7 +53,7 @@ class GameMap {
     const AH = rows.length;
     const AW = Math.max(...rows.map(r => r.length));
     const ch = (x, y) => (rows[y] && rows[y][x]) || ' ';
-    const wallish = c => c === '#' || c === 'D';
+    const wallish = c => c === '#' || c === 'D' || c === 'X' || c === 'W';
 
     this.w = AW * 2 - 1;
     this.h = AH * 2 - 1;
@@ -64,6 +65,9 @@ class GameMap {
     this.newlyExplored = []; // cases découvertes depuis le dernier rendu du brouillard
     this.doors = [];
     this.doorAt = new Map();
+    this.windows = [];
+    this.windowAt = new Map();
+    this.breaches = []; // points d'entrée depuis l'extérieur (portes extérieures et fenêtres)
     this.props = [];
     this.propAt = new Map();
     this.spawns = [];
@@ -105,6 +109,7 @@ class GameMap {
       const c = ch(x, y);
       const sx = 2 * x, sy = 2 * y;
       switch (c) {
+        case 'X':
         case 'D': {
           const horizontal = wallish(ch(x - 1, y)) && wallish(ch(x + 1, y));
           const d = {
@@ -122,6 +127,25 @@ class GameMap {
             d.cells.push({ x: cx, y: cy });
           }
           this.doors.push(d);
+          if (c === 'X') this.addBreach('door', sx, sy, horizontal, d);
+          break;
+        }
+
+        case 'W': {
+          // Fenêtre : on voit et on tire au travers, on ne la franchit pas à pied.
+          const horizontal = wallish(ch(x - 1, y)) && wallish(ch(x + 1, y));
+          const win = { x: sx, y: sy, cx: (sx + 0.5) * TILE, cy: (sy + 0.5) * TILE, len: WINDOW_LEN, horizontal, cells: [] };
+          const halfW = (WINDOW_LEN - 1) / 2;
+          for (let k = -halfW; k <= halfW; k++) {
+            const wx = horizontal ? sx + k : sx, wy = horizontal ? sy : sy + k;
+            if (!this.inBounds(wx, wy)) continue;
+            const idx = wy * this.w + wx;
+            this.tiles[idx] = 0; // le regard et les balles passent...
+            this.windowAt.set(idx, win); // ...mais pas les pieds (voir blocksMove)
+            win.cells.push({ x: wx, y: wy });
+          }
+          this.windows.push(win);
+          this.addBreach('window', sx, sy, horizontal, null);
           break;
         }
         case 'S': this.spawns.push({ x: sx, y: sy }); break;
@@ -194,7 +218,48 @@ class GameMap {
     }
     return { t: best, door: hit };
   }
-  blocksMove(x, y) { return this.isWall(x, y) || this.propAt.has(y * this.w + x); }
+  window(x, y) { return this.inBounds(x, y) ? this.windowAt.get(y * this.w + x) : undefined; }
+  blocksMove(x, y) { return this.isWall(x, y) || this.propAt.has(y * this.w + x) || this.windowAt.has(y * this.w + x); }
+
+  // Point d'entrée depuis l'extérieur : on mémorise le côté intérieur, seul côté praticable.
+  addBreach(kind, sx, sy, horizontal, door) {
+    const inside = [[0, 2], [0, -2], [2, 0], [-2, 0]]
+      .map(([dx, dy]) => ({ x: sx + dx, y: sy + dy }))
+      .find(t => this.inBounds(t.x, t.y) && this.tiles[t.y * this.w + t.x] === 0 && !this.blocksMove(t.x, t.y));
+    if (!inside) return;
+    this.breaches.push({
+      kind, door, horizontal,
+      x: sx, y: sy, cx: (sx + 0.5) * TILE, cy: (sy + 0.5) * TILE,
+      inside: { x: (inside.x + 0.5) * TILE, y: (inside.y + 0.5) * TILE },
+      angle: Math.atan2(inside.y - sy, inside.x - sx),
+    });
+  }
+
+  // Nom lisible d'un point d'entrée : « fenêtre nord », « porte est »...
+  breachLabel(b) {
+    const dx = b.cx - (this.w * TILE) / 2, dy = b.cy - (this.h * TILE) / 2;
+    const dir = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'est' : 'ouest') : (dy > 0 ? 'sud' : 'nord');
+    return (b.kind === 'window' ? 'Fenêtre ' : 'Porte ') + dir;
+  }
+
+  // Pièce contenant le point (x,y) en pixels : cases fines reliées sans franchir mur, porte ni fenêtre.
+  // Les meubles n'y font pas obstacle (ils sont dans la pièce).
+  roomOf(x, y) {
+    const room = new Set();
+    const start = Math.floor(y / TILE) * this.w + Math.floor(x / TILE);
+    const open = i => this.tiles[i] === 0 && !this.doorAt.has(i) && !this.windowAt.has(i);
+    if (!open(start)) return room;
+    const stack = [start];
+    room.add(start);
+    while (stack.length) {
+      const i = stack.pop(), tx = i % this.w, ty = (i - tx) / this.w;
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const nx = tx + dx, ny = ty + dy, n = ny * this.w + nx;
+        if (this.inBounds(nx, ny) && !room.has(n) && open(n)) { room.add(n); stack.push(n); }
+      }
+    }
+    return room;
+  }
   markExplored(x, y) {
     if (!this.inBounds(x, y)) return;
     const i = y * this.w + x;

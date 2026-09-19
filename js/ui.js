@@ -18,13 +18,24 @@ class UI {
     if (g.siege) {
       const s = g.siege;
       this.$('objective').textContent = s.prep > 0
-        ? `Préparation : ${fmtTime(Math.max(0, s.prep)).slice(0, 5)} — placez vos hommes`
-        : `Tenir : ${fmtTime(Math.max(0, s.hold)).slice(0, 5)} · Assaut : ${alive}`;
+        ? `Préparation : ${fmtTime(Math.max(0, s.prep)).slice(0, 5)} — prenez position`
+        : alive ? `Vague ${s.wave} / ${s.waves.length} · Assaut : ${alive}`
+        : s.wave < s.waves.length ? `Vague ${s.wave + 1} / ${s.waves.length} dans ${Math.ceil(Math.max(0, s.nextWave))} s`
+        : `Vague ${s.wave} / ${s.waves.length} repoussée`;
     } else this.$('objective').textContent = `Suspects : ${alive} / ${g.enemies.length}`;
     const fill = this.$('hpFill');
     fill.style.width = (100 * p.hp / p.maxHp) + '%';
     fill.style.background = p.hp > 60 ? '#4caf50' : p.hp > 30 ? '#ffb300' : '#ef5350';
     this.$('flashCount').textContent = p.flashbangs;
+    const nl = this.$('nadeLabel');
+    if (nl) nl.textContent = p.nade === 'frag' ? 'Grenades' : 'Flash';
+    // aide du bas d'écran : pas de fibre et des grenades à fragmentation côté groupe armé
+    const rh = this.$('reloadHint');
+    if (rh) {
+      if (this._reloadHint === undefined) this._reloadHint = rh.textContent;
+      const txt = g.siege ? this._reloadHint.replace(' · F (maintenu) : fibre sous la porte', '').replace('Espace : flash', 'Espace : grenade') : this._reloadHint;
+      if (rh.textContent !== txt) rh.textContent = txt;
+    }
     const mode = this.$('moveMode');
     mode.textContent = p.walkMode ? 'MARCHE' : 'COURSE';
     mode.classList.toggle('walk', p.walkMode);
@@ -48,9 +59,16 @@ class UI {
     const g = this.game, box = this.$('squad');
     if (!this._squadFor || this._squadFor !== g.mates) {
       this._squadFor = g.mates;
+      box.classList.toggle('many', g.mates.length > 4);
+      // en siège, pas d'ordres : l'aide sur les commandes d'équipe n'a pas lieu d'être
+      const hint = this.$('squadHint');
+      if (hint) {
+        if (!this._squadHint) this._squadHint = hint.textContent;
+        hint.textContent = g.siege ? "Vos complices tiennent leur poste : vous ne leur donnez pas d'ordres" : this._squadHint;
+      }
       box.innerHTML = g.mates.map(m => `<div class="mate"><span class="mname" style="color:${m.accent}">${m.name}</span><div class="mhp"><div></div></div><span class="morder"></span></div>`).join('');
     }
-    const orders = { follow: 'Suit', hold: 'Tient', move: 'Se déplace' };
+    const orders = { follow: 'Suit', hold: g.siege ? 'Au poste' : 'Tient', move: 'Se déplace' };
     box.querySelectorAll('.mate').forEach((el, i) => {
       const m = g.mates[i];
       el.classList.toggle('down', !m.alive);
@@ -70,9 +88,9 @@ class UI {
   // Texte d'ambiance du mode siège (le briefing des missions est écrit côté intervention).
   siegeBriefing() {
     return `Vous tenez le bâtiment avec vos hommes et vos otages. Une équipe d'intervention va donner
-      l'assaut par l'entrée principale. Placez vos complices (clic droit maintenu : direction à couvrir),
-      fermez ou entrebâillez les portes, choisissez votre poste — puis tenez trois minutes, le temps que
-      les négociations aboutissent. Les otages sont votre seule protection : s'ils meurent, tout est perdu.`;
+      l'assaut par les portes et les fenêtres. Vos complices tiennent chacun leur poste et vous ne leur
+      donnez pas d'ordres. Fermez ou entrebâillez les portes, choisissez votre poste, puis repoussez les ${SIEGE_WAVES.length} vagues, le
+      temps que les négociations aboutissent. Les otages sont votre seule protection : s'il ne vous en reste plus un seul de vivant, tout est perdu.`;
   }
 
   showBriefing() {
@@ -81,8 +99,9 @@ class UI {
     const siege = g.mode === 'siege';
     this.showOverlay(`<h1>Mission ${g.levelIndex + 1} — ${g.def.name}</h1>
       <div class="modes">${Object.keys(MODES).map(m => `<button class="modebtn${m === g.mode ? ' sel' : ''}" data-mode="${m}">${m === 'siege' ? '☠ Siège — vous tenez le bâtiment' : '🛡 Assaut — vous menez l\'intervention'}</button>`).join('')}</div>
-      <p>${siege ? this.siegeBriefing() : g.def.briefing}</p>
-      <p><small><kbd>ZQSD</kbd>/<kbd>WASD</kbd> se déplacer · <kbd>A</kbd> marche/course · souris viser · <kbd>clic</kbd> tirer · <kbd>R</kbd> / clic molette recharger · <kbd>E</kbd> ouvrir/fermer une porte · molette haut/bas ouvrir/fermer par étapes · <kbd>Alt</kbd> changer d'arme · <kbd>Espace</kbd> flash · <kbd>F</kbd> fibre sous la porte · <kbd>T</kbd> équipe suivre/tenir · clic droit envoyer l'équipe (maintenir et tirer : direction à couvrir ; sur vous : suivre) · <kbd>Échap</kbd> pause</small></p>
+      <p>${siege ? (g.def.siegeBriefing || this.siegeBriefing()) : g.def.briefing}</p>
+      ${siege ? '' : this.entryPicker()}
+      <p><small><kbd>ZQSD</kbd>/<kbd>WASD</kbd> se déplacer · <kbd>A</kbd> marche/course · souris viser · <kbd>clic</kbd> tirer · <kbd>R</kbd> / clic molette recharger · <kbd>E</kbd> ouvrir/fermer une porte · molette haut/bas ouvrir/fermer par étapes · <kbd>Alt</kbd> changer d'arme · ${siege ? '<kbd>Espace</kbd> grenade à fragmentation · ' : '<kbd>Espace</kbd> flash · <kbd>F</kbd> fibre sous la porte · '}<kbd>V</kbd> ramasser une arme · ${siege ? '' : "<kbd>T</kbd> équipe suivre/tenir · clic droit envoyer l'équipe (maintenir et tirer : direction à couvrir ; sur vous : suivre) · "}<kbd>Échap</kbd> pause</small></p>
       <h2>Équipement</h2>
       <div class="loadout">
         ${['ar', 'smg', 'sg'].map(c => this.weaponGroup(c, MODES[g.mode].primaries, 'primary')).join('')}
@@ -93,6 +112,9 @@ class UI {
     this.panel.classList.add('wide');
     this.panel.querySelectorAll('.modebtn').forEach(b => {
       b.onclick = () => { g.setMode(b.dataset.mode); this.showBriefing(); };
+    });
+    this.panel.querySelectorAll('.entrybtn').forEach(b => {
+      b.onclick = () => { g.entryIndex = +b.dataset.entry; g.loadLevel(g.levelIndex); this.showBriefing(); };
     });
     this.panel.querySelectorAll('.wcard').forEach(b => {
       UI.drawWeapon(b.querySelector('canvas'), WEAPONS[b.dataset.key]);
@@ -106,6 +128,15 @@ class UI {
       this.hideOverlay();
     };
     this.panel.querySelector('#ovLevels').onclick = () => this.showLevels(() => this.showBriefing());
+  }
+
+  // Point d'entrée : l'équipe choisit par où elle pénètre dans le bâtiment.
+  entryPicker() {
+    const g = this.game, bs = g.map.breaches;
+    if (bs.length < 2) return '';
+    const btns = bs.map((b, i) =>
+      `<button class="entrybtn${i === g.entryIndex ? ' sel' : ''}" data-entry="${i}">${g.map.breachLabel(b)}</button>`).join('');
+    return `<h2>Point d'entrée</h2><div class="entries">${btns}</div>`;
   }
 
   // ---- Équipement ----
@@ -169,10 +200,15 @@ class UI {
   showLevels(back) {
     const g = this.game;
     const ret = back || (() => this.showBriefing());
-    let html = `<h1>Missions</h1><p>Objectif : neutraliser tous les suspects sans perdre l'opérateur ni tuer d'otage.</p>`;
+    let html = `<h1>Missions</h1><p>${g.mode === 'siege'
+      ? `Objectif : repousser les ${SIEGE_WAVES.length} vagues d'assaut avec vos otages vivants et entre vos mains.`
+      : "Objectif : neutraliser tous les suspects sans perdre toute l'équipe ni tuer d'otage."}</p>`;
+    const siege = g.mode === 'siege';
     LEVELS.forEach((l, i) => {
-      const n = l.map.join('').split('').filter(c => 'E^v<>'.includes(c)).length;
-      html += `<button class="levelbtn" data-i="${i}"><span>${i + 1}. ${l.name}</span><small>${n} suspects</small></button>`;
+      const txt = l.map.join('');
+      const n = txt.split('').filter(c => 'E^v<>'.includes(c)).length;
+      const ent = txt.split('').filter(c => 'XW'.includes(c)).length;
+      html += `<button class="levelbtn" data-i="${i}"><span>${i + 1}. ${l.name}</span><small>${siege ? ent + ' entrées à surveiller' : n + ' suspects'}</small></button>`;
     });
     html += `<div class="row"><button id="ovClose">Retour</button></div>`;
     this.showOverlay(html);
@@ -196,7 +232,7 @@ class UI {
     const siege = !!g.siege;
     const title = siege ? (win ? 'Assaut repoussé' : 'Bâtiment repris') : (win ? 'Mission accomplie' : 'Mission échouée');
     const intro = win
-      ? (siege ? 'Vous avez tenu jusqu\'au bout des négociations.' : 'Tous les suspects sont neutralisés.')
+      ? (siege ? 'Toutes les vagues sont repoussées : les négociations aboutissent.' : 'Tous les suspects sont neutralisés.')
       : g.loseReason;
     const html = `<h1 class="${win ? 'win' : 'lose'}">${title}</h1>
       <p>${intro}</p>
@@ -205,8 +241,10 @@ class UI {
         <span>${siege ? 'Opérateurs neutralisés' : 'Suspects neutralisés'}</span><b>${s.kills} / ${g.enemies.length}</b>
         <span>Tirs / touchés</span><b>${s.shots} / ${s.hits}</b>
         <span>Précision</span><b>${s.shots ? Math.round(100 * s.hits / s.shots) : 0} %</b>
-        <span>Flashs utilisées</span><b>${s.flashes}</b>
+        <span>${siege ? 'Grenades utilisées' : 'Flashs utilisées'}</span><b>${s.flashes}</b>
         <span>${siege ? 'Complices perdus' : 'Coéquipiers perdus'}</span><b>${s.losses} / ${g.mates.length}</b>
+        <span>Otages tués</span><b id="endHostagesKilled">${g.hostages.filter(h => !h.alive).length} / ${g.hostages.length}</b>
+        ${siege ? `<span>Otages récupérés par l'intervention</span><b>${g.hostages.filter(h => h.secured).length} / ${g.hostages.length}</b>` : ''}
       </div>
       <div class="row">
         <button id="ovRetry">↺ Rejouer</button>
@@ -231,13 +269,15 @@ class UI {
       <b>Fibre optique</b> : devant une porte fermée ou entrouverte, maintenez <kbd>F</kbd> pour glisser une fibre sous le battant : vous découvrez un large cône de la pièce voisine, suspects compris, sans ouvrir ni faire de bruit. La mise en place demande un geste ; tant que vous observez, vous ne tirez pas et vous ne pouvez pas bouger — le moindre pas retire la fibre.<br>
       <b>Flash</b> : <kbd>Espace</kbd> (ou <kbd>G</kbd>) lance une grenade aveuglante vers le curseur : la distance au curseur règle la force du lancer. Elle vole, retombe, roule et rebondit sur les murs, le mobilier et les portes fermées, puis explose au bout d'environ 1,7 s. Attention aux retours contre un mur proche. Collé à une porte entrouverte, visez l'embrasure pour glisser la grenade par l'entrebâillement ; de plus loin, elle rebondit sur le battant. Les ennemis aveuglés ne tirent plus pendant quelques secondes. Ne regardez pas l'explosion.<br>
       <b>À travers les portes</b> : un battant n'est pas un abri. Les balles le traversent en perdant de l'énergie (un tiers pour du 7,62, les quatre cinquièmes pour de la chevrotine) et en déviant un peu. Vous pouvez arroser une porte fermée — et un suspect peut faire de même. Les murs, eux, arrêtent tout.<br>
+      <b>Relais et armes au sol</b> : si vous tombez, vous reprenez la main dans le coéquipier debout le plus proche ; la mission n'est perdue que quand toute l'équipe est à terre. Près d'un corps, <kbd>V</kbd> ramasse son arme et laisse au sol la vôtre de même catégorie (vous pouvez la reprendre).<br>
       <b>Otages</b> : ne tirez pas dessus, y compris à travers une porte.<br>
       <b>Équipe</b> : Bravo et Charlie vous suivent en formation et couvrent vos flancs et vos arrières. <kbd>T</kbd> leur fait tenir la position (ou reprendre le suivi), le clic droit les envoie sur un point (ils ouvrent les portes sur ce trajet), et un clic droit sur vous-même les rappelle en suivi. En <b>maintenant</b> le clic droit puis en tirant vers une direction, vous ajoutez une consigne de couverture : celui des deux qui se place de ce côté gardera cet angle au lieu de choisir lui-même son point d'intérêt (jusqu'à l'ordre suivant ; un contact reste prioritaire). Ils tirent sur tout suspect visible, mais jamais à travers vous ou un otage : quand l'axe reste bouché, ils se décalent pour dégager l'angle (le HUD indique « Axe bouché »). Un ordre de déplacement reste prioritaire sur un contact : ils rompent et progressent en gardant le suspect en joue. Attention, vos propres balles peuvent les blesser.<br>
       <kbd>Échap</kbd> pause.</p>
       <p><b>Mode siège</b> : vous incarnez le chef du groupe armé. L'équipe d'intervention entre par l'entrée
       de la carte après un court temps de préparation, progresse secteur par secteur et converge sur le moindre coup
-      de feu. Vos complices obéissent aux mêmes ordres que l'équipe en mode assaut. Vous ne gagnez pas en les tuant
-      tous — des renforts arrivent régulièrement — mais en tenant jusqu'au bout du chrono. Portes, fibre optique et
+      de feu. Vos huit complices tiennent chacun leur poste et se battent seuls : personne ne commande personne, ni <kbd>T</kbd> ni le clic droit ne leur donnent d'ordres. Pas de fibre optique de ce côté, et deux grenades à fragmentation au lieu des flashs : elles tuent autour d'elles (vous et vos otages compris), mais une porte fermée ou un mur arrête l'éclat. Il y a ${SIEGE_WAVES.length} vagues : la
+      suivante entre quelques secondes après l'élimination de la précédente, ou au bout de trente secondes si
+      elle tient encore. Repoussez la dernière et vous avez gagné. Portes, fibre optique et
       tir à travers les battants sont vos meilleurs outils ; les otages sont votre protection, jamais une cible.</p>
       <div class="row"><button class="primary" id="ovClose">Compris</button></div>`);
     this.panel.querySelector('#ovClose').onclick = () => { if (this.game.paused) this.showPause(); else this.hideOverlay(); };

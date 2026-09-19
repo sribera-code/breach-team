@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Tests — Breach Team</title>
+<style>
+  body { margin: 0; background: #0b0d10; color: #d7dbe0; font: 13px/1.5 Consolas, monospace; padding: 16px 20px; }
+  h1 { font: 600 16px/1.4 "Segoe UI", system-ui, sans-serif; margin: 0 0 12px; }
+  #summary { margin-bottom: 10px; font-weight: 700; }
+  #summary.ok { color: #6fcf7a; }
+  #summary.ko { color: #ef6a5a; }
+  #out { white-space: pre-wrap; }
+  .ko { color: #ef6a5a; }
+  .ok { color: #6fcf7a; }
+  #stage { position: absolute; left: -4000px; top: 0; width: 900px; height: 600px; }
+</style>
+</head>
+<body>
+<h1>Tests — Breach Team</h1>
+<div id="summary">…</div>
+<div id="out"></div>
+
+<!-- Le jeu a besoin du canvas et des éléments du HUD : on les garde hors écran. -->
+<div id="stage">
+  <div id="app">
+    <canvas id="game" style="width:900px;height:600px"></canvas>
+    <div id="hud">
+      <div id="hudTop"><div class="brand"></div><div id="levelName"></div><div id="objective"></div><div id="timer"></div></div>
+      <div id="hudBottom">
+        <div id="hpBox">
+          <div class="hpbar"><div id="hpFill"></div></div>
+          <div id="flashBox"><b id="flashCount"></b><span id="moveMode" class="mode"></span><span id="fiberMode" class="mode fiber"></span></div>
+          <div id="squad"></div><div id="squadHint"></div>
+        </div>
+        <div id="message"></div>
+        <div id="weaponBox"><div id="weaponName"></div><div id="ammo"><b id="ammoMag"></b><span id="ammoReserve"></span></div><div id="reloadHint"></div></div>
+      </div>
+    </div>
+    <div id="overlay" class="hidden"><div class="panel" id="overlayPanel"></div></div>
+  </div>
+</div>
+
+<script src="../js/util.js"></script>
+<script src="../js/levels.js"></script>
+<script src="../js/map.js"></script>
+<script src="../js/entities.js"></script>
+<script src="../js/game.js"></script>
+<script src="../js/sprites.js"></script>
+<script src="../js/render.js"></script>
+<script src="../js/ui.js"></script>
+<script src="tests.js"></script>
+</body>
+</html>

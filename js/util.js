@@ -53,6 +53,11 @@ const Sound = {
   pierce() { this.noise(0.07, 0.2, 900, 2); }, // balle qui traverse un battant
   tick(vol) { this.noise(0.03, vol || 0.15, 3500, 1); },
   reload() { this.noise(0.05, 0.12, 1500, 1); setTimeout(() => this.noise(0.06, 0.14, 1200, 1), 350); },
+  frag() {
+    const c = this.ctx; if (!c) return;
+    this.noise(1.1, 0.9, 700, 2);
+    this.noise(0.25, 0.6, 3000, 4);
+  },
   flash() {
     const c = this.ctx; if (!c) return;
     this.noise(0.5, 0.5, 6000, 1.5);

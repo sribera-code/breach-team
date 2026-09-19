@@ -16,11 +16,13 @@ puis aller sur http://localhost:8000.
 
 Le briefing propose deux rôles pour chaque mission.
 
-**Assaut** — le mode d'origine : vous menez l'intervention avec Bravo et Charlie, vous nettoyez le bâtiment sans perdre d'otage.
+**Assaut** — le mode d'origine : vous menez l'intervention avec Bravo et Charlie, vous nettoyez le bâtiment sans perdre d'otage. Le briefing vous laisse choisir par où entrer : chaque carte a plusieurs portes extérieures et fenêtres, et la pièce par laquelle vous entrez est toujours vide : le premier contact se fait derrière une porte.
 
-**Siège** — vous incarnez le chef du groupe armé. Vous connaissez les lieux (le plan vous est acquis dès le départ), vous placez vos complices, vous verrouillez les portes, et une équipe d'intervention donne l'assaut par l'entrée de la carte après vingt secondes de préparation. Elle progresse secteur par secteur, converge sur les coups de feu, et reçoit des renforts toutes les quarante-cinq secondes : on ne gagne pas en les éliminant, mais en **tenant trois minutes**, le temps que les négociations aboutissent. Vous tombez, ou un otage meurt, et c'est perdu — les otages sont votre seule protection.
+**Siège** — vous incarnez le chef du groupe armé. Vous connaissez les lieux (le plan vous est acquis dès le départ), vous êtes neuf — vous et huit complices, chacun à son poste et sans ordres à recevoir : personne ne commande personne —, vous verrouillez les portes, et une équipe d'intervention donne l'assaut après dix secondes de préparation — par une porte extérieure ou une fenêtre, sans que vous sachiez laquelle. Elle progresse secteur par secteur, converge sur les coups de feu, lance des flashs avant d'entrer là où elle vous a entendu, et attaque en **trois vagues de trois opérateurs**, chaque fois par une autre ouverture. Pas de temps mort : la vague suivante entre six secondes après l'élimination de la précédente, ou au bout de trente secondes si celle-ci tient encore. Le HUD indique la vague en cours (« Vague 2 / 3 »). Repoussez la dernière et les négociations aboutissent.
 
-L'équipement suit le camp : AKM ou Remington 870, Makarov ou Glock. Les opérateurs sont plus précis et portent un gilet ; vous frappez plus fort et connaissez le terrain. Portes, fibre optique et tir à travers les battants sont vos meilleurs outils.
+Chaque carte a ses otages : trois à l'Entrepôt, quatre aux Bureaux, cinq à la Villa. Vous perdez si tout votre groupe tombe (à votre mort, vous reprenez la main dans un complice), ou s'il ne vous reste plus aucun otage vivant : tous morts, ou récupérés par l'intervention (un otage gardé quelques secondes par un opérateur est perdu pour vous). Perdre un otage ne met pas fin à la partie tant qu'il en reste un. L'intervention ne tire jamais avec un otage dans l'axe ou juste derrière sa cible : elle se décale pour trouver un angle. Garder un otage près de soi protège donc vraiment. Les otages sont votre seule protection.
+
+L'équipement suit le camp : AKM ou Remington 870, Makarov ou Glock, et **deux grenades à fragmentation** au lieu des flashs (`Espace`). Elles éclatent au bout de deux secondes et tuent dans un rayon d'environ une case, blessent jusqu'à trois cases et demie, vous et vos otages compris ; un mur ou une porte fermée arrête l'éclat. Pas de fibre optique de ce côté. Les opérateurs sont plus précis et portent un gilet ; vous frappez plus fort et connaissez le terrain. Portes, grenades et tir à travers les battants sont vos meilleurs outils. Les opérateurs, eux, lancent des flashs, mais seulement quand la trajectoire est libre (jamais contre une porte fermée) et jamais sur leurs équipiers ; leur propre camp détourne les yeux et n'est gêné que si l'éclair part à ses pieds.
 
 ## Contrôles
 
@@ -34,11 +36,12 @@ L'équipement suit le camp : AKM ou Remington 870, Makarov ou Glock. Les opérat
 | Porte | `E` ouvre / ferme d'un coup ; molette : fermée ↔ entrebâillée ↔ entrouverte ↔ ouverte (chaque cran est un geste) |
 | Fibre optique | `F` maintenu devant une porte fermée ou entrouverte |
 | Grenade flash | `Espace` ou `G` (vers le curseur) |
+| Ramasser une arme | `V` près d'un corps (échange avec l'arme de même catégorie) |
 | Équipe | `T` suivre / tenir ; clic droit : aller là (sur soi : suivre) |
 | Direction à couvrir | clic droit **maintenu**, puis tirer vers la direction avant de relâcher |
 | Pause | `Échap` |
 
-Objectif : neutraliser tous les suspects sans mourir ni tuer d'otage.
+Objectif : neutraliser tous les suspects sans perdre toute l'équipe ni tuer d'otage. Si vous tombez, vous continuez dans un coéquipier.
 
 En maintenant le clic droit, une flèche part du point visé : la direction tracée est confiée à celui des deux coéquipiers qui se place de ce côté. Une fois sur place, il garde cet angle au lieu de choisir lui-même son point d'intérêt, jusqu'à l'ordre suivant ; un contact reste prioritaire.
 
@@ -81,6 +84,16 @@ Devant une porte fermée ou entrouverte, maintenir `F` glisse une fibre sous le 
 
 Bravo et Charlie ne tirent jamais à travers vous ni à travers un otage. Quand l'axe reste bouché, ils se décalent pour dégager l'angle plutôt que d'attendre, et un ordre de déplacement l'emporte sur un contact : ils rompent et progressent en gardant le suspect en joue.
 
+## Otages
+
+À genoux, tête baissée, un otage est une petite cible. Une première blessure légère ne le tue pas (sa chemise se tache de sang et le HUD l'annonce), mais une deuxième blessure, ou une blessure grave (45 points de dégâts ou plus d'un coup : éclat de grenade proche, balle lourde), le tue.
+
+## Relais et armes au sol
+
+Si vous tombez, la partie ne s'arrête pas : après un court instant, vous reprenez la main dans le coéquipier debout le plus proche, avec son arme, de vraies munitions (sa réserve n'est plus illimitée) et une flash. La mission n'est perdue que lorsque toute l'équipe est à terre.
+
+Chaque corps garde son arme au sol. Près d'un corps, `V` la ramasse, avec un bref geste pendant lequel vous ne tirez pas. Elle remplace l'arme de même catégorie (arme de poing contre arme de poing, arme principale contre arme principale), qui reste au sol à sa place : vous pouvez la reprendre plus tard, avec son chargeur entamé. Une arme prise à un suspect ou à un opérateur est rechargée comme une arme réelle, chargeur plein et réserve normale.
+
 Les chantiers ouverts et les réglages qui restent à faire sont listés dans [TODO.md](TODO.md).
 
 ## Structure
@@ -94,6 +107,14 @@ Les chantiers ouverts et les réglages qui restent à faire sont listés dans [T
 - `js/ui.js` : HUD et overlays (briefing avec choix de l'équipement).
 - `js/main.js` : événements et boucle.
 
+## Tests
+
+Ouvrir `tests/index.html` dans un navigateur (servi par `python -m http.server`, ou directement en local) : la page joue une série de scénarios et affiche ce qui passe et ce qui casse. En ligne de commande, Chrome sans interface fait l'affaire ; le titre de la page vaut `PASS` ou `FAIL n` :
+
+```
+chrome --headless --allow-file-access-from-files --dump-dom tests/index.html
+```
+
 ## Ajouter une mission
 
 Ajouter une entrée dans `LEVELS` (`js/levels.js`). Une case ASCII vaut 32 px ; au chargement, la carte est convertie en grille fine de 16 px : les murs n'ont qu'une petite case d'épaisseur, les portes font 48 px de large et les meubles occupent un bloc de 32 px. Légende :
@@ -104,7 +125,11 @@ Ajouter une entrée dans `LEVELS` (`js/levels.js`). Une case ASCII vaut 32 px ; 
 | `.` `,` `:` | sol béton / parquet / carrelage |
 | espace | vide (hors bâtiment) |
 | `D` | porte fermée |
+| `X` | porte extérieure : un point d'entrée pour l'intervention |
+| `W` | fenêtre : on voit et on tire au travers, on ne la franchit pas à pied ; point d'entrée pour l'intervention |
 | `S` | départ du joueur |
 | `E` `^` `v` `<` `>` | ennemi (aléatoire ou orienté) |
 | `H` | otage |
 | `c` `B` `T` `p` `b` `k` | caisse, baril, table, plante, lit, bureau (bloquent le passage, pas la vue) |
+
+Ne placez ni ennemi ni otage dans une pièce qui donne sur une ouverture (`X` ou `W`) : c'est la zone d'entrée de l'équipe. Le jeu déplace de toute façon derrière la porte la plus proche quiconque s'y trouverait, et `tests/index.html` signale la carte fautive.

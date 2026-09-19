@@ -14,7 +14,7 @@ Open `index.html` directly, or serve the folder:
 python -m http.server 8000
 ```
 
-Then go to http://localhost:8000. Append `#nobrief` to the URL to skip the mission briefing overlay; this is useful when iterating. There is no automated test suite, so verify changes by playing in the browser.
+Then go to http://localhost:8000. Append `#nobrief` to the URL to skip the mission briefing overlay; this is useful when iterating. Run the regression suite by opening `tests/index.html` (see **Tests** below), then check the change by playing in the browser.
 
 ## Architecture
 
@@ -43,6 +43,7 @@ Bindings use `KeyboardEvent.code`, i.e. physical keys. `KeyW/A/S/D` is therefore
 | Weapon | `1` / `2`, or `Alt` to cycle |
 | Door | `E` toggles open/closed; the wheel steps closed ↔ ajar ↔ open |
 | Flash grenade | `Space` or `G` |
+| Pick up a weapon | `V` near a body |
 | Squad | `T` toggles hold/follow; right click orders a move (right click on the player: follow) |
 | Walk/run | `Q`/`Shift` toggles |
 
@@ -62,7 +63,11 @@ If the controls change, update the README table, the HUD hints in `index.html` a
 
 **Door penetration** (`js/game.js`): `castRay` reports the obstacle it stopped at as `door` (doorway tile or leaf). In `updateBullets` a bullet that hits a door is not consumed: it keeps `w.pierce` of its damage (0.2 for buckshot to 0.7 for 7.62 NATO), deviates by up to 1.6°, resumes 3 px past the impact and raises `pierced`, which caps at two doors; below 2 damage it stops. Walls and props are unchanged. This is symmetric, so enemies shoot through doors too.
 
-**Fire discipline** (`js/game.js`): `Game.lineOfFireClear(shooter, target, x, y)` blocks a mate's shot when an ally or hostage is in the axis. A mate that stays blocked past 0.35 s gets `m.blockedLine`, which frees it to move again and sends it to `Game.firingSpot` — the nearest tile with a clear line — instead of standing still. A move order also takes priority over contact, so an engaged mate still obeys. Keep these escapes in mind when touching `updateMate`: without them a mate freezes in front of a hostage.
+**Relay and dropped weapons** (`js/game.js`): when the player dies and a mate is alive, `step` waits `RELAY_DELAY` then calls `Game.takeOver`, which turns the nearest living mate into the player *in place* — `Object.setPrototypeOf(m, Player.prototype)` after deleting its own `slot` (it would shadow `Player`'s getter) — so enemy targets stay valid. The old player object moves into `mates` as a dead entry, which the squad HUD shows as down. `checkEnd` loses only when no op is alive. Every body keeps its weapon in `slot` (or `slots[cur]` for a former player); `Game.pickUp` (`V`, a 0.5 s `pickup` action) swaps it with the player's slot of the same category (pistol vs primary), and `Game.pickupSlot` converts AI weapons through their `pickup` key (`ak` → `akP`, `hk416op` → `hk416`, ...) and replaces infinite ammo with the real magazine and reserve. A body with no weapon has `slot === null`, so `Agent.weapon` and `gunStyle` accept null.
+
+**Hostages** (`js/game.js`): `Hostage.radius` is 7 (kneeling). In `Game.damage` a first hit below `HOSTAGE_GRAVE` only sets `h.wounded` (drawn by `Sprites.hostage`); a second hit, or one at `HOSTAGE_GRAVE` or more, kills.
+
+**Fire discipline** (`js/game.js`): `Game.lineOfFireClear(shooter, target, x, y)` blocks a mate's shot when an ally or hostage is in the axis. A mate that stays blocked past 0.35 s gets `m.blockedLine`, which frees it to move again and sends it to `Game.firingSpot` — the nearest tile with a clear line — instead of standing still. A move order also takes priority over contact, so an engaged mate still obeys. `lineOfFireClear` takes the shooter's own team as friends, so it also serves the siege `Operator`s: `enemyCombat` holds their fire and `updateAssault` sends them to `firingSpot` once blocked. For operators the check is stricter — the margin grows with their current spread and hostages up to 2.5 U behind the target count — because a burst that misses keeps going. Keep these escapes in mind when touching `updateMate`: without them a mate freezes in front of a hostage.
 
 **Teammate orders** (`js/game.js`): `Game.orderFollow`, `Game.orderMove(wx, wy, coverAngle)` and `Game.toggleHold` set `m.order` (`follow` | `hold` | `move`). A held right click builds `game.orderDrag` in `Game.updatePlayer`; on release, the dragged angle is passed as `coverAngle` and stored on the one mate placed on that side as `m.coverAngle`. `Game.pickWatch` returns that angle unchanged instead of scoring watch candidates, and no scan sweep is started while it is set. Any new order clears it.
 
@@ -76,21 +81,32 @@ If the controls change, update the README table, the HUD hints in `index.html` a
 
 Known gaps and pending tuning are tracked in `TODO.md`; read it before starting work on doors, the siege mode or tests.
 
+## Tests
+
+`tests/index.html` loads the game scripts plus `tests/tests.js`, runs every scenario synchronously on a hidden canvas and HUD, and sets `document.title` to `PASS` or `FAIL n`. Headless: `chrome --headless --allow-file-access-from-files --dump-dom tests/index.html`. `mkGame(opts)` builds a game (`mode`, `level`, `loadout`, `entry`); `checkEnd` is stubbed by default because a finished mission freezes `update`, `alone: true` removes enemies and mates so the player is not shot mid-measurement, and `noEnemyAI` freezes suspects. Tests never call `setMode`/`setLoadout`, so they do not touch `localStorage`. Add a scenario for every behaviour fix.
+
+## Breaches (entries from outside)
+
+`X` (exterior door) and `W` (window) sit in the outer wall. `GameMap.addBreach` records each one in `map.breaches` with its `inside` point (the walkable tile on the building side) and inward `angle`; `breachLabel(b)` names it by compass side. An `X` is a normal door; a `W` is `map.windows` / `windowAt`: floor tiles (so sight and bullets pass) that `blocksMove` refuses, so nobody walks through. The outside is void, so nobody can leave. In assault mode the player starts at `breaches[game.entryIndex]`, chosen in the briefing, one map cell inside (`Game.entryStart`, so mates are not pinned against the façade). The entry zone is empty: `GameMap.roomOf(x, y)` flood-fills the room (stopping at walls, doors and windows) and `Game.clearEntryZone` moves any enemy or hostage found there to the nearest free tile outside it. The maps already respect this; the guard is a safety net; in siege mode `spawnAssault` rotates waves across breaches and gives each operator an entry gesture (the door opening, or 1.3 s to climb through a window).
+
 ## Game modes
 
 `game.mode` is `'assault'` (the original) or `'siege'`, saved in `localStorage` under `breach.mode` and switched from the briefing via `Game.setMode`, which reloads the level. `MODES` in `js/entities.js` holds each mode's weapon lists and default loadout, and loadouts are stored per mode (`breach.loadout.<mode>`).
 
+Every map has 9 enemy spawns (the siege side is the player plus 8 mates on those posts) and 3, 4 and 5 hostages respectively; keep that when editing maps. In siege mode the mates take no orders: `Game.canCommand` refuses `T`, the right click and every `order*` call, so each militant holds its post.
+
 In siege mode `loadLevel` reassigns the roles without touching the engine's notion of sides: the player and `mates` (from `SIEGE_MATE_DEFS`, militant styles, `ak`/`pistolE`) stay team `ops` and start on the enemy spawns, while `enemies` becomes the assault team — `Operator` instances spawned at the map entry with `hk416op`/`mp5op`. Everything that keys off `ops` (vision, fog, friendly fire, orders, HUD squad) therefore works unchanged.
 
-`Game.startSiege` builds `game.siege` (prep timer, hold timer, waves, sector list) and reveals the whole map as explored, since the defender knows the building. `Game.updateAssault` replaces `updateEnemy` for those operators: it reuses `enemyCombat` and walks them to the last noise heard, else to the next sector from `Game.buildSectors`. `checkEnd` branches per mode: in siege you win when the hold timer runs out, and lose if you die or a hostage dies.
+`Game.startSiege` builds `game.siege` (prep timer, `waves` copied from `SIEGE_WAVES` at the top of `js/game.js` — one entry per wave, its size — plus breaches and sector list) and reveals the whole map as explored, since the defender knows the building; the first wave only enters when the prep timer runs out. `Game.updateAssault` replaces `updateEnemy` for those operators: it reuses `enemyCombat`, throws a flash through `maybeFlash`/`spawnFlash` when it knows where the threat was, and walks to a found hostage, else the last noise heard, else the next sector from `Game.buildSectors`. `updateHostageRescue` marks a hostage `found` when an operator sees it and `secured` after 4 s next to one. `updateSiege` sends the next wave `gap` (6 s) after the current one is wiped out, or `maxGap` (30 s) after it entered if it still holds; the UI texts read the wave count from `SIEGE_WAVES`. Grenades: `Game.armGrenades` gives the assault side flashes (`p.nade = 'flash'`) and the siege side two frags (`'frag'`, same `flashbangs` counter); a grenade carries `kind`, `team` and `thrower`. `detonateFrag` damages everyone in `FRAG_RADIUS` with line of sight (so walls and closed doors protect), thrower and hostages included. `detonateFlash` spares the thrower's team (they look away) beyond 1.2 U. `maybeFlash` only throws when `Game.clearThrow` finds a free trajectory (no wall, prop or non-open door) and no operator stands near the aim point. The siege side has no fiber optic. `separate` pushes apart agents that sit exactly on top of each other, and `spawnAssault` never places two operators on the same point. `checkEnd` branches per mode: in siege you win once the last wave has entered and no operator is alive, and lose if you die or no hostage is left alive in your hands (all dead, or dead and secured); a single hostage death only announces how many remain. `Game.noise` also turns mates toward nearby noise without moving them.
 
 ## Adding a mission
 
 Append an entry to `LEVELS` in `js/levels.js` with the fields `{ name, briefing, enemyWeapons, map }`. The map legend is at the top of that file and in the README:
-- `#` wall, `D` closed door, `S` player spawn, `H` hostage.
+- `#` wall, `D` closed door, `S` player spawn (fallback when a map has no breach), `H` hostage.
+- `X` exterior door, `W` window: entry points from outside. Give every map several, including at least one of each, and keep enemies and hostages out of every room a breach opens into (the tests check it).
 - `E` enemy with a random facing; `^ v < >` enemy with a fixed facing.
 - Floors: `. , :` (concrete, parquet, tiles).
 - Props: `c B T p b k`.
 - A space is outside the building.
 
-A mission is won when every enemy is dead. It is lost if the player dies or any hostage dies.
+An assault mission is won when every enemy is dead. It is lost if the whole team is down (the player's death alone hands control to a mate) or any hostage dies (in siege mode, only once no hostage is left alive in the player's hands).
