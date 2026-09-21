@@ -10,6 +10,7 @@ const WINDOW_LEN = 3; // largeur d'une fenêtre, en petites cases
 const PROPS = { c: 'crate', B: 'barrel', T: 'table', p: 'plant', b: 'bed', k: 'desk' };
 const DOOR_LEN = 3; // largeur d'une porte, en petites cases
 // Crans d'ouverture : fermée, entrebâillée (un filet de vue), entrouverte (on voit une part de la pièce), ouverte.
+const DOOR_PASS = 0.6; // à partir de ce cran (« entrouverte »), on se glisse dans l'embrasure
 const DOOR_STEPS = [0, 0.3, 0.6, 1];
 
 // Tas binaire minimal pour l'A*.
@@ -180,6 +181,8 @@ class GameMap {
   tile(x, y) { return this.inBounds(x, y) ? this.tiles[y * this.w + x] : 2; }
   floor(x, y) { return this.inBounds(x, y) ? this.floorType[y * this.w + x] : 0; }
   isWall(x, y) { return this.tile(x, y) !== 0; }
+  // Une porte laisse passer dès qu'elle est entrouverte : on se glisse dans l'embrasure.
+  doorPassable(d) { return d.open || d.progress >= DOOR_PASS - 1e-6; }
   door(x, y) { return this.inBounds(x, y) ? this.doorAt.get(y * this.w + x) : undefined; }
   prop(x, y) { return this.propAt.get(y * this.w + x); }
   blocksSight(x, y) {
@@ -274,7 +277,7 @@ class GameMap {
     const y0 = Math.floor((cy - r) / TILE), y1 = Math.floor((cy + r) / TILE);
     for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
       if (this.blocksMove(x, y)) return false;
-      if (solidDoors) { const d = this.door(x, y); if (d && !d.open) return false; }
+      if (solidDoors) { const d = this.door(x, y); if (d && !this.doorPassable(d)) return false; }
     }
     return true;
   }

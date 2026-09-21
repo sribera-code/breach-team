@@ -101,7 +101,7 @@ class UI {
       <div class="modes">${Object.keys(MODES).map(m => `<button class="modebtn${m === g.mode ? ' sel' : ''}" data-mode="${m}">${m === 'siege' ? '☠ Siège — vous tenez le bâtiment' : '🛡 Assaut — vous menez l\'intervention'}</button>`).join('')}</div>
       <p>${siege ? (g.def.siegeBriefing || this.siegeBriefing()) : g.def.briefing}</p>
       ${siege ? '' : this.entryPicker()}
-      <p><small><kbd>ZQSD</kbd>/<kbd>WASD</kbd> se déplacer · <kbd>A</kbd> marche/course · souris viser · <kbd>clic</kbd> tirer · <kbd>R</kbd> / clic molette recharger · <kbd>E</kbd> ouvrir/fermer une porte · molette haut/bas ouvrir/fermer par étapes · <kbd>Alt</kbd> changer d'arme · ${siege ? '<kbd>Espace</kbd> grenade à fragmentation · ' : '<kbd>Espace</kbd> flash · <kbd>F</kbd> fibre sous la porte · '}<kbd>V</kbd> ramasser une arme · ${siege ? '' : "<kbd>T</kbd> équipe suivre/tenir · clic droit envoyer l'équipe (maintenir et tirer : direction à couvrir ; sur vous : suivre) · "}<kbd>Échap</kbd> pause</small></p>
+      <p><small><kbd>ZQSD</kbd>/<kbd>WASD</kbd> se déplacer · <kbd>A</kbd> marche/course · souris viser · <kbd>clic</kbd> tirer · <kbd>R</kbd> / clic molette recharger · <kbd>E</kbd> ouvrir/fermer une porte · molette haut/bas ouvrir/fermer par étapes · <kbd>Alt</kbd> changer d'arme · ${siege ? '<kbd>Espace</kbd> grenade à fragmentation · ' : '<kbd>Espace</kbd> flash · <kbd>F</kbd> fibre sous la porte · '}<kbd>V</kbd> ramasser une arme · <kbd>M</kbd> minimap · ${siege ? '' : "<kbd>T</kbd> équipe suivre/tenir · clic droit envoyer l'équipe (maintenir et tirer : direction à couvrir ; sur vous : suivre) · "}<kbd>Échap</kbd> pause</small></p>
       <h2>Équipement</h2>
       <div class="loadout">
         ${['ar', 'smg', 'sg'].map(c => this.weaponGroup(c, MODES[g.mode].primaries, 'primary')).join('')}
@@ -114,7 +114,7 @@ class UI {
       b.onclick = () => { g.setMode(b.dataset.mode); this.showBriefing(); };
     });
     this.panel.querySelectorAll('.entrybtn').forEach(b => {
-      b.onclick = () => { g.entryIndex = +b.dataset.entry; g.loadLevel(g.levelIndex); this.showBriefing(); };
+      b.onclick = () => { g.setEntry(b.dataset.entry === 'random' ? null : +b.dataset.entry); this.showBriefing(); };
     });
     this.panel.querySelectorAll('.wcard').forEach(b => {
       UI.drawWeapon(b.querySelector('canvas'), WEAPONS[b.dataset.key]);
@@ -134,9 +134,11 @@ class UI {
   entryPicker() {
     const g = this.game, bs = g.map.breaches;
     if (bs.length < 2) return '';
+    // « Au hasard » ne dit pas ce qui est sorti : on le découvre sur place
+    const hasard = `<button class="entrybtn${g.entryRandom ? ' sel' : ''}" data-entry="random">Au hasard</button>`;
     const btns = bs.map((b, i) =>
-      `<button class="entrybtn${i === g.entryIndex ? ' sel' : ''}" data-entry="${i}">${g.map.breachLabel(b)}</button>`).join('');
-    return `<h2>Point d'entrée</h2><div class="entries">${btns}</div>`;
+      `<button class="entrybtn${!g.entryRandom && i === g.entryIndex ? ' sel' : ''}" data-entry="${i}">${g.map.breachLabel(b)}</button>`).join('');
+    return `<h2>Point d'entrée</h2><div class="entries">${hasard}${btns}</div>`;
   }
 
   // ---- Équipement ----
@@ -242,7 +244,7 @@ class UI {
         <span>Tirs / touchés</span><b>${s.shots} / ${s.hits}</b>
         <span>Précision</span><b>${s.shots ? Math.round(100 * s.hits / s.shots) : 0} %</b>
         <span>${siege ? 'Grenades utilisées' : 'Flashs utilisées'}</span><b>${s.flashes}</b>
-        <span>${siege ? 'Complices perdus' : 'Coéquipiers perdus'}</span><b>${s.losses} / ${g.mates.length}</b>
+        <span>${siege ? 'Terroristes perdus' : 'Opérateurs perdus'}</span><b>${g.ops.filter(o => !o.alive).length} / ${g.squadSize}</b>
         <span>Otages tués</span><b id="endHostagesKilled">${g.hostages.filter(h => !h.alive).length} / ${g.hostages.length}</b>
         ${siege ? `<span>Otages récupérés par l'intervention</span><b>${g.hostages.filter(h => h.secured).length} / ${g.hostages.length}</b>` : ''}
       </div>
@@ -270,6 +272,7 @@ class UI {
       <b>Flash</b> : <kbd>Espace</kbd> (ou <kbd>G</kbd>) lance une grenade aveuglante vers le curseur : la distance au curseur règle la force du lancer. Elle vole, retombe, roule et rebondit sur les murs, le mobilier et les portes fermées, puis explose au bout d'environ 1,7 s. Attention aux retours contre un mur proche. Collé à une porte entrouverte, visez l'embrasure pour glisser la grenade par l'entrebâillement ; de plus loin, elle rebondit sur le battant. Les ennemis aveuglés ne tirent plus pendant quelques secondes. Ne regardez pas l'explosion.<br>
       <b>À travers les portes</b> : un battant n'est pas un abri. Les balles le traversent en perdant de l'énergie (un tiers pour du 7,62, les quatre cinquièmes pour de la chevrotine) et en déviant un peu. Vous pouvez arroser une porte fermée — et un suspect peut faire de même. Les murs, eux, arrêtent tout.<br>
       <b>Relais et armes au sol</b> : si vous tombez, vous reprenez la main dans le coéquipier debout le plus proche ; la mission n'est perdue que quand toute l'équipe est à terre. Près d'un corps, <kbd>V</kbd> ramasse son arme et laisse au sol la vôtre de même catégorie (vous pouvez la reprendre).<br>
+      <b>Minimap</b> : en haut à droite, le plan de ce que vous avez exploré, avec les portes, les fenêtres, votre équipe, les otages connus et les adversaires visibles. <kbd>M</kbd> la replie.<br>
       <b>Otages</b> : ne tirez pas dessus, y compris à travers une porte.<br>
       <b>Équipe</b> : Bravo et Charlie vous suivent en formation et couvrent vos flancs et vos arrières. <kbd>T</kbd> leur fait tenir la position (ou reprendre le suivi), le clic droit les envoie sur un point (ils ouvrent les portes sur ce trajet), et un clic droit sur vous-même les rappelle en suivi. En <b>maintenant</b> le clic droit puis en tirant vers une direction, vous ajoutez une consigne de couverture : celui des deux qui se place de ce côté gardera cet angle au lieu de choisir lui-même son point d'intérêt (jusqu'à l'ordre suivant ; un contact reste prioritaire). Ils tirent sur tout suspect visible, mais jamais à travers vous ou un otage : quand l'axe reste bouché, ils se décalent pour dégager l'angle (le HUD indique « Axe bouché »). Un ordre de déplacement reste prioritaire sur un contact : ils rompent et progressent en gardant le suspect en joue. Attention, vos propres balles peuvent les blesser.<br>
       <kbd>Échap</kbd> pause.</p>

@@ -7,6 +7,10 @@ const RELAY_DELAY = 1.2;
 // Portée du ramassage d'une arme au sol, depuis le corps qui la porte.
 const PICKUP_RANGE = 1.3 * U;
 // Dégâts d'un seul coup au-delà desquels un otage meurt sans passer par la blessure.
+// Durée de mèche, décomptée dès la fin du geste d'armement (et non du lancer).
+const FUSE = { flash: 1.7, frag: 2 };
+// Chevrotine dans la serrure : nombre de plombs qu'il faut mettre dans une porte pour la faire sauter.
+const BREACH_PELLETS = 5;
 const HOSTAGE_GRAVE = 45;
 // Grenade à fragmentation (camp du groupe armé en siège) : rayon létal et dégâts au centre.
 const FRAG_RADIUS = 3.5 * U;
@@ -16,6 +20,7 @@ class Game {
   constructor() {
     this.levelIndex = 0;
     this.listeners = {};
+    this.minimap = true;
     this.input = { keys: {}, pressed: {}, mouse: { x: 0, y: 0, down: false, rdown: false } };
     this.orderDrag = null; // ordre de déplacement en cours de tracé (clic droit maintenu)
     this.visionPolys = [];
@@ -25,6 +30,19 @@ class Game {
     this.over = null;
     this.mode = Game.loadSavedMode();
     this.loadout = Game.loadSavedLoadout(this.mode);
+    this.entryRandom = Game.loadSavedEntry(); // par défaut, le point d'entrée est tiré au sort
+  }
+
+  static loadSavedEntry() {
+    try { return localStorage.getItem('breach.entry') !== 'fixed'; } catch (e) { return true; }
+  }
+
+  // Point d'entrée choisi au briefing : une ouverture précise, ou le tirage au sort à chaque partie.
+  setEntry(i) {
+    this.entryRandom = i === null;
+    if (i !== null) this.entryIndex = i;
+    try { localStorage.setItem('breach.entry', this.entryRandom ? 'random' : 'fixed'); } catch (e) { /* stockage indisponible */ }
+    this.loadLevel(this.levelIndex);
   }
 
   static loadSavedMode() {
@@ -69,75 +87,117 @@ class Game {
     const c = t => ({ x: (t.x + 0.5) * TILE, y: (t.y + 0.5) * TILE });
     const entry = this.map.spawns[0] || { x: 1, y: 1 };
     const siege = this.mode === 'siege';
-    // En siège, on incarne le groupe armé : on part d'un poste de suspect, le plus loin de l'entrée,
-    // et c'est l'équipe d'intervention qui arrive par l'entrée.
-    const posts = this.map.enemySpawns.slice().sort((a, b) =>
-      dist(c(b).x, c(b).y, c(entry).x, c(entry).y) - dist(c(a).x, c(a).y, c(entry).x, c(entry).y));
-    // En assaut, l'équipe entre par une ouverture sur l'extérieur (choisie au briefing).
+    // En assaut, l'équipe entre par une ouverture sur l'extérieur (tirée au sort, ou choisie au briefing).
     const breaches = this.map.breaches;
-    this.entryIndex = breaches.length ? clamp(this.entryIndex || 0, 0, breaches.length - 1) : 0;
+    this.entryIndex = !breaches.length ? 0
+      : this.entryRandom ? Math.floor(Math.random() * breaches.length)
+      : clamp(this.entryIndex || 0, 0, breaches.length - 1);
     const entryBreach = !siege && breaches.length ? breaches[this.entryIndex] : null;
-    const s = siege && posts.length ? posts[0]
+    // Postes tirés au sort à chaque partie : la disposition des terroristes (le chef compris) et
+    // des otages ne se mémorise pas d'une partie à l'autre.
+    const nFoes = this.map.enemySpawns.length || 1;
+    const nHost = this.map.hostageSpawns.length;
+    const free = this.buildPosts(entryBreach, nFoes + nHost);
+    const foePosts = free.splice(0, nFoes);
+    const hostPosts = free.splice(0, nHost);
+    const s = siege ? { x: Math.floor(foePosts[0].x / TILE), y: Math.floor(foePosts[0].y / TILE) }
       : entryBreach ? this.entryStart(entryBreach)
       : entry;
     this.player = new Player(c(s).x, c(s).y, this.loadout);
     this.player.style = siege ? { ...STYLE_BOSS } : { ...STYLE_PLAYER };
     this.armGrenades(this.player);
-    this.player.angle = Math.atan2(this.map.h * TILE / 2 - this.player.y, this.map.w * TILE / 2 - this.player.x);
+    this.player.angle = siege ? rand(0, TAU)
+      : Math.atan2(this.map.h * TILE / 2 - this.player.y, this.map.w * TILE / 2 - this.player.x);
     const weps = def.enemyWeapons || ['ak'];
-    this.enemies = siege ? [] : this.map.enemySpawns.map(sp => {
-      const p = c(sp);
-      return new Enemy(p.x, p.y, sp.angle, weps[Math.floor(Math.random() * weps.length)]);
-    });
-    this.hostages = this.map.hostageSpawns.map(sp => { const p = c(sp); return new Hostage(p.x, p.y); });
-    if (entryBreach) this.clearEntryZone(entryBreach);
+    this.enemies = siege ? [] : foePosts.map(q => new Enemy(q.x, q.y, null, weps[Math.floor(Math.random() * weps.length)]));
+    this.hostages = hostPosts.map(q => new Hostage(q.x, q.y));
     this.player.moveDir = this.player.angle;
-    // Coéquipiers : cases libres les plus proches du point de départ.
-    const free = [];
-    for (let dy = -6; dy <= 6; dy++) for (let dx = -6; dx <= 6; dx++) {
-      const tx = s.x + dx, ty = s.y + dy;
-      if (!this.map.inBounds(tx, ty) || this.map.blocksMove(tx, ty) || this.map.door(tx, ty)) continue;
-      if (!this.map.circleFree((tx + 0.5) * TILE, (ty + 0.5) * TILE, 12, true)) continue;
-      free.push({ x: tx, y: ty, d: Math.hypot(dx, dy) });
-    }
-    free.sort((a, b) => a.d - b.d);
-    const taken = [{ x: this.player.x, y: this.player.y }];
-    const mateDefs = siege ? SIEGE_MATE_DEFS.slice(0, Math.max(1, Math.min(SIEGE_MATE_DEFS.length, posts.length - 1))) : TEAMMATE_DEFS;
-    this.mates = mateDefs.map(d => {
-      let t = free.find(f => taken.every(o => dist((f.x + 0.5) * TILE, (f.y + 0.5) * TILE, o.x, o.y) >= 26)) || s;
-      taken.push({ x: (t.x + 0.5) * TILE, y: (t.y + 0.5) * TILE });
-      const m = new Teammate((t.x + 0.5) * TILE, (t.y + 0.5) * TILE, d);
-      m.angle = this.player.angle;
-      return m;
-    });
+    const baseDefs = siege ? SIEGE_MATE_DEFS.slice(0, Math.max(1, Math.min(SIEGE_MATE_DEFS.length, foePosts.length - 1))) : TEAMMATE_DEFS;
+    // armes tirées au sort, une par coéquipier
+    const dealt = dealWeapons(siege ? SIEGE_MATE_POOL : MATE_POOL, baseDefs.length);
+    const mateDefs = baseDefs.map((d, i) => ({ ...d, weapon: dealt[i] }));
     if (siege) {
-      // Les complices démarrent à leur poste (les autres emplacements de suspects), en position tenue.
-      const free = posts.slice(1);
-      this.mates.forEach((m, i) => {
-        const sp = free[i % Math.max(1, free.length)];
-        if (sp) { const q = c(sp); m.x = q.x; m.y = q.y; m.angle = sp.angle === null || sp.angle === undefined ? rand(0, TAU) : sp.angle; }
+      // Chaque complice à son poste, tiré au sort lui aussi, en position tenue.
+      this.mates = mateDefs.map((d, i) => {
+        const q = foePosts[i + 1] || foePosts[0];
+        const m = new Teammate(q.x, q.y, d);
+        m.angle = rand(0, TAU);
         m.order = 'hold';
         m.holdAngle = m.angle;
+        return m;
       });
       this.startSiege(entry, c(entry));
-    } else this.siege = null;
+    } else {
+      // En assaut, l'équipe se forme autour du joueur : cases libres les plus proches du départ.
+      const near = [];
+      for (let dy = -6; dy <= 6; dy++) for (let dx = -6; dx <= 6; dx++) {
+        const tx = s.x + dx, ty = s.y + dy;
+        if (!this.map.inBounds(tx, ty) || this.map.blocksMove(tx, ty) || this.map.door(tx, ty)) continue;
+        if (!this.map.circleFree((tx + 0.5) * TILE, (ty + 0.5) * TILE, 12, true)) continue;
+        near.push({ x: tx, y: ty, d: Math.hypot(dx, dy) });
+      }
+      near.sort((a, b) => a.d - b.d);
+      const taken = [{ x: this.player.x, y: this.player.y }];
+      this.mates = mateDefs.map(d => {
+        const t = near.find(f => taken.every(o => dist((f.x + 0.5) * TILE, (f.y + 0.5) * TILE, o.x, o.y) >= 26)) || s;
+        taken.push({ x: (t.x + 0.5) * TILE, y: (t.y + 0.5) * TILE });
+        const m = new Teammate((t.x + 0.5) * TILE, (t.y + 0.5) * TILE, d);
+        m.angle = this.player.angle;
+        return m;
+      });
+      if (entryBreach) this.clearEntryZone(entryBreach);
+      this.siege = null;
+    }
     this.bullets = [];
     this.grenades = [];
     this.effects = [];
     this.casings = [];
     this.decals = []; // file d'attente consommée par le rendu
+    this.hiddenDecals = []; // sang, impacts... tombés hors de vue : révélés quand on voit l'endroit
     this.time = 0;
     this.over = null;
     this.loseReason = '';
     this.paused = false;
     this.stats = { kills: 0, shots: 0, hits: 0, flashes: 0, losses: 0 };
+    this.squadSize = 1 + this.mates.length; // vous compris : c'est le groupe entier qui compte ses pertes
     this.orderMarker = null;
     this.orderDrag = null;
     this.relayT = 0;
     this.pickHint = null;
+    if (this.player) this.player.cooking = null;
     this.message = { text: '', t: 0 };
     this.computeVision();
     this.emit('level');
+  }
+
+  // Postes possibles pour les terroristes et les otages : les emplacements écrits sur la carte,
+  // plus un quadrillage de cases libres, le tout mélangé. La disposition change donc à chaque partie,
+  // sans jamais tomber dans la pièce d'entrée de l'assaut ni coller deux personnes l'une à l'autre.
+  buildPosts(entryBreach, needed) {
+    const m = this.map;
+    const room = entryBreach ? m.roomOf(entryBreach.inside.x, entryBreach.inside.y) : null;
+    const cand = [];
+    for (const sp of [...m.enemySpawns, ...m.hostageSpawns]) cand.push({ x: sp.x, y: sp.y });
+    for (let ty = 2; ty < m.h - 2; ty += 3) for (let tx = 2; tx < m.w - 2; tx += 3) cand.push({ x: tx, y: ty });
+    for (let i = cand.length - 1; i > 0; i--) { // mélange de Fisher-Yates
+      const j = Math.floor(Math.random() * (i + 1));
+      [cand[i], cand[j]] = [cand[j], cand[i]];
+    }
+    const out = [];
+    const keep = (min) => {
+      for (const t of cand) {
+        if (out.length >= needed) return;
+        const x = (t.x + 0.5) * TILE, y = (t.y + 0.5) * TILE;
+        if (room && room.has(t.y * m.w + t.x)) continue;
+        if (m.blocksMove(t.x, t.y) || m.door(t.x, t.y) || m.tile(t.x, t.y) !== 0) continue;
+        if (!m.circleFree(x, y, 12, true)) continue;
+        if (out.some(o => dist(o.x, o.y, x, y) < min)) continue;
+        out.push({ x, y });
+      }
+    };
+    keep(2 * U);            // bien répartis...
+    if (out.length < needed) keep(1.2 * U); // ...quitte à se serrer sur une petite carte
+    return out;
   }
 
   // Case de départ en assaut : un peu en retrait de l'ouverture, pour ne pas coller l'équipe au mur
@@ -223,7 +283,7 @@ class Game {
   // Une vague entre par une ouverture, différente de la précédente quand c'est possible :
   // on ne doit jamais être sûr du côté par lequel ils arrivent.
   spawnAssault(n) {
-    const s = this.siege, weps = ['hk416op', 'mp5op'], bs = s.breaches;
+    const s = this.siege, weps = dealWeapons(OPERATOR_POOL, n), bs = s.breaches;
     const i = bs.length > 1
       ? (s.lastBreach + 1 + Math.floor(Math.random() * (bs.length - 1))) % bs.length
       : 0;
@@ -241,7 +301,7 @@ class Game {
         x = cx; y = cy; break search;
       }
       placed.push({ x, y });
-      const op = new Operator(x, y, b.angle, weps[k % weps.length]);
+      const op = new Operator(x, y, b.angle, weps[k]);
       // entrer prend du temps : on enjambe la fenêtre ou on pousse la porte, arme basse
       if (b.door && k === 0) this.doorAction(op, b.door, 1);
       else this.startAction(op, b.kind === 'window' ? 'window' : 'door', b.kind === 'window' ? 1.3 : 0.6, null);
@@ -306,6 +366,11 @@ class Game {
 
   // ---- Boucle ----
   update(dt) {
+    // Minimap : visible par défaut, M la replie (la touche répond même mort ou en pause).
+    if (this.input.pressed.KeyM) {
+      this.minimap = !this.minimap;
+      this.say(this.minimap ? 'Minimap affichée' : 'Minimap repliée', 1.2);
+    }
     if (!this.over && !this.paused) this.step(dt);
     if (!this.paused) this.updateDying(dt);
     this.computeVision();
@@ -342,7 +407,7 @@ class Game {
       }
       if (k >= 1) {
         a.dying = null;
-        this.decals.push({ type: 'pool', x: a.x, y: a.y, rot: a.bodyAngle });
+        this.addDecal({ type: 'pool', x: a.x, y: a.y, rot: a.bodyAngle });
       }
     }
   }
@@ -364,6 +429,7 @@ class Game {
     }
     if (this.siege) this.updateSiege(dt);
     this.updateActions(dt);
+    this.updateCooking(this.player, dt);
     this.updatePlayer(dt);
     for (const m of this.mates) this.updateMate(m, dt);
     for (const e of this.enemies) (this.siege ? this.updateAssault(e, dt) : this.updateEnemy(e, dt));
@@ -372,7 +438,7 @@ class Game {
     this.updateGrenades(dt);
     for (const c of this.casings) {
       c.t += dt; c.x += c.vx * dt; c.y += c.vy * dt; c.vx *= 0.9; c.vy *= 0.9; c.rot += c.spin * dt;
-      if (c.t >= c.life) this.decals.push({ type: 'casing', x: c.x, y: c.y, rot: c.rot });
+      if (c.t >= c.life) this.addDecal({ type: 'casing', x: c.x, y: c.y, rot: c.rot });
     }
     this.casings = this.casings.filter(c => c.t < c.life);
     for (const f of this.effects) f.t += dt;
@@ -493,13 +559,13 @@ class Game {
         if (w.reloadType === 'shell') {
           s.mag++; s.reserve--;
           Sound.tick(0.2);
-          if (s.mag < w.mag && s.reserve > 0) p.reloadT = w.reload;
+          if (s.mag < w.mag && s.reserve > 0) p.reloadT = p.reloadDur = w.reload;
         } else {
           const take = Math.min(w.mag - s.mag, s.reserve);
           s.mag += take; s.reserve -= take;
         }
       }
-    } else if (p.switchT <= 0 && p.stun <= 0 && !p.act && !p.fiber) {
+    } else if (p.switchT <= 0 && p.stun <= 0 && !p.act && !p.fiber && !p.cooking) {
       const want = w.auto ? m.down : pr.Mouse0;
       if (want && p.fireT <= 0) {
         if (s.mag <= 0) { if (pr.Mouse0) { if (s.reserve > 0) this.startReload(p); else this.say('Plus de munitions', 1.5); } }
@@ -523,10 +589,18 @@ class Game {
     return best;
   }
 
+  // Rechargement d'un coéquipier : un chargeur d'un coup, ou le temps de remplir le magasin
+  // cartouche par cartouche pour un fusil à pompe.
+  mateReload(m) {
+    const w = m.weapon;
+    const n = w.reloadType === 'shell' ? Math.max(1, w.mag - m.slot.mag) : 1;
+    m.reloadT = m.reloadDur = w.reload * n;
+  }
+
   startReload(p) {
     const s = p.slot, w = s.def;
-    if (p.reloadT > 0 || p.act || p.fiber || s.mag >= w.mag || s.reserve <= 0) return;
-    p.reloadT = w.reload;
+    if (p.reloadT > 0 || p.act || p.fiber || p.cooking || s.mag >= w.mag || s.reserve <= 0) return;
+    p.reloadT = p.reloadDur = w.reload;
     if (w.reloadType === 'shell') Sound.tick(0.2); else Sound.reload();
   }
 
@@ -619,23 +693,43 @@ class Game {
     });
   }
 
-  // Dégoupiller et armer le bras prend un instant ; la grenade part à la fin du geste,
-  // vers le curseur de ce moment-là.
+  // Dégoupiller et armer le bras prend un instant. La mèche part à la fin de ce geste, pas au
+  // lancer : tant qu'on garde la touche, la grenade brûle dans la main (on « compte » avant de
+  // la jeter, quitte à la garder une seconde de trop).
   throwFlash(p) {
-    if (p.flashbangs <= 0 || p.stun > 0 || p.act) return;
+    if (p.flashbangs <= 0 || p.stun > 0 || p.act || p.cooking) return;
     p.flashbangs--;
     this.stats.flashes++;
     Sound.tick(0.12); // goupille
-    this.startAction(p, 'grenade', 0.45, () => this.releaseFlash(p));
+    this.startAction(p, 'grenade', 0.45, () => {
+      p.cooking = { t: 0, kind: p.nade || 'flash', fuse: FUSE[p.nade === 'frag' ? 'frag' : 'flash'] };
+      Sound.tick(0.1); // la cuillère part : la mèche brûle
+    });
   }
 
-  releaseFlash(p) {
-    const m = this.input.mouse;
-    this.spawnFlash(p, m.x, m.y);
+  // Grenade dégoupillée en main : elle part au relâchement de la touche, et éclate sur place
+  // si on la garde jusqu'au bout.
+  updateCooking(p, dt) {
+    const c = p.cooking;
+    if (!c) return;
+    c.t += dt;
+    if (c.t >= c.fuse) {
+      p.cooking = null;
+      if (c.kind === 'frag') this.detonateFrag({ x: p.x, y: p.y, thrower: p, team: p.team, kind: 'frag' });
+      else this.detonateFlash(p.x, p.y, null); // à bout portant, même son camp est aveuglé
+      this.say('Elle vous a explosé dans la main', 3); // après l'explosion : ce message-là prime
+      return;
+    }
+    const k = this.input.keys;
+    if (!p.alive || !(k.Space || k.KeyG)) {
+      p.cooking = null;
+      const m = this.input.mouse;
+      this.spawnFlash(p, p.alive ? m.x : p.x, p.alive ? m.y : p.y, c.t);
+    }
   }
 
   // Jet d'une flash depuis un agent vers un point : la distance règle la force du lancer.
-  spawnFlash(p, mx, my) {
+  spawnFlash(p, mx, my, cooked) {
     const m = { x: mx, y: my };
     // Portée = distance au curseur (plafonnée). Vol en l'air puis roulement avec frottement :
     // distance ≈ v0 * (flight + 1/friction), d'où v0.
@@ -644,9 +738,12 @@ class Game {
     const flight = 0.35, friction = 4;
     const v0 = d / (flight + 1 / friction);
     let gx = p.x + Math.cos(ang) * 14, gy = p.y + Math.sin(ang) * 14;
-    if (this.grenadeBlocked(gx, gy)) { gx = p.x; gy = p.y; }
+    // la main ne passe pas à travers un mur : si un obstacle sépare le lanceur du point de départ, elle part de lui
+    if (this.grenadeBlocked(gx, gy) || this.map.castRay(p.x, p.y, ang, 14, false).hit) { gx = p.x; gy = p.y; }
     const kind = p.nade || 'flash';
-    const g = { x: gx, y: gy, vx: Math.cos(ang) * v0, vy: Math.sin(ang) * v0, t: 0, flight, friction, fuse: kind === 'frag' ? 2 : 1.7, h: 0, spin: rand(0, TAU), bounces: 0, post: null,
+    // temps déjà brûlé dans la main : la mèche a commencé à la fin du geste d'armement
+    const burnt = cooked || 0;
+    const g = { x: gx, y: gy, vx: Math.cos(ang) * v0, vy: Math.sin(ang) * v0, t: 0, flight, friction, fuse: FUSE[kind === 'frag' ? 'frag' : 'flash'], cooked: burnt, h: 0, spin: rand(0, TAU), bounces: 0, post: null,
       kind, team: p.team, thrower: p };
     // Collé à une porte entrouverte et visant l'embrasure : la grenade est glissée par l'entrebâillement
     // (le battant est ignoré le temps de franchir la porte).
@@ -803,6 +900,7 @@ class Game {
     if (door.opening) { say('La porte est déjà en mouvement'); return false; }
     if (target === door.progress) return false;
     const opening = target > door.progress;
+    if (!opening && door.broken) { say('La serrure est arrachée : la porte ne ferme plus'); return false; }
     if (!opening) {
       // on vérifie avant le geste, pour ne pas manœuvrer la poignée pour rien
       const blocker = this.doorBlocker(door);
@@ -832,6 +930,24 @@ class Game {
     if (!quiet) Sound.door();
   }
 
+  // Une porte encaisse la chevrotine jusqu'à ce que la serrure lâche : elle s'ouvre alors d'un coup
+  // et ne se referme plus (le pêne est arraché).
+  breachDoor(door, shooter) {
+    if (door.broken) return;
+    if (this.time - (door.hitT || -9) > 3) door.hits = 0; // impacts trop espacés : le bois tient
+    door.hitT = this.time;
+    door.hits = (door.hits || 0) + 1;
+    if (door.hits < BREACH_PELLETS) return;
+    door.broken = true;
+    door.opening = true;
+    door.target = 1;
+    door.duration = 0.25;
+    door.ajar = false;
+    Sound.door();
+    this.noise(door.cx, door.cy, 6 * U, shooter);
+    if (shooter === this.player) this.say('Serrure arrachée : la porte ne ferme plus', 2);
+  }
+
   // Qui se trouve dans l'embrasure (et empêche donc de refermer) : agent, 'grenade', ou null.
   // On ne compte que ce qui est vraiment dans le cadre, pas ce qui passe devant.
   doorBlocker(door) {
@@ -854,7 +970,7 @@ class Game {
 
   // Fermeture (target 0 = fermée, crans intermédiaires possibles). Impossible si l'embrasure est occupée.
   closeDoor(agent, door, target) {
-    if (target >= door.progress) return;
+    if (target >= door.progress || door.broken) return;
     const blocker = this.doorBlocker(door);
     if (blocker) { if (agent === this.player) this.say(this.doorBlockedMsg(agent, blocker), 1.2); return; }
     door.target = target;
@@ -874,10 +990,17 @@ class Game {
     const n = w.pellets || 1;
     const spread = this.spreadOf(shooter);
     const ml = muzzleDist(w.gunLen);
-    const mx = shooter.x + Math.cos(shooter.angle) * ml, my = shooter.y + Math.sin(shooter.angle) * ml;
+    // Collé à un mur ou à une porte, le canon dépasse de l'autre côté : la balle part alors du tireur
+    // (et bute sur l'obstacle, ou le traverse avec le malus d'une porte) au lieu de naître derrière.
+    const muzzle = this.map.castRay(shooter.x, shooter.y, shooter.angle, ml, false);
+    const blocked = muzzle.hit;
+    const mx = blocked ? muzzle.x - Math.cos(shooter.angle) * 2 : shooter.x + Math.cos(shooter.angle) * ml;
+    const my = blocked ? muzzle.y - Math.sin(shooter.angle) * 2 : shooter.y + Math.sin(shooter.angle) * ml;
     for (let i = 0; i < n; i++) {
       const a = shooter.angle + rand(-spread, spread);
-      this.bullets.push({ x: mx, y: my, vx: Math.cos(a) * w.speed, vy: Math.sin(a) * w.speed, team: shooter.team, damage: w.damage, life: w.range / w.speed, shooter, trail: w.heavy ? 10 : 18, pierce: w.pierce === undefined ? 0.4 : w.pierce, pierced: 0 });
+      const clear = !blocked && !this.map.castRay(shooter.x, shooter.y, a, ml, false).hit;
+      const bx = clear ? shooter.x + Math.cos(a) * ml : shooter.x, by = clear ? shooter.y + Math.sin(a) * ml : shooter.y;
+      this.bullets.push({ x: bx, y: by, vx: Math.cos(a) * w.speed, vy: Math.sin(a) * w.speed, team: shooter.team, damage: w.damage, life: w.range / w.speed, shooter, trail: w.heavy ? 10 : 18, pierce: w.pierce === undefined ? 0.4 : w.pierce, pierced: 0, breach: w.kind === 'shotgun' ? 1 : 0 });
     }
     shooter.bloom = Math.min(shooter.bloom + w.bloom, w.bloomMax || 8 * DEG);
     shooter.kick = 1;
@@ -926,6 +1049,7 @@ class Game {
       if (r.hit) {
         // Une porte n'est pas un mur : la balle la traverse en perdant de l'énergie (et un peu sa ligne).
         if (r.door && b.pierced < 2) {
+          if (b.breach && b.pierced === 0) this.breachDoor(r.door, b.shooter);
           b.pierced++;
           b.damage *= b.pierce;
           const na = ang + rand(-1.6, 1.6) * DEG;
@@ -939,7 +1063,7 @@ class Game {
           if (b.life > 0 && b.damage >= 2) keep.push(b);
           continue;
         }
-        this.decals.push({ type: 'hole', x: r.x - cs * 1.5, y: r.y - sn * 1.5 });
+        this.addDecal({ type: 'hole', x: r.x - cs * 1.5, y: r.y - sn * 1.5 });
         this.effects.push({ type: 'spark', x: r.x, y: r.y, t: 0, life: 0.15 });
         continue;
       }
@@ -954,7 +1078,7 @@ class Game {
     this.effects.push({ type: 'hit', x: target.x, y: target.y, t: 0, life: 0.25 });
     for (let i = 0; i < 3; i++) {
       const d = rand(4, 22);
-      this.decals.push({ type: 'blood', x: target.x + Math.cos(ang + rand(-0.6, 0.6)) * d, y: target.y + Math.sin(ang + rand(-0.6, 0.6)) * d, r: rand(2, 5) });
+      this.addDecal({ type: 'blood', x: target.x + Math.cos(ang + rand(-0.6, 0.6)) * d, y: target.y + Math.sin(ang + rand(-0.6, 0.6)) * d, r: rand(2, 5) });
     }
     if (target.team === 'civ') {
       // Un otage survit à une première blessure légère ; une deuxième, ou une blessure grave
@@ -965,7 +1089,7 @@ class Game {
         return;
       }
       target.alive = false;
-      this.decals.push({ type: 'pool', x: target.x, y: target.y, rot: target.angle });
+      this.addDecal({ type: 'pool', x: target.x, y: target.y, rot: target.angle });
       if (this.siege) {
         const left = this.hostages.filter(h => h.alive && !h.secured).length;
         if (left) this.say(`Un otage est tombé — il vous en reste ${left}`, 3);
@@ -1013,9 +1137,9 @@ class Game {
       else g.h = 0;
       if (g.t >= g.flight) { const f = Math.exp(-g.friction * dt); g.vx *= f; g.vy *= f; }   // roulement
       if (speed < 4) { g.vx = 0; g.vy = 0; }
-      if (g.t >= g.fuse) { if (g.kind === 'frag') this.detonateFrag(g); else this.detonateFlash(g.x, g.y, g); }
+      if (g.t + g.cooked >= g.fuse) { if (g.kind === 'frag') this.detonateFrag(g); else this.detonateFlash(g.x, g.y, g); }
     }
-    this.grenades = this.grenades.filter(g => g.t < g.fuse);
+    this.grenades = this.grenades.filter(g => g.t + g.cooked < g.fuse);
   }
 
   bounceGrenade(g, axis) {
@@ -1062,7 +1186,7 @@ class Game {
   detonateFrag(g) {
     const { x, y } = g;
     this.effects.push({ type: 'frag', x, y, t: 0, life: 0.9 });
-    this.decals.push({ type: 'scorch', x, y });
+    this.addDecal({ type: 'scorch', x, y });
     Sound.frag();
     for (const a of [...this.enemies, ...this.ops, ...this.hostages]) {
       if (!a.alive) continue;
@@ -1160,7 +1284,7 @@ class Game {
     agent.moving = false;
     if (agent.act) return; // geste en cours (poignée de porte) : on ne bouge pas
     if (agent.waitDoor) {
-      if (!agent.waitDoor.open) return;
+      if (!this.map.doorPassable(agent.waitDoor)) return;
       agent.waitDoor = null;
     }
     if (agent.holdT > 0) { agent.holdT -= dt; return; }
@@ -1174,7 +1298,7 @@ class Game {
     if (!agent.engaged) turnToward(agent, ang, agent.turnRate, dt);
     const ax = agent.x + Math.cos(ang) * (agent.radius + 4), ay = agent.y + Math.sin(ang) * (agent.radius + 4);
     const door = this.map.door(Math.floor(ax / TILE), Math.floor(ay / TILE));
-    if (door && !door.open) {
+    if (door && !this.map.doorPassable(door)) {
       if (!door.opening) this.doorAction(agent, door, 1);
       agent.waitDoor = door;
       return;
@@ -1580,22 +1704,27 @@ class Game {
 
   // Aucun allié ni otage sur la ligne de tir (alliés : l'équipe du tireur, quel que soit son camp).
   // x, y : position de tir supposée (par défaut celle du tireur).
-  lineOfFireClear(shooter, target, x, y) {
+  // extra : marge supplémentaire, pour choisir un point de tir qui restera valable une fois sur place.
+  lineOfFireClear(shooter, target, x, y, extra) {
     if (x === undefined) { x = shooter.x; y = shooter.y; }
     const d = dist(x, y, target.x, target.y);
     const cs = (target.x - x) / d, sn = (target.y - y) / d;
     const friends = shooter.team === 'ops' ? this.ops : this.enemies;
-    // L'intervention est plus stricte : elle tient compte de la dispersion de sa rafale et des
-    // otages juste derrière la cible (une balle qui la manque continue sa course).
+    // Les tireurs entraînés (équipe et intervention) tiennent compte de la dispersion de leur rafale
+    // et des otages juste derrière la cible : une balle qui la manque continue sa course.
+    const trained = shooter instanceof Operator || shooter instanceof Teammate;
+    // seule l'intervention se refuse aussi un otage derrière la cible : c'est sa mission
     const strict = shooter instanceof Operator;
-    const cone = strict ? Math.tan(this.spreadOf(shooter, d) + 2 * DEG) : 0;
+    // L'intervention garde toute la marge de sa gerbe ; l'équipe s'en tient à la moitié, sans quoi
+    // elle ne tire plus jamais dans une pièce encombrée.
+    const cone = trained ? Math.tan(this.spreadOf(shooter, d) * (strict ? 1 : 0.5) + (strict ? 2 : 1) * DEG) : 0;
     for (const f of [...friends, ...this.hostages]) {
       if (f === shooter || f === target || !f.alive) continue;
       const rx = f.x - x, ry = f.y - y;
       const t = rx * cs + ry * sn;
       const behind = strict && f.team === 'civ' ? 2.5 * U : 0;
       if (t < 0 || t > d + behind) continue;
-      if (Math.abs(rx * sn - ry * cs) < f.radius + 6 + cone * t) return false;
+      if (Math.abs(rx * sn - ry * cs) < f.radius + 6 + cone * t + (extra || 0)) return false;
     }
     return true;
   }
@@ -1615,7 +1744,7 @@ class Game {
       if (m.team === 'ops' && this.inAimCone(x, y, 30 * DEG)) continue;
       if (dist(x, y, t.x, t.y) > m.weapon.range) continue;
       if (!this.map.hasLOS(x, y, t.x, t.y)) continue;
-      if (!this.lineOfFireClear(m, t, x, y)) continue;
+      if (!this.lineOfFireClear(m, t, x, y, 12)) continue; // de quoi rester dégagé une fois arrivé
       const score = dist(x, y, m.x, m.y);
       if (score < bd) { bd = score; best = { x, y }; }
     }
@@ -1647,7 +1776,7 @@ class Game {
     turnToward(m, a, m.turnRate, dt);
     m.reactT -= dt;
     if (m.engaged && m.reactT <= 0 && m.fireT <= 0 && m.reloadT <= 0 && !m.act && Math.abs(angleDiff(m.angle, a)) < 0.15) {
-      if (m.slot.mag <= 0) { m.reloadT = m.weapon.reload; return; }
+      if (m.slot.mag <= 0) { this.mateReload(m); return; }
       if (!clear) return;
       this.fireWeapon(m);
       if (++m.burst >= 3) { m.burst = 0; m.fireT = 0.4; } // rafales de trois
@@ -1679,7 +1808,7 @@ class Game {
     if (m.stun > 0) { m.stun -= dt; m.target = null; m.moving = false; return; }
     this.mateCombat(m, dt);
     // recharge tranquille quand rien en vue
-    if (!m.target && m.reloadT <= 0 && !m.act && m.slot.mag <= m.weapon.mag * 0.35) m.reloadT = m.weapon.reload;
+    if (!m.target && m.reloadT <= 0 && !m.act && m.slot.mag <= m.weapon.mag * 0.35) this.mateReload(m);
 
     let dest = null;
     if (m.watchSpot) {
@@ -1832,5 +1961,37 @@ class Game {
       || mates.some(m => this.canSee(m, o));
     for (const e of this.enemies) e.visible = (e.alive || !!e.dying) && sees(e);
     for (const h of this.hostages) h.visible = sees(h);
+    // un corps tombé hors de vue ne se dessine qu'une fois vu
+    for (const o of [...this.enemies, ...this.hostages]) {
+      if (!o.alive && !o.bodySeen && (o.visible || this.seesPoint(o.x, o.y))) o.bodySeen = true;
+    }
+    if (this.hiddenDecals.length) {
+      const still = [];
+      for (const d of this.hiddenDecals) (this.seesPoint(d.x, d.y) ? this.decals : still).push(d);
+      this.hiddenDecals = still;
+    }
+  }
+
+  // Un décalque n'apparaît que si le groupe voit l'endroit (sinon il attend qu'on y regarde).
+  addDecal(d) {
+    (this.seesPoint(d.x, d.y) ? this.decals : this.hiddenDecals).push(d);
+  }
+
+  // Le point est-il dans un polygone de vision ? On le rapproche de 4 px de l'observateur,
+  // pour qu'un impact collé au mur tombe du bon côté du bord du polygone.
+  seesPoint(x, y) {
+    for (const poly of this.visionPolys) {
+      const d = dist(x, y, poly.x, poly.y);
+      const k = d > 4 ? 4 / d : 0;
+      const px = x + (poly.x - x) * k, py = y + (poly.y - y) * k;
+      const v = [poly, ...poly.pts]; // le polygone part de l'œil de l'observateur
+      let inside = false;
+      for (let i = 0, j = v.length - 1; i < v.length; j = i++) {
+        const a = v[i], b = v[j];
+        if ((a.y > py) !== (b.y > py) && px < (b.x - a.x) * (py - a.y) / (b.y - a.y) + a.x) inside = !inside;
+      }
+      if (inside) return true;
+    }
+    return false;
   }
 }

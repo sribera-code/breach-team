@@ -16,13 +16,13 @@ puis aller sur http://localhost:8000.
 
 Le briefing propose deux rôles pour chaque mission.
 
-**Assaut** — le mode d'origine : vous menez l'intervention avec Bravo et Charlie, vous nettoyez le bâtiment sans perdre d'otage. Le briefing vous laisse choisir par où entrer : chaque carte a plusieurs portes extérieures et fenêtres, et la pièce par laquelle vous entrez est toujours vide : le premier contact se fait derrière une porte.
+**Assaut** — le mode d'origine : vous menez l'intervention avec Bravo et Charlie, vous nettoyez le bâtiment sans perdre d'otage. Le point d'entrée est tiré au sort à chaque partie — le briefing ne dit pas lequel est sorti, vous le découvrez sur place — et il vous laisse le fixer si vous préférez : chaque carte a plusieurs portes extérieures et fenêtres, et la pièce par laquelle vous entrez est toujours vide : le premier contact se fait derrière une porte.
 
 **Siège** — vous incarnez le chef du groupe armé. Vous connaissez les lieux (le plan vous est acquis dès le départ), vous êtes neuf — vous et huit complices, chacun à son poste et sans ordres à recevoir : personne ne commande personne —, vous verrouillez les portes, et une équipe d'intervention donne l'assaut après dix secondes de préparation — par une porte extérieure ou une fenêtre, sans que vous sachiez laquelle. Elle progresse secteur par secteur, converge sur les coups de feu, lance des flashs avant d'entrer là où elle vous a entendu, et attaque en **trois vagues de trois opérateurs**, chaque fois par une autre ouverture. Pas de temps mort : la vague suivante entre six secondes après l'élimination de la précédente, ou au bout de trente secondes si celle-ci tient encore. Le HUD indique la vague en cours (« Vague 2 / 3 »). Repoussez la dernière et les négociations aboutissent.
 
 Chaque carte a ses otages : trois à l'Entrepôt, quatre aux Bureaux, cinq à la Villa. Vous perdez si tout votre groupe tombe (à votre mort, vous reprenez la main dans un complice), ou s'il ne vous reste plus aucun otage vivant : tous morts, ou récupérés par l'intervention (un otage gardé quelques secondes par un opérateur est perdu pour vous). Perdre un otage ne met pas fin à la partie tant qu'il en reste un. L'intervention ne tire jamais avec un otage dans l'axe ou juste derrière sa cible : elle se décale pour trouver un angle. Garder un otage près de soi protège donc vraiment. Les otages sont votre seule protection.
 
-L'équipement suit le camp : AKM ou Remington 870, Makarov ou Glock, et **deux grenades à fragmentation** au lieu des flashs (`Espace`). Elles éclatent au bout de deux secondes et tuent dans un rayon d'environ une case, blessent jusqu'à trois cases et demie, vous et vos otages compris ; un mur ou une porte fermée arrête l'éclat. Pas de fibre optique de ce côté. Les opérateurs sont plus précis et portent un gilet ; vous frappez plus fort et connaissez le terrain. Portes, grenades et tir à travers les battants sont vos meilleurs outils. Les opérateurs, eux, lancent des flashs, mais seulement quand la trajectoire est libre (jamais contre une porte fermée) et jamais sur leurs équipiers ; leur propre camp détourne les yeux et n'est gêné que si l'éclair part à ses pieds.
+L'équipement suit le camp : AKM, Uzi, Škorpion vz. 61 ou Remington 870 en arme principale, Makarov, Tokarev TT-33 ou Glock en arme de poing, et **deux grenades à fragmentation** au lieu des flashs (`Espace`). Elles éclatent au bout de deux secondes et tuent dans un rayon d'environ une case, blessent jusqu'à trois cases et demie, vous et vos otages compris ; un mur ou une porte fermée arrête l'éclat. Pas de fibre optique de ce côté. Les opérateurs sont plus précis et portent un gilet ; vous frappez plus fort et connaissez le terrain. Portes, grenades et tir à travers les battants sont vos meilleurs outils. Les opérateurs, eux, lancent des flashs, mais seulement quand la trajectoire est libre (jamais contre une porte fermée) et jamais sur leurs équipiers ; leur propre camp détourne les yeux et n'est gêné que si l'éclair part à ses pieds.
 
 ## Contrôles
 
@@ -35,10 +35,11 @@ L'équipement suit le camp : AKM ou Remington 870, Makarov ou Glock, et **deux g
 | Changer d'arme | `1` / `2` / `Alt` |
 | Porte | `E` ouvre / ferme d'un coup ; molette : fermée ↔ entrebâillée ↔ entrouverte ↔ ouverte (chaque cran est un geste) |
 | Fibre optique | `F` maintenu devant une porte fermée ou entrouverte |
-| Grenade flash | `Espace` ou `G` (vers le curseur) |
+| Grenade flash | `Espace` ou `G` maintenu : la mèche part à la fin de l'armement, la grenade au relâchement |
 | Ramasser une arme | `V` près d'un corps (échange avec l'arme de même catégorie) |
 | Équipe | `T` suivre / tenir ; clic droit : aller là (sur soi : suivre) |
 | Direction à couvrir | clic droit **maintenu**, puis tirer vers la direction avant de relâcher |
+| Minimap | `M` (affichée par défaut) |
 | Pause | `Échap` |
 
 Objectif : neutraliser tous les suspects sans perdre toute l'équipe ni tuer d'otage. Si vous tombez, vous continuez dans un coéquipier.
@@ -62,19 +63,31 @@ L'équipement se choisit dans l'écran de briefing (le choix est mémorisé) : u
 
 La dernière colonne est la part des dégâts qui subsiste après avoir traversé une porte : un battant n'arrête pas les balles, il les affaiblit et les dévie un peu (deux portes au maximum). Les murs, eux, arrêtent tout.
 
-Les fusils à pompe se rechargent cartouche par cartouche ; tirer interrompt le rechargement. Bravo porte un HK416, Charlie un MP5.
+Les fusils à pompe se rechargent cartouche par cartouche ; tirer interrompt le rechargement. Recharger s'anime : l'arme s'incline, la main lâche le garde-main, descend chercher un chargeur, le remonte dans le puits et réarme — pour vous comme pour les coéquipiers.
+
+Personne n'a la même arme : à chaque partie, coéquipiers, opérateurs d'assaut et suspects tirent la leur au sort dans le lot de leur camp. Les coéquipiers en ont toujours deux différentes, et les suspects panachent Kalachnikov, pistolet, Uzi et fusil à pompe scié. Toute arme ramassée sur un corps devient sa version complète, avec de vraies munitions.
 
 ## Gestes
 
-Manœuvrer une porte ou lancer une flash occupe les deux mains : le geste dure un instant (le temps de manœuvrer la poignée plus la course du battant : environ 0,55 s pour ouvrir ou fermer en grand, 0,37 s pour entrouvrir, 0,29 s pour entrebâiller, et 0,45 s pour dégoupiller et lancer), pendant lequel on ne tire pas, on avance au ralenti et le viseur s'ouvre en grand ; la visée met encore un peu moins d'une seconde à se replacer ensuite. L'anneau du viseur montre l'avancement, comme pour un rechargement. Coéquipiers et suspects sont soumis aux mêmes délais — les suspects sont un peu plus lents sur les portes.
+Manœuvrer une porte ou lancer une flash occupe les deux mains : le geste dure un instant (le temps de manœuvrer la poignée plus la course du battant : environ 0,55 s pour ouvrir ou fermer en grand, 0,37 s pour entrouvrir, 0,29 s pour entrebâiller, et 0,45 s pour dégoupiller et armer le bras), pendant lequel on ne tire pas, on avance au ralenti et le viseur s'ouvre en grand ; la visée met encore un peu moins d'une seconde à se replacer ensuite. L'anneau du viseur montre l'avancement, comme pour un rechargement. Coéquipiers et suspects sont soumis aux mêmes délais — les suspects sont un peu plus lents sur les portes.
 
 ## Portes
 
 Une porte a quatre crans : fermée, entrebâillée, entrouverte, ouverte. Tant qu'elle n'est pas grande ouverte, le battant arrête le regard : on ne voit que par l'entrebâillement, et il faut être tout près — et plutôt du côté de l'ouverture — pour découvrir quelque chose. Concrètement, à une case de la porte, un battant entrouvert donne environ 90° de champ contre 74° pour un simple entrebâillement vu de côté (et rien de face) ; à trois cases en retrait, on ne voit plus rien tant que la porte n'est pas ouverte. Le battant ouvert masque lui aussi un pan de la pièce. Cela vaut dans les deux sens : un suspect derrière une porte entrouverte ne vous voit pas davantage.
 
-Le passage ne se libère qu'à l'ouverture complète, et glisser une flash par l'entrebâillement demande au moins le cran « entrouverte ». Une porte fermée cache, mais ne protège pas : on tire à travers, dans les deux sens.
+On se glisse dans l'embrasure dès le cran « entrouverte » : une porte entrebâillée, elle, ne laisse passer que le regard. Glisser une grenade par l'entrebâillement demande aussi le cran « entrouverte ». Une porte fermée cache, mais ne protège pas : on tire à travers, dans les deux sens. Ce qui se passe derrière reste caché : les traçantes, les gerbes et taches de sang, les impacts, les douilles et le corps d'un suspect abattu à l'aveugle n'apparaissent qu'une fois que vous (ou un coéquipier) avez vu l'endroit.
+
+**Au fusil à pompe, on ouvre une porte en tirant dedans** : cinq plombs dans la serrure et le pêne saute, le battant s'ouvre d'un coup. Il faut une rafale groupée — des impacts espacés de plus de trois secondes ne comptent plus — et la porte ne se referme plus ensuite, le bois éclaté restant visible à la place de la poignée. Ça marche dans les deux camps : un suspect au fusil à pompe entre chez vous de la même façon.
 
 On ne peut pas refermer une porte si quelqu'un (vous compris) ou une grenade se trouve dans l'embrasure ; le message dit lequel. Toute autre manœuvre refusée est annoncée elle aussi — porte déjà fermée, déjà grande ouverte, ou en train de bouger.
+
+## Grenades
+
+Dégoupiller et armer le bras prend 0,45 s. **La mèche commence à brûler à la fin de ce geste, pas au lancer** : tant que vous gardez `Espace`, la grenade reste en main et le compte à rebours tourne. L'anneau du viseur passe au rouge et se vide. Une fois au sol, la grenade porte le même anneau : il se vide dès qu'elle touche le sol, et rougit dans la dernière demi-seconde. Relâchez, et elle part vers le curseur avec le temps déjà brûlé : de quoi la faire éclater en l'air ou à l'arrivée, sans laisser le temps de la fuir. Gardez-la jusqu'au bout et elle vous explose dans la main. Tant qu'elle est dégoupillée, vous ne tirez pas et vous ne rechargez pas.
+
+## Minimap
+
+En haut à droite, un plan réduit du bâtiment montre ce que vous avez déjà exploré : les pièces, les portes (fermée, entrouverte, ouverte) et les fenêtres, votre équipe, les otages connus et les adversaires visibles en ce moment. En siège, le plan est complet dès le départ, puisque vous connaissez les lieux. `M` la replie.
 
 ## Fibre optique
 
@@ -82,7 +95,11 @@ Devant une porte fermée ou entrouverte, maintenir `F` glisse une fibre sous le 
 
 ## Coéquipiers
 
-Bravo et Charlie ne tirent jamais à travers vous ni à travers un otage. Quand l'axe reste bouché, ils se décalent pour dégager l'angle plutôt que d'attendre, et un ordre de déplacement l'emporte sur un contact : ils rompent et progressent en gardant le suspect en joue.
+Bravo et Charlie ne tirent jamais à travers vous ni à travers un otage, et ils tiennent compte de la gerbe de leur arme : plus elle s'ouvre, plus ils exigent de marge avant de presser la détente. Quand l'axe reste bouché, ils se décalent pour dégager l'angle plutôt que d'attendre, et un ordre de déplacement l'emporte sur un contact : ils rompent et progressent en gardant le suspect en joue.
+
+## Dispositions
+
+Rien ne se mémorise d'une partie à l'autre : à chaque chargement, les postes des terroristes et des otages sont tirés au sort parmi les emplacements de la carte et un quadrillage de cases libres, bien répartis. En siège, votre propre poste change aussi. En assaut, aucun poste ne tombe dans la pièce par laquelle vous entrez.
 
 ## Otages
 

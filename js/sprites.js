@@ -454,6 +454,16 @@ const Sprites = {
       pose.arms[0] = [[-2, -9.5], [8, -10 - e * 3], [h[0][0] + e * 5, h[0][1] - e * 9]];
       return { ...st, gunRot: 0.75 * e };
     }
+    if (st.act.type === 'reload') {
+      // chargeur : la main avant lâche le garde-main, descend chercher un chargeur, le remonte
+      // dans le puits, puis réarme d'un coup sec. Pour un fusil à pompe, c'est le même va-et-vient.
+      const down = clamp(k / 0.35, 0, 1), up = clamp((k - 0.35) / 0.45, 0, 1), rack = clamp((k - 0.8) / 0.2, 0, 1);
+      const rx = lerp(lerp(h[0][0], 4, down), h[0][0] + 2, up) - Math.sin(rack * Math.PI) * 5;
+      const ry = lerp(lerp(h[0][1], 16, down), h[0][1], up);
+      pose.arms[0] = [[-2, -9.5], [lerp(7, 1, down) + up * 5, lerp(-8.5, 6, down) - up * 11], [rx, ry]];
+      const held = down > 0.25 && up < 0.9;
+      return { ...st, gunRot: 0.62 * down - 0.4 * up, mag: held ? [rx, ry] : null };
+    }
     // grenade : armé du bras en arrière (w) puis lancer vers l'avant (f)
     const w = clamp(k / 0.55, 0, 1), f = clamp((k - 0.55) / 0.45, 0, 1);
     const hx = lerp(lerp(h[1][0], -2, w), 19, f), hy = lerp(lerp(h[1][1], 13.5, w), 3.5, f);
@@ -560,6 +570,13 @@ const Sprites = {
     }
     // mains
     for (const arm of pose.arms) dot(arm[2][0], arm[2][1], 3.1, skin);
+    // chargeur encore en main pendant le rechargement
+    if (st.mag) {
+      ctx.save(); ctx.translate(st.mag[0], st.mag[1]); ctx.rotate(0.4);
+      ctx.fillStyle = '#31363d'; ctx.fillRect(-1.6, -3.4, 3.2, 6.8);
+      ctx.fillStyle = 'rgba(255,255,255,0.18)'; ctx.fillRect(-1.6, -3.4, 1, 6.8);
+      ctx.restore();
+    }
     // grenade encore en main pendant le lancer
     if (st.grenade) {
       dot(st.grenade[0], st.grenade[1], 2.5, '#47543c');
@@ -757,9 +774,9 @@ const STYLE_MILITANT = {
   body: '#4a3d33', shoulder: '#3f342c', vest: null, vestLight: null, pack: null,
   sleeve: '#4a3d33', gloves: '#2a2520', skin: '#c4906a', boots: '#22201d', head: 'mask', hair: '#1c1c20',
 };
-// Le chef (celui que l'on incarne) : veste sombre et bandeau rouge, pour se repérer d'un coup d'œil.
+// Le chef (celui que l'on incarne) : même tête cagoulée que ses hommes, juste une veste plus sombre.
 const STYLE_BOSS = {
-  ...STYLE_MILITANT, body: '#3b3f46', shoulder: '#33373d', sleeve: '#3b3f46', head: 'hair', hair: '#241a12', band: '#b33a2b',
+  ...STYLE_MILITANT, body: '#3b3f46', shoulder: '#33373d', sleeve: '#3b3f46',
 };
 
 const STYLE_PLAYER = {

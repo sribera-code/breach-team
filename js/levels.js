@@ -12,7 +12,7 @@ const LEVELS = [
     name: 'Entrepôt',
     siegeBriefing: "Vous tenez l'entrepôt : de grands volumes, peu de cloisons, et des portes qui grincent. L'intervention peut entrer par les deux portes extérieures comme par les fenêtres — surveillez large.",
     briefing: "Un groupe armé s'est retranché dans un entrepôt et retient des otages. Nettoyez le bâtiment pièce par pièce. Les portes fermées bloquent la vue : ouvrez-les (E) et jetez une flash (G) avant d'entrer quand vous doutez. Ne touchez pas les otages.",
-    enemyWeapons: ['ak', 'pistol'],
+    enemyWeapons: ['ak', 'ak', 'pistol', 'uziE', 'sgE'],
     map: [
       '######W##################W######',
       '#..........#,,,,,,,,,#.........#',
@@ -40,7 +40,7 @@ const LEVELS = [
     name: 'Bureaux',
     siegeBriefing: "Un long couloir central dessert tout l'étage : c'est par là qu'ils passeront, mais les fenêtres des bureaux leur ouvrent aussi les flancs. Refermez derrière vous.",
     briefing: "Prise d'otages dans un immeuble de bureaux. Un long couloir central dessert des salles bondées : ne vous exposez pas dans le couloir plus longtemps que nécessaire et utilisez les bureaux comme couvert.",
-    enemyWeapons: ['ak', 'ak', 'pistol'],
+    enemyWeapons: ['ak', 'ak', 'ak', 'pistol', 'uziE', 'sgE'],
     map: [
       '##X###############################',
       '#::::::::#,,,,,,,#,,,,,v,#,,,,,,,#',
@@ -68,7 +68,7 @@ const LEVELS = [
     name: 'Villa',
     siegeBriefing: "Trois rangées de pièces en enfilade et beaucoup de portes : l'intervention peut se glisser partout. Tenez les angles, gardez vos otages près de vous.",
     briefing: "Villa fortifiée : trois rangées de pièces en enfilade, beaucoup de portes, beaucoup d'ennemis. Prenez votre temps, une pièce après l'autre, et rechargez avant chaque entrée.",
-    enemyWeapons: ['ak', 'ak', 'ak', 'pistol'],
+    enemyWeapons: ['ak', 'ak', 'ak', 'ak', 'pistol', 'uziE', 'sgE'],
     map: [
       '######W###########W#################',
       '#:S:::::::::.#,,,,,,,,,,#,,,,,,,E,,#',

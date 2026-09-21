@@ -22,7 +22,8 @@ function mkGame(opts) {
   r.resize();
   game.mode = opts.mode || 'assault';
   game.loadout = opts.loadout || Game.loadSavedLoadout(game.mode);
-  if (opts.entry !== undefined) game.entryIndex = opts.entry;
+  game.entryRandom = false;          // les tests choisissent, sinon l'entrée est tirée au sort
+  game.entryIndex = opts.entry || 0;
   game.loadLevel(opts.level || 0);
   game.paused = false;
   if (opts.noEnd !== false) game.checkEnd = () => {}; // la fin de mission fige tout : on l'écarte
@@ -81,6 +82,190 @@ test('cadence de tir conforme à la fiche', () => {
   }
 });
 
+test('collé à un mur, on ne tire pas à travers', () => {
+  const g = mkGame({ alone: true, loadout: { primary: 'scarh', sidearm: 'glock17' } });
+  const game = g.game, p = game.player, map = game.map;
+  // un mur vertical plein (ni porte ni ouverture) avec du sol des deux côtés
+  let spot = null;
+  for (let ty = 2; ty < map.h - 2 && !spot; ty++) for (let tx = 2; tx < map.w - 2 && !spot; tx++) {
+    if (!map.isWall(tx, ty) || map.door(tx, ty) || map.isWall(tx - 1, ty) || map.isWall(tx + 1, ty)) continue;
+    if (![-2, -1, 1, 2].every(k => map.isWall(tx, ty + k) && !map.door(tx, ty + k))) continue;
+    const y = (ty + 0.5) * TILE;
+    if (map.circleFree(tx * TILE - 11, y, 10, true) && map.circleFree((tx + 1) * TILE + 20, y, 10, true)) spot = { tx, y };
+  }
+  ok(spot, 'un mur de test');
+  p.x = spot.tx * TILE - 11.5; p.y = spot.y;                 // épaule contre le mur
+  const foe = new Enemy((spot.tx + 1) * TILE + 20, spot.y, Math.PI, 'ak');
+  foe.hp = foe.maxHp = 1e6;
+  game.enemies = [foe];
+  game.updateEnemy = () => {};
+  game.input.mouse.x = foe.x; game.input.mouse.y = foe.y;
+  game.input.mouse.down = true; // arme automatique : bouton maintenu
+  g.step(90);
+  game.input.mouse.down = false;
+  ok(game.stats.shots >= 5, 'des coups sont partis');
+  eq(foe.hp, 1e6, 'le suspect derrière le mur est indemne');
+  // une grenade non plus ne passe pas de l'autre côté
+  game.grenades = [];
+  game.spawnFlash(p, foe.x, foe.y);
+  ok(game.grenades[0].x < spot.tx * TILE, 'la grenade part du bon côté du mur');
+  g.step(30);
+  ok(game.grenades.every(gr => gr.x < spot.tx * TILE), 'et y reste');
+});
+
+test('recharger s’anime, chargeur en main, pour le joueur comme pour l’équipe', () => {
+  const g = mkGame({ noEnemyAI: true });
+  const p = g.game.player;
+  p.slot.mag = 0;
+  g.press('KeyR');
+  ok(p.reloadT > 0 && p.reloadDur === p.weapon.reload, 'rechargement en cours, durée mémorisée');
+  const st = actStyle(p);
+  ok(st && st.act.type === 'reload', 'le rendu voit un geste de rechargement');
+  near(st.act.k, 0, 0.05, 'au début du geste');
+  const pose = lerpPose(POSE_STAND, POSE_STAND, 0);
+  const out = Sprites.actionPose({ ...st, gun: p.weapon.kind }, pose, Sprites.hands(p.weapon.kind));
+  ok(out.mag === null || Array.isArray(out.mag), 'le chargeur est une position ou rien');
+  g.step(Math.ceil(p.weapon.reload * 30));
+  const mid = Sprites.actionPose({ ...actStyle(p), gun: p.weapon.kind }, lerpPose(POSE_STAND, POSE_STAND, 0), Sprites.hands(p.weapon.kind));
+  ok(Array.isArray(mid.mag), 'à mi-geste, le chargeur est en main');
+  g.step(Math.ceil(p.weapon.reload * 40));
+  eq(actStyle(p), null, 'plus d’animation une fois rechargé');
+  eq(p.slot.mag, p.weapon.mag, 'chargeur plein');
+  // un coéquipier aussi, et un fusil à pompe met plus longtemps à se remplir
+  const m = g.game.mates[0];
+  m.slot.mag = 0;
+  g.game.mateReload(m);
+  ok(m.reloadT > 0 && m.reloadDur === m.reloadT, 'coéquipier : durée mémorisée');
+  ok(actStyle(m).act.type === 'reload', 'et son geste s’anime');
+  const sg = g.game.mates.find(x => x.weapon.reloadType === 'shell') || g.game.mates[0];
+  sg.slot = { ...sg.slot, def: WEAPONS.m870, mag: 0 };
+  g.game.mateReload(sg);
+  near(sg.reloadDur, WEAPONS.m870.reload * WEAPONS.m870.mag, 0.01, 'le magasin se remplit cartouche par cartouche');
+});
+
+test('le groupe armé a son arsenal, et son chef ne porte aucun signe distinctif', () => {
+  for (const k of ['uziP', 'skorpionP', 'tt33']) {
+    ok(WEAPONS[k] && WEAPONS[k].maker, k + ' : arme décrite');
+    ok(SIEGE_MATE_POOL.includes(k), k + ' : un complice peut la porter');
+  }
+  ok(MODES.siege.primaries.includes('uziP') && MODES.siege.primaries.includes('skorpionP'), 'Uzi et Škorpion au briefing');
+  ok(MODES.siege.sidearms.includes('tt33'), 'TT-33 au briefing');
+  ok(WEAPONS.uziE.pickup === 'uziP', 'l’Uzi d’un suspect se ramasse');
+  ok(LEVELS.every(l => l.enemyWeapons.includes('uziE')), 'les suspects en portent aussi');
+  eq(STYLE_BOSS.band, undefined, 'pas de bandeau sur la tête du chef');
+  for (const k of ['head', 'hair', 'skin', 'gloves', 'boots']) eq(STYLE_BOSS[k], STYLE_MILITANT[k], 'le chef a la même tête que ses hommes (' + k + ')');
+});
+
+test('les armes sont tirées au sort, pas les mêmes pour tout le monde', () => {
+  // coéquipiers : tirage sans doublon tant que le lot suffit
+  const vus = new Set();
+  for (let i = 0; i < 25; i++) {
+    const g = mkGame();
+    const noms = g.game.mates.map(m => m.weapon.name);
+    eq(new Set(noms).size, noms.length, 'deux coéquipiers, deux armes différentes');
+    noms.forEach(n => vus.add(n));
+  }
+  ok(vus.size >= 3, 'plusieurs armes différentes sur 25 parties : ' + [...vus].join(', '));
+  // suspects : le lot de la mission, plusieurs armes représentées
+  const armes = new Set();
+  for (let i = 0; i < 10; i++) mkGame({ level: 2 }).game.enemies.forEach(e => armes.add(e.weapon.name));
+  ok(armes.size >= 2, 'les suspects ne portent pas tous la même arme : ' + [...armes].join(', '));
+  // opérateurs d'une même vague
+  const ops = new Set();
+  for (let i = 0; i < 10; i++) {
+    const g = mkGame({ mode: 'siege' });
+    g.game.siege.prep = 0.01; g.step(2);
+    g.game.enemies.forEach(e => ops.add(e.weapon.name));
+  }
+  ok(ops.size >= 2, 'l’assaut panache ses armes : ' + [...ops].join(', '));
+  eq(dealWeapons(['a', 'b'], 2).sort().join(','), 'a,b', 'un lot de deux se distribue sans doublon');
+  eq(dealWeapons(['a'], 3).length, 3, 'et se répète quand il est épuisé');
+});
+
+test('le point d’entrée est tiré au sort par défaut, et peut être choisi', () => {
+  // setEntry mémorise le choix : on remet le réglage du joueur en sortant
+  let sauve = null;
+  try { sauve = localStorage.getItem('breach.entry'); } catch (e) { /* stockage indisponible */ }
+  try { entryTest(); } finally {
+    try { if (sauve === null) localStorage.removeItem('breach.entry'); else localStorage.setItem('breach.entry', sauve); } catch (e) { /* idem */ }
+  }
+});
+
+function entryTest() {
+  const g = mkGame();
+  const game = g.game;
+  game.entryRandom = true;
+  const tirages = new Set();
+  for (let i = 0; i < 30; i++) { game.loadLevel(0); tirages.add(game.entryIndex); }
+  ok(tirages.size >= 2, 'plusieurs ouvertures sortent : ' + [...tirages].join(', '));
+  // le briefing propose « Au hasard » puis chaque ouverture
+  game.paused = true;
+  g.ui.showBriefing();
+  const btns = [...document.querySelectorAll('.entrybtn')];
+  ok(btns.length === game.map.breaches.length + 1, 'un bouton par ouverture, plus le tirage au sort');
+  ok(/Au hasard/.test(btns[0].textContent) && btns[0].classList.contains('sel'), '« Au hasard » est le choix par défaut');
+  eq(btns[0].textContent.trim(), 'Au hasard', 'il ne dévoile pas l’ouverture tirée');
+  btns[2].click();                       // on fixe une ouverture
+  eq(game.entryRandom, false, 'choix fixe');
+  eq(game.entryIndex, 1, 'l’ouverture choisie');
+  for (let i = 0; i < 5; i++) { game.loadLevel(0); eq(game.entryIndex, 1, 'elle ne bouge plus'); }
+  document.querySelectorAll('.entrybtn')[0].click();
+  eq(game.entryRandom, true, '« Au hasard » revient');
+  g.ui.hideOverlay();
+  game.paused = false;
+}
+
+test('la mèche part à la fin du geste, pas au lancer', () => {
+  const g = mkGame({ alone: true });
+  const game = g.game, p = game.player;
+  game.input.mouse.x = p.x + 4 * U; game.input.mouse.y = p.y;
+  game.input.keys.Space = true;          // on garde la touche : la grenade reste en main
+  g.press('Space');
+  ok(p.act && p.act.type === 'grenade', 'geste d’armement');
+  eq(game.grenades.length, 0, 'rien n’est encore parti');
+  g.step(30);                            // fin du geste (0,45 s)
+  ok(p.cooking, 'la grenade est dégoupillée en main');
+  eq(game.grenades.length, 0, 'toujours en main');
+  const fuse = p.cooking.fuse;
+  // on ne tire ni ne recharge avec une grenade dégoupillée
+  const shots = game.stats.shots;
+  game.input.mouse.down = true; game.input.pressed.Mouse0 = true; g.step(1);
+  eq(game.stats.shots, shots, 'pas de tir pendant ce temps');
+  game.input.mouse.down = false;
+  g.press('KeyR');
+  eq(p.reloadT, 0, 'pas de rechargement non plus');
+  g.step(36);                            // on la garde ~0,6 s de plus
+  const reste = p.cooking.fuse - p.cooking.t;
+  ok(reste < fuse - 0.5, 'la mèche a brûlé en main : ' + reste.toFixed(2) + ' s restantes');
+  game.input.keys.Space = false;         // lancer
+  g.step(1);
+  eq(game.grenades.length, 1, 'elle part au relâchement');
+  const gr = game.grenades[0];
+  near(gr.cooked, fuse - reste, 0.1, 'le temps brûlé en main est reporté sur la grenade');
+  g.step(Math.ceil(reste * 60) + 4);
+  eq(game.grenades.length, 0, 'elle éclate au bout de la mèche, pas plus tard');
+  ok(game.effects.some(f => f.type === 'flash'), 'éclair au bout du compte');
+});
+
+test('gardée jusqu’au bout, la grenade éclate dans la main', () => {
+  const g = mkGame({ mode: 'siege' });
+  const game = g.game, p = game.player;
+  game.mates.forEach(m => { m.x = m.y = 4 * TILE; });
+  game.input.mouse.x = p.x + 3 * U; game.input.mouse.y = p.y;
+  game.input.keys.Space = true;
+  g.press('Space');
+  g.step(30);
+  ok(p.cooking && p.cooking.kind === 'frag', 'fragmentation dégoupillée');
+  const hp = p.hp;
+  g.step(Math.ceil(p.cooking.fuse * 60) + 4);
+  const dit = /dans la main/.test(game.message.text);
+  eq(game.grenades.length, 0, 'elle n’a jamais été lancée');
+  ok(!p.cooking, 'plus rien en main');
+  ok(p.hp < hp || !p.alive, 'elle lui a explosé dessus');
+  ok(dit, 'le jeu le dit');
+  game.input.keys.Space = false;
+});
+
 // ---------------------------------------------------------------- portes
 test('la molette parcourt les quatre crans dans les deux sens', () => {
   const g = mkGame();
@@ -114,6 +299,42 @@ test('la porte ne bouge que le geste terminé', () => {
   ok(d.opening || d.progress > 0, 'la porte s’ouvre après le geste');
   g.step(60);
   ok(d.open, 'porte ouverte');
+});
+
+test('une porte fermée saute à la chevrotine, et ne se referme plus', () => {
+  const g = mkGame({ alone: true, loadout: { primary: 'm870', sidearm: 'glock17' } });
+  const game = g.game, p = game.player;
+  const w = doorWithRoom(game);
+  ok(w, 'une porte de test');
+  setDoor(w.d, 0);
+  p.x = w.a.x; p.y = w.a.y;
+  game.input.mouse.x = w.d.cx; game.input.mouse.y = w.d.cy;
+  for (let i = 0; i < 3 && !w.d.broken; i++) { game.input.pressed.Mouse0 = true; g.step(45); }
+  ok(w.d.broken, 'la serrure a lâché');
+  g.step(60);
+  ok(w.d.open, 'la porte s’est ouverte d’un coup');
+  // on ne la referme plus
+  p.act = null;
+  faceDoor(g, w.d, 26);
+  game.message = { text: '', t: 0 };
+  g.press('KeyE');
+  ok(!p.act && /serrure/i.test(game.message.text), 'refus annoncé : "' + game.message.text + '"');
+  g.step(60);
+  ok(w.d.open, 'elle reste ouverte');
+});
+
+test('une balle de fusil ne fait pas sauter une porte', () => {
+  const g = mkGame({ alone: true, loadout: { primary: 'hk416', sidearm: 'glock17' } });
+  const game = g.game, p = game.player;
+  const w = doorWithRoom(game);
+  setDoor(w.d, 0);
+  p.x = w.a.x; p.y = w.a.y;
+  game.input.mouse.x = w.d.cx; game.input.mouse.y = w.d.cy;
+  game.input.mouse.down = true;
+  g.step(90);
+  game.input.mouse.down = false;
+  ok(game.stats.shots >= 10, 'un chargeur y est passé');
+  ok(!w.d.broken && !w.d.open, 'la porte tient');
 });
 
 test('on ne tire pas pendant un geste, et la visée reste perturbée après', () => {
@@ -152,6 +373,52 @@ test('la fermeture n’est refusée que si l’embrasure est occupée, et elle l
   g.press('KeyE');
   g.step(120);
   eq(d.progress, 0, 'porte refermée');
+});
+
+test('une porte entrouverte laisse passer, une porte entrebâillée non', () => {
+  // on pousse vers la porte depuis un côté dégagé, et on regarde si on est passé de l'autre
+  const walk = (g, w) => {
+    const p = g.game.player, d = w.d;
+    p.x = w.a.x; p.y = w.a.y;
+    g.game.input.mouse.x = w.b.x; g.game.input.mouse.y = w.b.y;
+    const key = d.horizontal ? 'KeyS' : 'KeyD';
+    g.game.input.keys[key] = true;
+    g.step(120);
+    g.game.input.keys[key] = false;
+    return d.horizontal ? p.y - d.cy : p.x - d.cx; // > 0 : passé de l'autre côté
+  };
+  for (let i = 0; i < LEVELS.length; i++) {
+    const g = mkGame({ alone: true, level: i });
+    const w = doorWithRoom(g.game);
+    ok(w, LEVELS[i].name + ' : une porte de test');
+    setDoor(w.d, DOOR_STEPS[1]);
+    ok(walk(g, w) < 0, LEVELS[i].name + ' : entrebâillée, le passage reste bloqué');
+    setDoor(w.d, DOOR_STEPS[2]);
+    ok(walk(g, w) > 0, LEVELS[i].name + ' : entrouverte, on se glisse dans l’embrasure');
+    setDoor(w.d, 1);
+    ok(walk(g, w) > 0, LEVELS[i].name + ' : ouverte, on passe');
+  }
+});
+
+test('la minimap se dessine et se replie avec M', () => {
+  for (const mode of ['assault', 'siege']) {
+    const g = mkGame({ mode });
+    eq(g.game.minimap, true, mode + ' : affichée par défaut');
+    ok(g.r.miniC.width === g.game.map.w * g.r.miniScale, mode + ' : plan réduit à la taille de la carte');
+    g.step(2); // le masque des cases vues suit le brouillard
+    const seen = () => {
+      const c = g.r.miniExpC.getContext('2d').getImageData(0, 0, g.r.miniExpC.width, g.r.miniExpC.height).data;
+      let n = 0;
+      for (let i = 3; i < c.length; i += 4) if (c[i]) n++;
+      return n;
+    };
+    ok(seen() > 0, mode + ' : les cases explorées sont reportées');
+    g.press('KeyM');
+    eq(g.game.minimap, false, mode + ' : M la replie');
+    g.step(2);
+    g.press('KeyM');
+    eq(g.game.minimap, true, mode + ' : M la ramène');
+  }
 });
 
 test('les refus de manœuvre sont annoncés', () => {
@@ -286,7 +553,9 @@ test('à la mort du joueur, la partie reprend dans un coéquipier', () => {
   for (const mode of ['assault', 'siege']) {
     const g = mkGame({ mode, noEnd: false, noEnemyAI: true });
     const game = g.game, old = game.player;
-    const heir = game.mates[0], name = heir.name;
+    // le relais revient au plus proche : avec des postes tirés au sort, ce n'est pas toujours le premier
+    const heir = game.mates.slice().sort((a, b) => dist(a.x, a.y, old.x, old.y) - dist(b.x, b.y, old.x, old.y))[0];
+    const name = heir.name;
     game.damage(old, 1000, null, 0);
     g.step(10);
     ok(!game.over, mode + ' : pas de défaite tant qu’un coéquipier est debout');
@@ -349,6 +618,35 @@ test('ramasser l’arme d’un corps l’échange contre celle de même catégor
   away(foe2);
   game.input.pressed.KeyV = true; g.step(1);
   ok(!p.act && /Aucune arme/.test(game.message.text), 'rien à portée : refus annoncé');
+});
+
+test('la disposition des terroristes et des otages change à chaque partie', () => {
+  const clef = a => Math.round(a.x) + ',' + Math.round(a.y);
+  for (const mode of ['assault', 'siege']) {
+    const vus = new Set(), chefs = new Set();
+    for (let i = 0; i < 12; i++) {
+      const g = mkGame({ mode, level: 1 });
+      const game = g.game;
+      vus.add([...game.enemies, ...game.mates, ...game.hostages].map(clef).sort().join('|'));
+      chefs.add(clef(game.player));
+    }
+    ok(vus.size >= 10, mode + ' : dispositions différentes (' + vus.size + ' sur 12)');
+    if (mode === 'siege') ok(chefs.size >= 5, 'le chef change de poste lui aussi (' + chefs.size + ' sur 12)');
+  }
+});
+
+test('personne n’est posé dans un recoin inaccessible', () => {
+  for (let i = 0; i < LEVELS.length; i++) for (const mode of ['assault', 'siege']) {
+    for (let n = 0; n < 4; n++) {
+      const g = mkGame({ mode, level: i });
+      const game = g.game, p = game.player;
+      for (const a of [...game.enemies, ...game.mates, ...game.hostages]) {
+        ok(game.map.circleFree(a.x, a.y, 11, false), LEVELS[i].name + ' : poste libre');
+        const route = game.map.routeTo(p.x, p.y, Math.floor(a.x / TILE), Math.floor(a.y / TILE), 11);
+        ok(route && route.length, LEVELS[i].name + ' / ' + mode + ' : on peut rejoindre chacun (' + (a.name || 'otage') + ')');
+      }
+    }
+  }
 });
 
 // ---------------------------------------------------------------- entrées
@@ -522,9 +820,11 @@ test('l’assaut récupère les otages, et sans otage la partie est perdue', () 
   const h = game.hostages[0];
   const op = game.enemies[0];
   op.hp = op.maxHp = 100000;
-  op.x = h.x + 10; op.y = h.y;
+  // un côté libre de l'otage : sa position est tirée au sort, il peut être contre un mur
+  const cote = [[10, 0], [-10, 0], [0, 10], [0, -10]].find(([dx, dy]) => game.map.circleFree(h.x + dx, h.y + dy, 10, false)) || [10, 0];
+  op.x = h.x + cote[0]; op.y = h.y + cote[1];
   h.found = true;
-  for (let i = 0; i < 300; i++) { op.x = h.x + 10; op.y = h.y; game.update(1 / 60); }
+  for (let i = 0; i < 300; i++) { op.x = h.x + cote[0]; op.y = h.y + cote[1]; game.update(1 / 60); }
   ok(h.secured, 'otage récupéré après quelques secondes');
   game.hostages.forEach(x => { x.secured = true; });
   game.update(1 / 60);
@@ -603,6 +903,61 @@ function doorWithRoom(game) {
   }
   return null;
 }
+
+test('sang et corps tombés hors de vue n’apparaissent qu’une fois l’endroit vu', () => {
+  const g = mkGame({ alone: true, loadout: { primary: 'scarh', sidearm: 'glock17' } });
+  const game = g.game, p = game.player;
+  const w = doorWithRoom(game);
+  ok(w, 'une porte de test');
+  setDoor(w.d, 0);
+  p.x = w.a.x; p.y = w.a.y;
+  const foe = new Enemy(w.b.x, w.b.y, 0, 'ak');
+  foe.hp = foe.maxHp = 30;
+  game.enemies = [foe];
+  game.updateEnemy = () => {};
+  game.input.mouse.x = w.b.x; game.input.mouse.y = w.b.y;
+  game.input.mouse.down = true;
+  for (let i = 0; i < 120 && foe.alive; i++) g.step(1);
+  game.input.mouse.down = false;
+  ok(!foe.alive, 'le suspect est tombé à travers la porte');
+  g.step(90);
+  const behind = () => game.hiddenDecals.filter(d => dist(d.x, d.y, foe.x, foe.y) < 1.2 * U).length;
+  ok(behind() > 0, 'son sang attend derrière la porte');
+  ok(!foe.bodySeen, 'son corps aussi');
+  setDoor(w.d, 1);
+  g.step(2);
+  eq(behind(), 0, 'la porte ouverte, le sang apparaît');
+  ok(foe.bodySeen, 'et le corps');
+});
+
+test('traçantes et gerbes de sang ne se voient pas derrière une porte fermée', () => {
+  const g = mkGame({ alone: true });
+  const game = g.game, p = game.player, map = game.map, r = g.r;
+  const w = doorWithRoom(game);
+  ok(w, 'une porte de test');
+  setDoor(w.d, 0);
+  p.x = w.a.x; p.y = w.a.y;
+  game.input.mouse.x = w.d.cx; game.input.mouse.y = w.d.cy;
+  for (let i = 0; i < map.explored.length; i++) if (!map.explored[i]) { map.explored[i] = 1; map.newlyExplored.push(i); } // zone déjà explorée
+  g.step(120);
+  game.camShake = 0; game.camKick.x = game.camKick.y = 0;
+  const shot = () => {
+    r.draw(0);
+    const sx = Math.round(w.b.x * r.zoom + r.tx), sy = Math.round(w.b.y * r.zoom + r.ty), h = Math.round(20 * r.zoom);
+    return Array.from(r.ctx.getImageData(sx - h, sy - h, 2 * h, 2 * h).data).join();
+  };
+  const withFx = () => {
+    game.bullets = [{ x: w.b.x + 10, y: w.b.y, vx: 900, vy: 0, trail: 30 }];
+    game.effects = [{ type: 'hit', x: w.b.x, y: w.b.y, t: 0.05, life: 0.25 }];
+    const img = shot();
+    game.bullets = []; game.effects = [];
+    return img;
+  };
+  eq(withFx() === shot(), true, 'porte fermée : rien ne se dessine derrière');
+  setDoor(w.d, 1);
+  game.computeVision();
+  ok(withFx() !== shot(), 'porte ouverte : la traçante et le sang se voient');
+});
 
 test('l’assaut dégoupille avant d’entrer, mais jamais contre une porte fermée', () => {
   const g = mkGame({ mode: 'siege' });
@@ -750,7 +1105,15 @@ test('le bilan donne le nombre d’otages tués', () => {
     const cell = document.getElementById('endHostagesKilled');
     ok(cell, mode + ' : ligne des otages tués');
     eq(cell.textContent, '2 / ' + hs.length, mode + ' : otages tués');
-    ok(/Otages tués/.test(document.getElementById('overlayPanel').textContent), mode + ' : libellé');
+    const panel = document.getElementById('overlayPanel').textContent;
+    ok(/Otages tués/.test(panel), mode + ' : libellé des otages');
+    // pertes du groupe : vous compris
+    ok(new RegExp(mode === 'siege' ? 'Terroristes perdus' : 'Opérateurs perdus').test(panel), mode + ' : libellé des pertes');
+    eq(game.squadSize, 1 + game.mates.length, mode + ' : le groupe se compte avec vous');
+    ok(new RegExp('0 / ' + game.squadSize).test(panel.replace(/\s+/g, ' ')), mode + ' : aucune perte au départ');
+    game.damage(game.player, 1e6, null, 0);
+    g.ui.showEnd('lose');
+    ok(new RegExp('1 / ' + game.squadSize).test(document.getElementById('overlayPanel').textContent.replace(/\s+/g, ' ')), mode + ' : votre propre mort compte');
     g.ui.hideOverlay();
   }
 });

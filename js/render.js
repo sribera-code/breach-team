@@ -2,7 +2,10 @@
 const gunStyle = w => (w ? { gun: w.kind, gunLen: w.gunLen, gunTint: w.tint } : { gun: null });
 // Geste en cours (porte, grenade) transmis au dessin du personnage.
 const actStyle = a => (a.act ? { act: { type: a.act.type, k: a.act.t / a.act.dur } }
-  : a.fiber ? { act: { type: 'fiber', k: 1 } } : null);
+  : a.cooking ? { act: { type: 'grenade', k: 0.55 } } // dégoupillée, bras armé, en attente du lancer
+  : a.fiber ? { act: { type: 'fiber', k: 1 } }
+  // rechargement : pas un geste à deux mains (on peut marcher), mais il s'anime pareil
+  : a.reloadT > 0 && a.reloadDur ? { act: { type: 'reload', k: 1 - a.reloadT / a.reloadDur } } : null);
 // Rendu canvas : calque statique (sols, murs, mobilier), décalques, entités, brouillard, HUD canvas.
 class Renderer {
   constructor(canvas, game) {
@@ -13,6 +16,10 @@ class Renderer {
     this.decalC = document.createElement('canvas');
     this.fogC = document.createElement('canvas');
     this.exploredC = document.createElement('canvas');
+    this.miniC = document.createElement('canvas');     // plan réduit (sols, murs, portes, fenêtres)
+    this.miniExpC = document.createElement('canvas');  // masque des cases déjà vues
+    this.miniTmpC = document.createElement('canvas');  // composition des deux
+    this.miniScale = 4;
     this.dpr = 1;
     this.zoom = 2;
     this.cam = { x: 0, y: 0 };
@@ -46,9 +53,28 @@ class Renderer {
     for (const w of m.windows) Sprites.paintWindow(ctx, w);
     for (const p of m.props) Sprites.paintProp(ctx, p.type, p.cx, p.cy);
     this.decalC.getContext('2d').clearRect(0, 0, W, H);
+    this.buildMinimap();
     this.cam.x = this.game.player.x; this.cam.y = this.game.player.y;
     this.tx = this.canvas.width / 2 - this.cam.x * this.zoom;
     this.ty = this.canvas.height / 2 - this.cam.y * this.zoom;
+  }
+
+  // Plan réduit : une petite case de la grille fine devient un carré de miniScale pixels.
+  buildMinimap() {
+    const m = this.game.map;
+    const s = this.miniScale;
+    for (const c of [this.miniC, this.miniExpC, this.miniTmpC]) { c.width = m.w * s; c.height = m.h * s; }
+    const ctx = this.miniC.getContext('2d');
+    ctx.clearRect(0, 0, this.miniC.width, this.miniC.height);
+    const FLOORS = ['#2f3742', '#3a3327', '#2d3a3d'];
+    for (let y = 0; y < m.h; y++) for (let x = 0; x < m.w; x++) {
+      const t = m.tile(x, y);
+      if (t === 2) continue;
+      ctx.fillStyle = t === 1 ? '#6a737f' : FLOORS[m.floor(x, y)] || FLOORS[0];
+      ctx.fillRect(x * s, y * s, s, s);
+    }
+    for (const w of m.windows) for (const c of w.cells) { ctx.fillStyle = '#7fd7ff'; ctx.fillRect(c.x * s, c.y * s, s, s); }
+    this.miniExpC.getContext('2d').clearRect(0, 0, this.miniExpC.width, this.miniExpC.height);
   }
 
   toWorld(sx, sy) {
@@ -94,7 +120,7 @@ class Renderer {
       else if (e.alive) this.drawEnemy(e);
     }
     this.drawGrenades();
-    this.drawBullets();
+    ctx.save(); this.clipToVision(); this.drawBullets(); ctx.restore();
     for (const a of [...g.ops, ...g.enemies]) a.walk = (a.walk || 0) + (a.alive && a.moving ? dt * (a.walkMode ? 8 : 13) : 0);
     if (g.orderMarker) this.drawOrderMarker(g.orderMarker);
     if (g.orderDrag) this.drawOrderDrag(g.orderDrag);
@@ -125,7 +151,7 @@ class Renderer {
       Sprites.character(ctx, p.x + k.x, p.y + k.y, p.angle, pst, p.muzzleT, p.walk, p.moving);
     }
     if (p.fiber) this.drawFiber(p, p.fiber);
-    this.drawEffects();
+    ctx.save(); this.clipToVision(); this.drawEffects(); ctx.restore();
     this.drawFog();
     this.drawFlashes();
 
@@ -133,6 +159,7 @@ class Renderer {
     this.drawVignette();
     this.drawBlind();
     this.drawCrosshair();
+    if (g.minimap) this.drawMinimap();
     for (const a of [...g.ops, ...g.enemies]) if (a.muzzleT > 0) a.muzzleT -= dt;
   }
 
@@ -151,18 +178,23 @@ class Renderer {
       ctx.strokeStyle = '#3b2a18'; ctx.lineWidth = 1;
       ctx.fillRect(0, -2.5, L - 1, 5); ctx.strokeRect(0, -2.5, L - 1, 5);
       ctx.fillStyle = 'rgba(255,255,255,0.15)'; ctx.fillRect(2, -1.8, L - 5, 1.5);
-      ctx.fillStyle = '#d8c06a'; ctx.fillRect(L - 8, -1, 3, 2);
+      if (d.broken) {
+        // serrure arrachée : bois éclaté à la place de la poignée
+        ctx.fillStyle = '#2a2016';
+        ctx.beginPath(); ctx.moveTo(L - 11, -2.5); ctx.lineTo(L - 4, -0.5); ctx.lineTo(L - 10, 2.5); ctx.closePath(); ctx.fill();
+        ctx.fillStyle = 'rgba(255,240,200,0.25)'; ctx.fillRect(L - 9, -2.5, 1, 5);
+      } else ctx.fillStyle = '#d8c06a', ctx.fillRect(L - 8, -1, 3, 2);
       ctx.fillStyle = '#2a2016'; ctx.fillRect(-1.5, -1.5, 3, 3);
       ctx.restore();
     }
   }
 
   drawBodies() {
-    const g = this.game, m = g.map;
-    for (const e of g.enemies) if (!e.alive && !e.dying && m.isExplored(e.tx, e.ty)) Sprites.body(this.ctx, e, this.enemyStyle(e));
+    const g = this.game;
+    for (const e of g.enemies) if (!e.alive && !e.dying && e.bodySeen) Sprites.body(this.ctx, e, this.enemyStyle(e));
     if (!g.player.alive && !g.player.dying) Sprites.body(this.ctx, g.player, { ...(g.player.style || STYLE_PLAYER), ...gunStyle(g.player.weapon) });
     for (const mt of g.mates) if (!mt.alive && !mt.dying) Sprites.body(this.ctx, mt, { ...mt.style, ...gunStyle(mt.weapon) });
-    for (const h of g.hostages) if (!h.alive) Sprites.body(this.ctx, h, { body: '#8a97a8', sleeve: '#8a97a8', hair: '#3b2a1a', pants: '#3b4250', skin: '#d9b48f' });
+    for (const h of g.hostages) if (!h.alive && h.bodySeen) Sprites.body(this.ctx, h, { body: '#8a97a8', sleeve: '#8a97a8', hair: '#3b2a1a', pants: '#3b4250', skin: '#d9b48f' });
   }
 
   enemyStyle(e) {
@@ -247,6 +279,7 @@ class Renderer {
   drawCasings() {
     const ctx = this.ctx;
     for (const c of this.game.casings) {
+      if (!this.game.seesPoint(c.x, c.y)) continue; // douille éjectée hors de vue
       ctx.save(); ctx.translate(c.x, c.y); ctx.rotate(c.rot);
       ctx.fillStyle = '#e0b638'; ctx.fillRect(-2, -0.8, 4, 1.6);
       ctx.restore();
@@ -265,11 +298,30 @@ class Renderer {
       ctx.fillStyle = '#c9a227'; ctx.fillRect(2, -1.5, 2, 1.2);
       ctx.restore();
       // mèche : anneau qui se referme pendant les derniers instants
-      if (gr.fuse - gr.t < 0.6) {
-        ctx.strokeStyle = 'rgba(255,240,150,0.8)'; ctx.lineWidth = 1.2;
-        ctx.beginPath(); ctx.arc(gr.x, gr.y - h, 7, -Math.PI / 2, -Math.PI / 2 + TAU * (1 - (gr.fuse - gr.t) / 0.6)); ctx.stroke();
+      // compte à rebours visible dès que la grenade est au sol, pas seulement à la dernière seconde
+      const reste = gr.fuse - gr.t - (gr.cooked || 0);
+      {
+        // l'anneau se vide : ce qu'il reste de mèche, et il rougit sur la fin
+        const part = clamp(reste / gr.fuse, 0, 1);
+        ctx.strokeStyle = 'rgba(0,0,0,0.45)'; ctx.lineWidth = 2.2;
+        ctx.beginPath(); ctx.arc(gr.x, gr.y - h, 7, 0, TAU); ctx.stroke();
+        ctx.strokeStyle = reste < 0.6 ? 'rgba(239,83,80,0.95)' : 'rgba(255,240,150,0.85)'; ctx.lineWidth = 1.6;
+        ctx.beginPath(); ctx.arc(gr.x, gr.y - h, 7, -Math.PI / 2, -Math.PI / 2 + TAU * part); ctx.stroke();
       }
     }
+  }
+
+  // Traçantes, gerbes de sang, éclats : seulement dans ce que le groupe voit en ce moment,
+  // sinon un tir à travers une porte trahit ce qui se passe derrière.
+  clipToVision() {
+    const ctx = this.ctx;
+    ctx.beginPath();
+    for (const p of this.game.visionPolys) {
+      ctx.moveTo(p.x, p.y);
+      for (const q of p.pts) ctx.lineTo(q.x, q.y);
+      ctx.closePath();
+    }
+    ctx.clip();
   }
 
   drawBullets() {
@@ -342,7 +394,14 @@ class Renderer {
     if (m.newlyExplored.length) {
       const ec = this.exploredC.getContext('2d');
       ec.fillStyle = 'rgba(0,0,0,0.45)';
-      for (const i of m.newlyExplored) ec.fillRect((i % m.w) * TILE, Math.floor(i / m.w) * TILE, TILE, TILE);
+      const mc = this.miniExpC.getContext('2d');
+      const s = this.miniScale;
+      mc.fillStyle = '#fff';
+      for (const i of m.newlyExplored) {
+        const x = i % m.w, y = Math.floor(i / m.w);
+        ec.fillRect(x * TILE, y * TILE, TILE, TILE);
+        mc.fillRect(x * s, y * s, s, s);
+      }
       m.newlyExplored = [];
     }
     f.drawImage(this.exploredC, 0, 0);
@@ -376,6 +435,56 @@ class Renderer {
     this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
   }
 
+  // Minimap en haut à droite : le plan connu, les portes, et qui est visible en ce moment.
+  drawMinimap() {
+    const g = this.game, m = g.map, ctx = this.ctx;
+    const s = this.miniScale;
+    // on ne montre que ce qui a été exploré : masque blanc puis plan par-dessus
+    const t = this.miniTmpC.getContext('2d');
+    t.setTransform(1, 0, 0, 1, 0, 0);
+    t.globalCompositeOperation = 'source-over';
+    t.clearRect(0, 0, this.miniTmpC.width, this.miniTmpC.height);
+    t.drawImage(this.miniExpC, 0, 0);
+    t.globalCompositeOperation = 'source-in';
+    t.drawImage(this.miniC, 0, 0);
+    t.globalCompositeOperation = 'source-over';
+    // portes (leur état change en cours de partie) et points d'entrée
+    for (const d of m.doors) {
+      if (!m.isExplored(d.x, d.y)) continue;
+      t.fillStyle = d.open ? '#4d7f5a' : d.progress > 0 ? '#c8a95a' : '#a9713f';
+      for (const c of d.cells) t.fillRect(c.x * s, c.y * s, s, s);
+    }
+    const dot = (x, y, r, col) => { t.fillStyle = col; t.beginPath(); t.arc(x / TILE * s, y / TILE * s, r, 0, TAU); t.fill(); };
+    for (const h of g.hostages) if (h.alive && (h.visible || m.isExplored(h.tx, h.ty))) dot(h.x, h.y, 2.2, '#e8eef5');
+    for (const e of g.enemies) if (e.alive && e.visible) dot(e.x, e.y, 2.2, '#ef5350');
+    for (const mt of g.mates) if (mt.alive) dot(mt.x, mt.y, 2.2, mt.accent || '#7fd18a');
+    const p = g.player;
+    if (p.alive) {
+      // joueur : petite flèche orientée
+      const px = p.x / TILE * s, py = p.y / TILE * s, a = p.angle;
+      t.fillStyle = '#ffffff';
+      t.beginPath();
+      t.moveTo(px + Math.cos(a) * 5, py + Math.sin(a) * 5);
+      t.lineTo(px + Math.cos(a + 2.5) * 4, py + Math.sin(a + 2.5) * 4);
+      t.lineTo(px + Math.cos(a - 2.5) * 4, py + Math.sin(a - 2.5) * 4);
+      t.closePath(); t.fill();
+    }
+    // cadre à l'écran, en haut à droite
+    const scale = clamp(this.canvas.width * 0.22 / this.miniTmpC.width, 0.4, 1.6);
+    const w = this.miniTmpC.width * scale, h = this.miniTmpC.height * scale;
+    // sous la barre du haut du HUD, pour ne pas croiser le chrono
+    const pad = 10 * this.dpr, x0 = this.canvas.width - w - pad, y0 = 40 * this.dpr;
+    ctx.save();
+    ctx.globalAlpha = 0.9;
+    ctx.fillStyle = 'rgba(8,10,13,0.72)';
+    ctx.fillRect(x0 - 3, y0 - 3, w + 6, h + 6);
+    ctx.strokeStyle = 'rgba(160,175,190,0.35)'; ctx.lineWidth = 1;
+    ctx.strokeRect(x0 - 3.5, y0 - 3.5, w + 7, h + 7);
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(this.miniTmpC, x0, y0, w, h);
+    ctx.restore();
+  }
+
   drawCrosshair() {
     const g = this.game, p = g.player, ctx = this.ctx;
     const x = this.mouse.sx * this.dpr, y = this.mouse.sy * this.dpr;
@@ -384,7 +493,7 @@ class Renderer {
     const spread = g.spreadOf(p);
     const gap = Math.max(5 * this.dpr, Math.tan(spread) * (p.aimDist || 0) * this.zoom + 3 * this.dpr);
     const len = 10 * this.dpr;
-    const color = p.reloadT > 0 || p.act ? 'rgba(255,170,60,0.95)' : p.walkMode ? 'rgba(140,255,170,0.95)' : 'rgba(255,255,255,0.95)';
+    const color = p.cooking ? 'rgba(239,83,80,0.95)' : p.reloadT > 0 || p.act ? 'rgba(255,170,60,0.95)' : p.walkMode ? 'rgba(140,255,170,0.95)' : 'rgba(255,255,255,0.95)';
     ctx.lineCap = 'round';
     const ticks = () => {
       ctx.beginPath();
@@ -395,12 +504,14 @@ class Renderer {
     ctx.strokeStyle = color; ctx.lineWidth = 3.2 * this.dpr; ticks();
     ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.beginPath(); ctx.arc(x, y, 3 * this.dpr, 0, TAU); ctx.fill();
     ctx.fillStyle = color; ctx.beginPath(); ctx.arc(x, y, 1.8 * this.dpr, 0, TAU); ctx.fill();
-    if (p.reloadT > 0 || p.act) {
-      const k = p.act ? clamp(p.act.t / p.act.dur, 0, 1) : 1 - p.reloadT / w.reload;
+    if (p.reloadT > 0 || p.act || p.cooking) {
+      // mèche en cours : l'anneau se vide, en rouge, au lieu de se remplir
+      const c = p.cooking;
+      const k = c ? 1 - clamp(c.t / c.fuse, 0, 1) : p.act ? clamp(p.act.t / p.act.dur, 0, 1) : 1 - p.reloadT / w.reload;
       const r = gap + len + 8 * this.dpr;
       ctx.strokeStyle = 'rgba(0,0,0,0.5)'; ctx.lineWidth = 6 * this.dpr;
       ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.stroke();
-      ctx.strokeStyle = 'rgba(255,170,60,0.95)'; ctx.lineWidth = 4 * this.dpr;
+      ctx.strokeStyle = c ? 'rgba(239,83,80,0.95)' : 'rgba(255,170,60,0.95)'; ctx.lineWidth = 4 * this.dpr;
       ctx.beginPath(); ctx.arc(x, y, r, -Math.PI / 2, -Math.PI / 2 + TAU * k); ctx.stroke();
     }
   }

@@ -88,6 +88,32 @@ const WEAPONS = {
     effRange: 4 * U, rangeSpread: 4.5 * DEG, mag: 8, reserve: 32, reload: 1.6, pierce: 0.3, speed: 900, gunLen: 10, heavy: false, range: 9 * U,
     snd: [0.07, 2400],
   },
+  uziP: {
+    kind: 'smg', cat: 'smg', name: 'IMI Uzi', maker: 'Israel Military Industries', caliber: '9×19 mm Parabellum', mode: 'Auto', rpm: 600, weight: 3.7,
+    note: "Trapue, increvable, increvablement bruyante. Le chargeur dans la crosse tient 32 coups.",
+    tint: { body: '#2b2d31', dark: '#1e2024' },
+    damage: 21, auto: true, spread: 1.6 * DEG, moveSpread: 2.6 * DEG, bloom: 1.6 * DEG, bloomMax: 8 * DEG, recoil: 3,
+    effRange: 5 * U, rangeSpread: 4.5 * DEG, mag: 32, reserve: 96, reload: 2.1, pierce: 0.35, speed: 880, gunLen: 13, heavy: false, range: 10 * U,
+    snd: [0.08, 2300],
+  },
+  skorpionP: {
+    kind: 'pdw', cat: 'smg', name: 'Škorpion vz. 61', maker: 'Zbrojovka Brno', caliber: '7,65×17 mm (.32 ACP)', mode: 'Auto', rpm: 850, weight: 1.6,
+    note: "Pistolet mitrailleur de poche : très maniable et très rapide, mais une munition faible.",
+    tint: { body: '#3a3a3e', dark: '#26262a' },
+    damage: 14, auto: true, spread: 2.2 * DEG, moveSpread: 2.2 * DEG, bloom: 1.5 * DEG, bloomMax: 9 * DEG, recoil: 2,
+    effRange: 4 * U, rangeSpread: 5 * DEG, mag: 20, reserve: 80, reload: 1.7, pierce: 0.25, speed: 820, gunLen: 9, heavy: false, range: 8 * U,
+    snd: [0.06, 2900],
+  },
+  tt33: {
+    kind: 'pistol', cat: 'hg', name: 'Tokarev TT-33', maker: 'Toula', caliber: '7,62×25 mm', mode: 'Semi', rpm: 300, weight: 0.9,
+    note: "Munition très rapide : elle perce le bois et les gilets là où un 9 mm s'arrête. Huit coups.",
+    tint: { slide: '#4a4136' },
+    damage: 26, auto: false, spread: 1 * DEG, moveSpread: 3 * DEG, bloom: 3.2 * DEG, bloomMax: 9 * DEG, recoil: 4.5,
+    effRange: 5 * U, rangeSpread: 4 * DEG, mag: 8, reserve: 32, reload: 1.6, pierce: 0.55, speed: 1100, gunLen: 11, heavy: false, range: 11 * U,
+    snd: [0.08, 2200],
+  },
+  sgE:     { kind: 'shotgun', pickup: 'm870', name: 'Remington 870 scié', damage: 11, pellets: 7, rof: 0.9, auto: false, spread: 7 * DEG, moveSpread: 4 * DEG, bloom: 3 * DEG, bloomMax: 10 * DEG, effRange: 3 * U, rangeSpread: 3 * DEG, mag: Infinity, reserve: 0, reload: 0, pierce: 0.2, speed: 850, gunLen: 16, heavy: true, burst: 1, pause: 1.3, range: 6 * U, snd: [0.22, 800] },
+  uziE:    { kind: 'smg', pickup: 'uziP', name: 'IMI Uzi', damage: 15, rof: 10, auto: true, spread: 5 * DEG, moveSpread: 4 * DEG, bloom: 2.2 * DEG, bloomMax: 12 * DEG, effRange: 4 * U, rangeSpread: 5 * DEG, mag: Infinity, reserve: 0, reload: 0, pierce: 0.35, speed: 880, gunLen: 13, heavy: false, burst: 6, pause: 1, range: 9 * U, snd: [0.08, 2300] },
   // ---- Armes de l'équipe d'intervention quand elle donne l'assaut (mode siège) ----
   hk416op: { kind: 'rifle', pickup: 'hk416', name: 'HK416 A5', damage: 26, rof: 12, auto: true, spread: 1.2 * DEG, moveSpread: 3.5 * DEG, bloom: 1.6 * DEG, bloomMax: 8 * DEG, effRange: 9 * U, rangeSpread: 3 * DEG, mag: Infinity, reserve: 0, reload: 0, pierce: 0.55, speed: 1150, gunLen: 20, heavy: false, burst: 4, pause: 0.75, range: 15 * U, snd: [0.1, 2200] },
   mp5op:   { kind: 'smg', pickup: 'mp5',   name: 'HK MP5A3', damage: 20, rof: 13, auto: true, spread: 1.4 * DEG, moveSpread: 2 * DEG,   bloom: 1.2 * DEG, bloomMax: 7 * DEG, effRange: 6 * U, rangeSpread: 4 * DEG, mag: Infinity, reserve: 0, reload: 0, pierce: 0.4,  speed: 900,  gunLen: 16, heavy: false, burst: 4, pause: 0.7,  range: 11 * U, snd: [0.08, 2600] },
@@ -109,7 +135,7 @@ const DEFAULT_LOADOUT = { primary: 'hk416', sidearm: 'glock17' };
 // Deux modes de jeu : l'assaut (on incarne l'opérateur) et le siège (on incarne le groupe armé).
 const MODES = {
   assault: { name: 'Assaut', primaries: PRIMARY_WEAPONS, sidearms: SIDEARMS, loadout: DEFAULT_LOADOUT },
-  siege:   { name: 'Siège',  primaries: ['akP', 'm870'], sidearms: ['makarovP', 'glock17'], loadout: { primary: 'akP', sidearm: 'makarovP' } },
+  siege:   { name: 'Siège',  primaries: ['akP', 'uziP', 'skorpionP', 'm870'], sidearms: ['makarovP', 'tt33', 'glock17'], loadout: { primary: 'akP', sidearm: 'makarovP' } },
 };
 
 const makeSlot = key => ({ def: WEAPONS[key], mag: WEAPONS[key].mag, reserve: WEAPONS[key].reserve });
@@ -189,6 +215,20 @@ const SIEGE_MATE_DEFS = [
   { name: 'Petar', accent: '#e0a070', weapon: 'akP',      slot: [0, -1.6],     sector: -90 * DEG,  militant: true, jacket: '#3d4a3a', pants: '#2b2f38' },
   { name: 'Yuri',  accent: '#8fb0e0', weapon: 'makarovP', slot: [0, 1.6],      sector: 90 * DEG,   militant: true, jacket: '#4a3d4a', pants: '#3a3630' },
 ];
+
+// Chacun son arme : on tire au sort dans le lot de son camp plutôt que d'armer tout le monde pareil.
+const MATE_POOL = ['hk416', 'scarh', 'mp5', 'mp7', 'm870', 'm4super90'];
+const SIEGE_MATE_POOL = ['akP', 'akP', 'uziP', 'skorpionP', 'makarovP', 'tt33', 'm870'];
+const OPERATOR_POOL = ['hk416op', 'mp5op'];
+// Tirage sans doublon tant que le lot n'est pas épuisé.
+function dealWeapons(pool, n) {
+  const left = pool.slice(), out = [];
+  for (let i = 0; i < n; i++) {
+    if (!left.length) left.push(...pool);
+    out.push(left.splice(Math.floor(Math.random() * left.length), 1)[0]);
+  }
+  return out;
+}
 
 class Teammate extends Agent {
   constructor(x, y, def) {
