@@ -1,6 +1,6 @@
 # Reste à faire
 
-État des chantiers ouverts au 19 septembre 2026. Les points sont classés par ordre d'intérêt au sein
+État des chantiers ouverts au 27 septembre 2026. Les points sont classés par ordre d'intérêt au sein
 de chaque section.
 
 ## Mode siège
@@ -50,7 +50,21 @@ de chaque section.
 - **Le son est minimal** : bruits synthétisés, pas de spatialisation. En siège, entendre d'où vient un bruit
   compte pourtant beaucoup.
 
+## Cartes
+
+- **Hôtel, Banque et Centre de données n'ont été jouées que par les tests.** Leur équilibre (nombre
+  d'entrées, longueur des allées entre les baies, couvert du hall de la banque) reste à éprouver à la main,
+  dans les deux modes.
+
 ## Fait depuis la dernière version
+
+Trois cartes (Hôtel, Banque, Centre de données) · trois sols (moquette, marbre, tôle striée) et six meubles
+(canapé, rayonnage, armoire, baie de serveurs, palette, comptoir), adossés au mur et d'un seul tenant quand on
+les aligne · grenades qui passent par-dessus le mobilier en vol · pièce d'arrivée de chaque vague signalée sur la
+minimap en siège · plan de chaque carte sur l'écran des missions · ouvertures nommées d'après leur façade, sans
+doublon.
+
+Version précédente :
 
 Entrées multiples par carte (portes extérieures et fenêtres, avec choix du point d'entrée en assaut et
 vagues qui alternent en siège) · pièce d'entrée toujours vide en assaut (cartes revues, garde dans le code) · siège en

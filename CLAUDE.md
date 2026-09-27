@@ -28,7 +28,7 @@ Then go to http://localhost:8000. Append `#nobrief` to the URL to skip the missi
 - `Game` (`js/game.js`) owns all simulation state and is the largest file. It covers player input handling, doors (animated `progress`/`target`, with open/ajar/closed states), bullets, flash grenades, enemy AI, teammate AI (follow/hold/move orders, watch spots, formation) and vision polygons (fog of war via `map.explored`). `update(dt)` runs `step(dt)` only when the game is neither over nor paused.
 - `Game` emits events through a small `on`/`emit` bus: `'level'`, `'pause'`, `'over'`, `'weapon'`. `Renderer` and `UI` subscribe to these; the game never calls them directly.
 - Visual side effects are handed to the renderer through a queue. The game calls `Game.addDecal({type: 'hole'|'blood'|'pool'|'casing'|'scorch', ...})`, which pushes into `game.decals` only if `Game.seesPoint` finds the spot inside a vision polygon; otherwise the decal waits in `game.hiddenDecals` until `computeVision` sees it. `Renderer.draw` then paints the queue once onto a persistent offscreen `decalC` canvas and clears it. Never push to `game.decals` directly, or blood shot through a closed door shows up in the fog. For the same reason, bullets and short-lived `effects` (blood spray, sparks, splinters) are drawn under `Renderer.clipToVision` (a clip to the current vision polygons), flying casings only where seen, and dead enemies and hostages only once `bodySeen` is set.
-- The minimap (`Renderer.buildMinimap` / `drawMinimap`, toggled by `game.minimap`) has its own layers: `miniC` (the reduced plan), `miniExpC` (explored mask, filled alongside the fog in `drawFog`) and `miniTmpC`, composited with `source-in` so only explored tiles show.
+- The minimap (`Renderer.buildMinimap` / `drawMinimap`, toggled by `game.minimap`) has its own layers: `miniC` (the reduced plan), `miniExpC` (explored mask, filled alongside the fog in `drawFog`) and `miniTmpC`, composited with `source-in` so only explored tiles show. The plan itself comes from the static `Renderer.paintPlan(ctx, map, s, doors)` (floors by `MINI_FLOORS`, walls, props, windows), which `UI.drawPlan` reuses for the plans on the « Missions » screen (with closed doors and a ring on every breach). In siege, `spawnAssault` stores `siege.arrival = { breach, room, at }` and `drawArrival` flashes that room (masked once into `miniArrC`) plus ripples and an inward arrow on the breach for `ARRIVAL_ALERT` seconds.
 - `Renderer` rebuilds its offscreen layers on `'level'`: `staticC` (floors, walls, props, door frames), `decalC`, `fogC` and `exploredC`. Fog is updated incrementally from `map.newlyExplored`.
 - `UI` (`js/ui.js`) updates the DOM HUD and overlays (briefing, pause, end screen) defined in `index.html`.
 
@@ -55,7 +55,8 @@ If the controls change, update the README table, the HUD hints in `index.html` a
 - A* with a `MinHeap`: `findPath`, then `smoothPath`, then `routeTo`.
 - DDA-style `castRay` and `hasLOS`.
 - Collision via `circleFree`.
-- Props block movement but not sight. Closed doors block both.
+- Props block movement but not sight. Closed doors block both. Thrown grenades fly over props: `Game.grenadeBlocked(x, y, overProps)` ignores them while the grenade is airborne (`GRENADE_FLIGHT`) or resting on one (`grenadeOnProp`, it then rolls off), and `clearThrow` only checks props on the rolling part of the throw.
+- Props listed in `PROP_AGAINST_WALL` get `rot` (back to the adjacent wall; a row only backs onto the wall running along it) and `link.l` / `link.r` (same prop next to it) from `GameMap.fitProp`; `Sprites.paintProp(ctx, p)` draws them in that local frame (back toward −y) so `sss` reads as one sofa. `breachLabel` names a breach by the façade it pierces, adding a position when two of the same kind share a side.
 
 **Entities** (`js/entities.js`): the file defines `Agent`, plus `Player`, `Teammate` (configured by `TEAMMATE_DEFS`, including each mate's weapon) and `Enemy`, which extend it; `Hostage` is standalone.
 
@@ -99,7 +100,7 @@ Known gaps and pending tuning are tracked in `TODO.md`; read it before starting 
 
 `game.mode` is `'assault'` (the original) or `'siege'`, saved in `localStorage` under `breach.mode` and switched from the briefing via `Game.setMode`, which reloads the level. `MODES` in `js/entities.js` holds each mode's weapon lists and default loadout (the siege side fields `akP`, `uziP`, `skorpionP`, `m870`, `makarovP`, `tt33`, `glock17`), and loadouts are stored per mode (`breach.loadout.<mode>`).
 
-Every map has 9 enemy spawns and 3, 4 and 5 hostages respectively — those counts are what `loadLevel` spawns; keep them when editing maps. The positions themselves are drawn per game by `Game.buildPosts`, which shuffles the map's own spawns together with a grid of free tiles, keeps them 2 U apart (1.2 U if a map is cramped) and skips the assault entry room. In siege the player takes the first drawn post, so the leader moves around too. In siege mode the mates take no orders: `Game.canCommand` refuses `T`, the right click and every `order*` call, so each militant holds its post.
+Every map has 9 enemy spawns and 3 to 5 hostages (3, 4 and 5 on the first three maps, 4, 4 and 5 on Hôtel, Banque and Centre de données) — those counts are what `loadLevel` spawns; keep them when editing maps. The positions themselves are drawn per game by `Game.buildPosts`, which shuffles the map's own spawns together with a grid of free tiles, keeps them 2 U apart (1.2 U if a map is cramped) and skips the assault entry room. In siege the player takes the first drawn post, so the leader moves around too. In siege mode the mates take no orders: `Game.canCommand` refuses `T`, the right click and every `order*` call, so each militant holds its post.
 
 In siege mode `loadLevel` reassigns the roles without touching the engine's notion of sides: the player and `mates` (from `SIEGE_MATE_DEFS`, militant styles, `ak`/`pistolE`) stay team `ops` and start on the enemy spawns, while `enemies` becomes the assault team — `Operator` instances spawned at the map entry with `hk416op`/`mp5op`. Everything that keys off `ops` (vision, fog, friendly fire, orders, HUD squad) therefore works unchanged.
 
@@ -111,8 +112,11 @@ Append an entry to `LEVELS` in `js/levels.js` with the fields `{ name, briefing,
 - `#` wall, `D` closed door, `S` player spawn (fallback when a map has no breach), `H` hostage.
 - `X` exterior door, `W` window: entry points from outside. Give every map several, including at least one of each, and keep enemies and hostages out of every room a breach opens into (the tests check it).
 - `E` enemy with a random facing; `^ v < >` enemy with a fixed facing.
-- Floors: `. , :` (concrete, parquet, tiles).
-- Props: `c B T p b k`.
+- Floors: `. , : ; = %` (concrete, parquet, tiles, carpet, marble, diamond plate). A new floor needs an entry in `FLOOR`, a painter in `Sprites.paintFloor` and a colour in `MINI_FLOORS`.
+- Props: `c B T p b k` plus `s r a R P C` (sofa, shelving, locker, server rack, pallet, counter). A new prop needs `PROPS`, a case in `Sprites.paintProp`, and `PROP_AGAINST_WALL` if it has a back.
+- A lone `#` inside a room is a pillar.
 - A space is outside the building.
+
+Keep spawns clear of furniture (a spawn needs `circleFree(12)`) and leave at least two map rows between rows of racks or shelves: with a single map row the aisle is 32 px wide and agents (radius 11) barely fit.
 
 An assault mission is won when every enemy is dead. It is lost if the whole team is down (the player's death alone hands control to a mate) or any hostage dies (in siege mode, only once no hostage is left alive in the player's hands).

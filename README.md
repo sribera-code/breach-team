@@ -20,9 +20,13 @@ Le briefing propose deux rôles pour chaque mission.
 
 **Siège** — vous incarnez le chef du groupe armé. Vous connaissez les lieux (le plan vous est acquis dès le départ), vous êtes neuf — vous et huit complices, chacun à son poste et sans ordres à recevoir : personne ne commande personne —, vous verrouillez les portes, et une équipe d'intervention donne l'assaut après dix secondes de préparation — par une porte extérieure ou une fenêtre, sans que vous sachiez laquelle. Elle progresse secteur par secteur, converge sur les coups de feu, lance des flashs avant d'entrer là où elle vous a entendu, et attaque en **trois vagues de trois opérateurs**, chaque fois par une autre ouverture. Pas de temps mort : la vague suivante entre six secondes après l'élimination de la précédente, ou au bout de trente secondes si celle-ci tient encore. Le HUD indique la vague en cours (« Vague 2 / 3 »). Repoussez la dernière et les négociations aboutissent.
 
-Chaque carte a ses otages : trois à l'Entrepôt, quatre aux Bureaux, cinq à la Villa. Vous perdez si tout votre groupe tombe (à votre mort, vous reprenez la main dans un complice), ou s'il ne vous reste plus aucun otage vivant : tous morts, ou récupérés par l'intervention (un otage gardé quelques secondes par un opérateur est perdu pour vous). Perdre un otage ne met pas fin à la partie tant qu'il en reste un. L'intervention ne tire jamais avec un otage dans l'axe ou juste derrière sa cible : elle se décale pour trouver un angle. Garder un otage près de soi protège donc vraiment. Les otages sont votre seule protection.
+Chaque carte a ses otages : trois à l'Entrepôt, quatre aux Bureaux, à l'Hôtel et à la Banque, cinq à la Villa et au Centre de données. Quand une vague entre, la minimap fait clignoter en rouge la pièce où elle arrive, avec une flèche sur l'ouverture franchie. Vous perdez si tout votre groupe tombe (à votre mort, vous reprenez la main dans un complice), ou s'il ne vous reste plus aucun otage vivant : tous morts, ou récupérés par l'intervention (un otage gardé quelques secondes par un opérateur est perdu pour vous). Perdre un otage ne met pas fin à la partie tant qu'il en reste un. L'intervention ne tire jamais avec un otage dans l'axe ou juste derrière sa cible : elle se décale pour trouver un angle. Garder un otage près de soi protège donc vraiment. Les otages sont votre seule protection.
 
 L'équipement suit le camp : AKM, Uzi, Škorpion vz. 61 ou Remington 870 en arme principale, Makarov, Tokarev TT-33 ou Glock en arme de poing, et **deux grenades à fragmentation** au lieu des flashs (`Espace`). Elles éclatent au bout de deux secondes et tuent dans un rayon d'environ une case, blessent jusqu'à trois cases et demie, vous et vos otages compris ; un mur ou une porte fermée arrête l'éclat. Pas de fibre optique de ce côté. Les opérateurs sont plus précis et portent un gilet ; vous frappez plus fort et connaissez le terrain. Portes, grenades et tir à travers les battants sont vos meilleurs outils. Les opérateurs, eux, lancent des flashs, mais seulement quand la trajectoire est libre (jamais contre une porte fermée) et jamais sur leurs équipiers ; leur propre camp détourne les yeux et n'est gêné que si l'éclair part à ses pieds.
+
+## Missions
+
+Six cartes : Entrepôt, Bureaux, Villa, Hôtel (chambres sur un long couloir, hall de marbre, restaurant et cuisines), Banque (grand hall à piliers, guichets, salle des coffres, salle informatique) et Centre de données (quai de chargement, salle des serveurs en allées parallèles, supervision). L'écran « Missions » montre le plan de chacune, avec ses portes, ses fenêtres et ses ouvertures sur l'extérieur ; les postes des suspects et des otages, tirés au sort à chaque partie, n'y figurent pas.
 
 ## Contrôles
 
@@ -83,11 +87,13 @@ On ne peut pas refermer une porte si quelqu'un (vous compris) ou une grenade se 
 
 ## Grenades
 
+Une grenade lancée vole par-dessus le mobilier (tables, plantes, caisses, canapés...) : seuls les murs, les fenêtres et les portes l'arrêtent en l'air. Une fois retombée, elle roule et rebondit sur les meubles qu'elle rencontre ; tombée sur une table ou un lit, elle en roule jusqu'au sol. Les opérateurs de l'IA en tiennent compte pour décider s'ils lancent.
+
 Dégoupiller et armer le bras prend 0,45 s. **La mèche commence à brûler à la fin de ce geste, pas au lancer** : tant que vous gardez `Espace`, la grenade reste en main et le compte à rebours tourne. L'anneau du viseur passe au rouge et se vide. Une fois au sol, la grenade porte le même anneau : il se vide dès qu'elle touche le sol, et rougit dans la dernière demi-seconde. Relâchez, et elle part vers le curseur avec le temps déjà brûlé : de quoi la faire éclater en l'air ou à l'arrivée, sans laisser le temps de la fuir. Gardez-la jusqu'au bout et elle vous explose dans la main. Tant qu'elle est dégoupillée, vous ne tirez pas et vous ne rechargez pas.
 
 ## Minimap
 
-En haut à droite, un plan réduit du bâtiment montre ce que vous avez déjà exploré : les pièces, les portes (fermée, entrouverte, ouverte) et les fenêtres, votre équipe, les otages connus et les adversaires visibles en ce moment. En siège, le plan est complet dès le départ, puisque vous connaissez les lieux. `M` la replie.
+En haut à droite, un plan réduit du bâtiment montre ce que vous avez déjà exploré : les pièces, le mobilier, les portes (fermée, entrouverte, ouverte) et les fenêtres, votre équipe, les otages connus et les adversaires visibles en ce moment. En siège, le plan est complet dès le départ, puisque vous connaissez les lieux, et la pièce où une vague d'assaut vient d'entrer y clignote en rouge pendant huit secondes. `M` la replie.
 
 ## Fibre optique
 
@@ -140,6 +146,7 @@ Ajouter une entrée dans `LEVELS` (`js/levels.js`). Une case ASCII vaut 32 px ; 
 |---|---|
 | `#` | mur |
 | `.` `,` `:` | sol béton / parquet / carrelage |
+| `;` `=` `%` | sol moquette / dallage de marbre / tôle striée |
 | espace | vide (hors bâtiment) |
 | `D` | porte fermée |
 | `X` | porte extérieure : un point d'entrée pour l'intervention |
@@ -147,6 +154,10 @@ Ajouter une entrée dans `LEVELS` (`js/levels.js`). Une case ASCII vaut 32 px ; 
 | `S` | départ du joueur |
 | `E` `^` `v` `<` `>` | ennemi (aléatoire ou orienté) |
 | `H` | otage |
-| `c` `B` `T` `p` `b` `k` | caisse, baril, table, plante, lit, bureau (bloquent le passage, pas la vue) |
+| `c` `B` `T` `p` `b` `k` | caisse, baril, table, plante, lit, bureau (bloquent le passage, pas la vue ; une grenade lancée passe par-dessus) |
+| `s` `r` `a` `R` `P` `C` | canapé, rayonnage, armoire, baie de serveurs, palette chargée, comptoir (idem) |
+| `#` isolé dans une pièce | pilier |
+
+Lit, canapé, rayonnage, armoire, baie de serveurs et comptoir se mettent dos au mur voisin, et plusieurs cases alignées du même meuble se dessinent d'un seul tenant (`sss` : un canapé trois places).
 
 Ne placez ni ennemi ni otage dans une pièce qui donne sur une ouverture (`X` ou `W`) : c'est la zone d'entrée de l'équipe. Le jeu déplace de toute façon derrière la porte la plus proche quiconque s'y trouverait, et `tests/index.html` signale la carte fautive.

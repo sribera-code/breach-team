@@ -9,6 +9,10 @@ const PICKUP_RANGE = 1.3 * U;
 // Dégâts d'un seul coup au-delà desquels un otage meurt sans passer par la blessure.
 // Durée de mèche, décomptée dès la fin du geste d'armement (et non du lancer).
 const FUSE = { flash: 1.7, frag: 2 };
+// Lancer : la grenade vole GRENADE_FLIGHT s (au-dessus du mobilier), puis roule en freinant.
+const GRENADE_FLIGHT = 0.35, GRENADE_FRICTION = 4;
+// Mode siège : durée pendant laquelle la minimap signale la pièce où une vague vient d'entrer.
+const ARRIVAL_ALERT = 8;
 // Chevrotine dans la serrure : nombre de plombs qu'il faut mettre dans une porte pour la faire sauter.
 const BREACH_PELLETS = 5;
 const HOSTAGE_GRAVE = 45;
@@ -257,6 +261,7 @@ class Game {
       gap: 6,          // répit une fois la vague en cours éliminée
       maxGap: 30,      // au-delà, la vague suivante entre même si la précédente tient encore
       lastBreach: -1,
+      arrival: null,   // dernière vague entrée : ouverture, pièce et instant (signalés sur la minimap)
       sectors: this.buildSectors(entryPos),
     };
     // Vous connaissez les lieux : le plan est acquis dès le départ (mais on ne voit toujours
@@ -308,6 +313,8 @@ class Game {
       this.enemies.push(op);
     }
     s.wave++;
+    // la pièce où elle arrive clignote sur la minimap pendant ARRIVAL_ALERT secondes
+    s.arrival = { breach: b, room: this.map.roomOf(b.inside.x, b.inside.y), at: this.time };
     return b;
   }
 
@@ -735,11 +742,11 @@ class Game {
     // distance ≈ v0 * (flight + 1/friction), d'où v0.
     const d = clamp(dist(p.x, p.y, m.x, m.y), 0.5 * U, 7 * U);
     const ang = Math.atan2(m.y - p.y, m.x - p.x);
-    const flight = 0.35, friction = 4;
+    const flight = GRENADE_FLIGHT, friction = GRENADE_FRICTION;
     const v0 = d / (flight + 1 / friction);
     let gx = p.x + Math.cos(ang) * 14, gy = p.y + Math.sin(ang) * 14;
     // la main ne passe pas à travers un mur : si un obstacle sépare le lanceur du point de départ, elle part de lui
-    if (this.grenadeBlocked(gx, gy) || this.map.castRay(p.x, p.y, ang, 14, false).hit) { gx = p.x; gy = p.y; }
+    if (this.grenadeBlocked(gx, gy, true) || this.map.castRay(p.x, p.y, ang, 14, false).hit) { gx = p.x; gy = p.y; }
     const kind = p.nade || 'flash';
     // temps déjà brûlé dans la main : la mèche a commencé à la fin du geste d'armement
     const burnt = cooked || 0;
@@ -753,7 +760,7 @@ class Game {
       if (cross) {
         g.post = door;
         g.postSide = Math.sign(cross.side);
-        if (this.grenadeBlocked(g.x, g.y) || dist(p.x, p.y, g.x, g.y) < 1) { g.x = p.x; g.y = p.y; }
+        if (this.grenadeBlocked(g.x, g.y, true) || dist(p.x, p.y, g.x, g.y) < 1) { g.x = p.x; g.y = p.y; }
       }
     }
     this.grenades.push(g);
@@ -773,14 +780,19 @@ class Game {
     return Math.abs(along) <= half - 3 ? { side } : null;
   }
 
-  // Obstacles pour une grenade : murs, mobilier, portes non ouvertes en grand.
-  grenadeBlocked(x, y) {
-    const tx = Math.floor(x / TILE), ty = Math.floor(y / TILE);
-    if (this.map.blocksMove(tx, ty)) return true;
+  // Obstacles pour une grenade : murs, fenêtres, portes non ouvertes en grand, et le mobilier sauf
+  // quand elle passe par-dessus (overProps : en vol, ou retombée sur un meuble dont elle roule).
+  grenadeBlocked(x, y, overProps) {
+    const m = this.map, tx = Math.floor(x / TILE), ty = Math.floor(y / TILE);
+    if (m.isWall(tx, ty) || m.window(tx, ty)) return true;
+    if (!overProps && m.prop(tx, ty)) return true;
     // seule une porte complètement fermée bloque l'embrasure ; sinon on teste le battant (doorLeafHit)
-    const d = this.map.door(tx, ty);
+    const d = m.door(tx, ty);
     return d ? d.progress <= 0 : false;
   }
+
+  // Grenade posée sur un meuble (retombée sur une table, un lit...).
+  grenadeOnProp(g) { return !!this.map.prop(Math.floor(g.x / TILE), Math.floor(g.y / TILE)); }
 
   // Battant d'une porte : segment partant de la charnière (même géométrie que le rendu).
   doorLeaf(d) { return this.map.leafSeg(d); }
@@ -1123,11 +1135,14 @@ class Game {
       const steps = Math.max(1, Math.ceil(speed * dt / 4));
       const sdt = dt / steps;
       for (let s = 0; s < steps; s++) {
+        // En vol, elle passe au-dessus du mobilier (plantes, tables, caisses...) ; au sol elle rebondit
+        // dessus, sauf si elle est retombée sur un meuble : elle en roule jusqu'à tomber.
+        const over = g.t - dt + s * sdt < g.flight || this.grenadeOnProp(g);
         const nx = g.x + g.vx * sdt;
-        if (g.vx !== 0 && this.grenadeBlocked(nx + Math.sign(g.vx) * R, g.y)) this.bounceGrenade(g, 'x');
+        if (g.vx !== 0 && this.grenadeBlocked(nx + Math.sign(g.vx) * R, g.y, over)) this.bounceGrenade(g, 'x');
         else g.x = nx;
         const ny = g.y + g.vy * sdt;
-        if (g.vy !== 0 && this.grenadeBlocked(g.x, ny + Math.sign(g.vy) * R)) this.bounceGrenade(g, 'y');
+        if (g.vy !== 0 && this.grenadeBlocked(g.x, ny + Math.sign(g.vy) * R, over)) this.bounceGrenade(g, 'y');
         else g.y = ny;
         this.doorLeafHit(g, R);
       }
@@ -1135,6 +1150,7 @@ class Game {
       if (g.t < g.flight) g.h = Math.sin(g.t / g.flight * Math.PI) * 12;           // en l'air
       else if (g.t < g.flight + 0.18) g.h = Math.sin((g.t - g.flight) / 0.18 * Math.PI) * 3; // petit rebond à l'atterrissage
       else g.h = 0;
+      if (g.t >= g.flight && this.grenadeOnProp(g)) g.h = Math.max(g.h, 5); // sur le plateau du meuble
       if (g.t >= g.flight) { const f = Math.exp(-g.friction * dt); g.vx *= f; g.vy *= f; }   // roulement
       if (speed < 4) { g.vx = 0; g.vy = 0; }
       if (g.t + g.cooked >= g.fuse) { if (g.kind === 'frag') this.detonateFrag(g); else this.detonateFlash(g.x, g.y, g); }
@@ -1364,13 +1380,16 @@ class Game {
     return true;
   }
 
-  // Trajectoire de lancer libre jusqu'au point visé : ni mur, ni meuble, ni porte non ouverte.
+  // Trajectoire de lancer libre jusqu'au point visé : ni mur, ni porte non ouverte, ni meuble sur la
+  // partie où la grenade roule (elle survole ceux qui se trouvent sous sa trajectoire en vol).
   clearThrow(x0, y0, x1, y1) {
     if (!this.map.hasLOS(x0, y0, x1, y1)) return false;
     const d = dist(x0, y0, x1, y1), n = Math.ceil(d / 6);
+    // elle part de la main (14 px devant, voir spawnFlash) et fait en vol cette part du trajet
+    const air = 14 + d * GRENADE_FLIGHT / (GRENADE_FLIGHT + 1 / GRENADE_FRICTION);
     for (let i = 2; i <= n; i++) {
       const x = x0 + (x1 - x0) * i / n, y = y0 + (y1 - y0) * i / n;
-      if (this.grenadeBlocked(x, y)) return false;
+      if (this.grenadeBlocked(x, y, d * i / n < air)) return false;
       const dd = this.map.door(Math.floor(x / TILE), Math.floor(y / TILE));
       if (dd && !dd.open) return false;
     }

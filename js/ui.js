@@ -204,18 +204,40 @@ class UI {
     const ret = back || (() => this.showBriefing());
     let html = `<h1>Missions</h1><p>${g.mode === 'siege'
       ? `Objectif : repousser les ${SIEGE_WAVES.length} vagues d'assaut avec vos otages vivants et entre vos mains.`
-      : "Objectif : neutraliser tous les suspects sans perdre toute l'équipe ni tuer d'otage."}</p>`;
+      : "Objectif : neutraliser tous les suspects sans perdre toute l'équipe ni tuer d'otage."}</p>
+      <p class="planlegend"><i class="lg-door"></i> porte <i class="lg-win"></i> fenêtre <i class="lg-entry"></i> ouverture sur l'extérieur</p>`;
     const siege = g.mode === 'siege';
+    html += '<div class="levels">';
     LEVELS.forEach((l, i) => {
       const txt = l.map.join('');
       const n = txt.split('').filter(c => 'E^v<>'.includes(c)).length;
+      const h = txt.split('').filter(c => c === 'H').length;
       const ent = txt.split('').filter(c => 'XW'.includes(c)).length;
-      html += `<button class="levelbtn" data-i="${i}"><span>${i + 1}. ${l.name}</span><small>${siege ? ent + ' entrées à surveiller' : n + ' suspects'}</small></button>`;
+      html += `<button class="levelbtn${i === g.levelIndex ? ' sel' : ''}" data-i="${i}"><canvas></canvas>
+        <span class="lname">${i + 1}. ${l.name}</span><small>${siege ? ent + ' entrées à surveiller' : n + ' suspects'} · ${h} otages</small></button>`;
     });
-    html += `<div class="row"><button id="ovClose">Retour</button></div>`;
+    html += `</div><div class="row"><button id="ovClose">Retour</button></div>`;
     this.showOverlay(html);
-    this.panel.querySelectorAll('.levelbtn').forEach(b => b.onclick = () => { g.loadLevel(+b.dataset.i); this.showBriefing(); });
+    this.panel.classList.add('wide');
+    this.panel.querySelectorAll('.levelbtn').forEach(b => {
+      UI.drawPlan(b.querySelector('canvas'), LEVELS[+b.dataset.i]);
+      b.onclick = () => { g.loadLevel(+b.dataset.i); this.showBriefing(); };
+    });
     this.panel.querySelector('#ovClose').onclick = ret;
+  }
+
+  // Aperçu d'une mission : le plan de la minimap, portes fermées comprises, et ses ouvertures sur
+  // l'extérieur soulignées. Les postes des suspects et des otages sont tirés au sort : on ne les montre pas.
+  static drawPlan(canvas, def) {
+    const m = new GameMap(def), s = 3, dpr = window.devicePixelRatio || 1;
+    canvas.width = m.w * s * dpr; canvas.height = m.h * s * dpr;
+    const ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+    Renderer.paintPlan(ctx, m, s, true);
+    ctx.strokeStyle = '#ffb347'; ctx.lineWidth = 1.5;
+    for (const b of m.breaches) {
+      ctx.beginPath(); ctx.arc((b.cx / TILE) * s, (b.cy / TILE) * s, 4.5, 0, TAU); ctx.stroke();
+    }
   }
 
   showPause() {
@@ -269,10 +291,10 @@ class UI {
       <b>Gestes</b> : manœuvrer une porte ou lancer une flash occupe les deux mains. Le geste dure un instant (l'anneau du viseur montre où il en est), pendant lequel on ne tire pas et on avance au ralenti, et la visée reste perturbée juste après : ne le faites pas nez à nez avec un suspect. Les coéquipiers et les suspects sont soumis aux mêmes délais.<br>
       <b>Portes</b> : <kbd>E</kbd> ouvre en grand la porte la plus proche, ou la ferme si elle est ouverte. La molette agit par crans : fermée, entrebâillée, entrouverte, ouverte ; vers le bas, l'inverse. Une porte qui n'est pas grande ouverte ne laisse ni passer ni voir autrement que par l'entrebâillement : le battant arrête le regard, et vous ne découvrez qu'un mince cône de la pièce (le vôtre comme celui des ennemis s'élargit avec le cran). Entrebâiller est silencieux et plus rapide qu'ouvrir en grand, puisque le battant a moins de chemin à faire ; comptez un second geste pour entrer. On ne peut pas fermer une porte si quelqu'un se trouve dans l'embrasure.<br>
       <b>Fibre optique</b> : devant une porte fermée ou entrouverte, maintenez <kbd>F</kbd> pour glisser une fibre sous le battant : vous découvrez un large cône de la pièce voisine, suspects compris, sans ouvrir ni faire de bruit. La mise en place demande un geste ; tant que vous observez, vous ne tirez pas et vous ne pouvez pas bouger — le moindre pas retire la fibre.<br>
-      <b>Flash</b> : <kbd>Espace</kbd> (ou <kbd>G</kbd>) lance une grenade aveuglante vers le curseur : la distance au curseur règle la force du lancer. Elle vole, retombe, roule et rebondit sur les murs, le mobilier et les portes fermées, puis explose au bout d'environ 1,7 s. Attention aux retours contre un mur proche. Collé à une porte entrouverte, visez l'embrasure pour glisser la grenade par l'entrebâillement ; de plus loin, elle rebondit sur le battant. Les ennemis aveuglés ne tirent plus pendant quelques secondes. Ne regardez pas l'explosion.<br>
+      <b>Flash</b> : <kbd>Espace</kbd> (ou <kbd>G</kbd>) lance une grenade aveuglante vers le curseur : la distance au curseur règle la force du lancer. Elle vole par-dessus le mobilier (tables, plantes, caisses...), retombe, puis roule et rebondit sur les murs, les meubles et les portes fermées, et explose au bout d'environ 1,7 s. Attention aux retours contre un mur proche. Collé à une porte entrouverte, visez l'embrasure pour glisser la grenade par l'entrebâillement ; de plus loin, elle rebondit sur le battant. Les ennemis aveuglés ne tirent plus pendant quelques secondes. Ne regardez pas l'explosion.<br>
       <b>À travers les portes</b> : un battant n'est pas un abri. Les balles le traversent en perdant de l'énergie (un tiers pour du 7,62, les quatre cinquièmes pour de la chevrotine) et en déviant un peu. Vous pouvez arroser une porte fermée — et un suspect peut faire de même. Les murs, eux, arrêtent tout.<br>
       <b>Relais et armes au sol</b> : si vous tombez, vous reprenez la main dans le coéquipier debout le plus proche ; la mission n'est perdue que quand toute l'équipe est à terre. Près d'un corps, <kbd>V</kbd> ramasse son arme et laisse au sol la vôtre de même catégorie (vous pouvez la reprendre).<br>
-      <b>Minimap</b> : en haut à droite, le plan de ce que vous avez exploré, avec les portes, les fenêtres, votre équipe, les otages connus et les adversaires visibles. <kbd>M</kbd> la replie.<br>
+      <b>Minimap</b> : en haut à droite, le plan de ce que vous avez exploré, avec les portes, les fenêtres, le mobilier, votre équipe, les otages connus et les adversaires visibles. En siège, la pièce où une vague d'assaut vient d'entrer y clignote en rouge quelques secondes. <kbd>M</kbd> la replie.<br>
       <b>Otages</b> : ne tirez pas dessus, y compris à travers une porte.<br>
       <b>Équipe</b> : Bravo et Charlie vous suivent en formation et couvrent vos flancs et vos arrières. <kbd>T</kbd> leur fait tenir la position (ou reprendre le suivi), le clic droit les envoie sur un point (ils ouvrent les portes sur ce trajet), et un clic droit sur vous-même les rappelle en suivi. En <b>maintenant</b> le clic droit puis en tirant vers une direction, vous ajoutez une consigne de couverture : celui des deux qui se place de ce côté gardera cet angle au lieu de choisir lui-même son point d'intérêt (jusqu'à l'ordre suivant ; un contact reste prioritaire). Ils tirent sur tout suspect visible, mais jamais à travers vous ou un otage : quand l'axe reste bouché, ils se décalent pour dégager l'angle (le HUD indique « Axe bouché »). Un ordre de déplacement reste prioritaire sur un contact : ils rompent et progressent en gardant le suspect en joue. Attention, vos propres balles peuvent les blesser.<br>
       <kbd>Échap</kbd> pause.</p>

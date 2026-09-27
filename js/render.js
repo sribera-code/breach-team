@@ -6,6 +6,8 @@ const actStyle = a => (a.act ? { act: { type: a.act.type, k: a.act.t / a.act.dur
   : a.fiber ? { act: { type: 'fiber', k: 1 } }
   // rechargement : pas un geste à deux mains (on peut marcher), mais il s'anime pareil
   : a.reloadT > 0 && a.reloadDur ? { act: { type: 'reload', k: 1 - a.reloadT / a.reloadDur } } : null);
+// Teinte des sols sur les plans réduits, dans l'ordre de FLOOR (js/map.js).
+const MINI_FLOORS = ['#2f3742', '#3a3327', '#2d3a3d', '#3d2a30', '#403d37', '#343b42'];
 // Rendu canvas : calque statique (sols, murs, mobilier), décalques, entités, brouillard, HUD canvas.
 class Renderer {
   constructor(canvas, game) {
@@ -19,6 +21,7 @@ class Renderer {
     this.miniC = document.createElement('canvas');     // plan réduit (sols, murs, portes, fenêtres)
     this.miniExpC = document.createElement('canvas');  // masque des cases déjà vues
     this.miniTmpC = document.createElement('canvas');  // composition des deux
+    this.miniArrC = document.createElement('canvas');  // pièce où la dernière vague d'assaut est entrée
     this.miniScale = 4;
     this.dpr = 1;
     this.zoom = 2;
@@ -51,7 +54,7 @@ class Renderer {
     for (let y = 0; y < m.h; y++) for (let x = 0; x < m.w; x++) if (m.tile(x, y) === 1) Sprites.paintWall(ctx, m, x, y);
     for (const d of m.doors) Sprites.paintDoorFrame(ctx, d);
     for (const w of m.windows) Sprites.paintWindow(ctx, w);
-    for (const p of m.props) Sprites.paintProp(ctx, p.type, p.cx, p.cy);
+    for (const p of m.props) Sprites.paintProp(ctx, p);
     this.decalC.getContext('2d').clearRect(0, 0, W, H);
     this.buildMinimap();
     this.cam.x = this.game.player.x; this.cam.y = this.game.player.y;
@@ -63,18 +66,64 @@ class Renderer {
   buildMinimap() {
     const m = this.game.map;
     const s = this.miniScale;
-    for (const c of [this.miniC, this.miniExpC, this.miniTmpC]) { c.width = m.w * s; c.height = m.h * s; }
+    for (const c of [this.miniC, this.miniExpC, this.miniTmpC, this.miniArrC]) { c.width = m.w * s; c.height = m.h * s; }
+    this._arrivalFor = null;
     const ctx = this.miniC.getContext('2d');
     ctx.clearRect(0, 0, this.miniC.width, this.miniC.height);
-    const FLOORS = ['#2f3742', '#3a3327', '#2d3a3d'];
+    Renderer.paintPlan(ctx, m, s, false);
+    this.miniExpC.getContext('2d').clearRect(0, 0, this.miniExpC.width, this.miniExpC.height);
+  }
+
+  // Plan réduit d'une carte, une petite case par carré de s pixels : sols, murs, mobilier, fenêtres,
+  // et les portes (fermées) si on le demande. Sert à la minimap et aux aperçus du choix de mission.
+  static paintPlan(ctx, m, s, doors) {
     for (let y = 0; y < m.h; y++) for (let x = 0; x < m.w; x++) {
       const t = m.tile(x, y);
       if (t === 2) continue;
-      ctx.fillStyle = t === 1 ? '#6a737f' : FLOORS[m.floor(x, y)] || FLOORS[0];
+      ctx.fillStyle = t === 1 ? '#6a737f' : MINI_FLOORS[m.floor(x, y)] || MINI_FLOORS[0];
       ctx.fillRect(x * s, y * s, s, s);
     }
-    for (const w of m.windows) for (const c of w.cells) { ctx.fillStyle = '#7fd7ff'; ctx.fillRect(c.x * s, c.y * s, s, s); }
-    this.miniExpC.getContext('2d').clearRect(0, 0, this.miniExpC.width, this.miniExpC.height);
+    ctx.fillStyle = 'rgba(170,180,190,0.3)'; // mobilier : il arrête les pas, pas le regard
+    for (const i of m.propAt.keys()) ctx.fillRect((i % m.w) * s, Math.floor(i / m.w) * s, s, s);
+    ctx.fillStyle = '#7fd7ff';
+    for (const w of m.windows) for (const c of w.cells) ctx.fillRect(c.x * s, c.y * s, s, s);
+    if (doors) {
+      ctx.fillStyle = '#a9713f';
+      for (const d of m.doors) for (const c of d.cells) ctx.fillRect(c.x * s, c.y * s, s, s);
+    }
+  }
+
+  // Vague d'assaut qui vient d'entrer : sa pièce d'arrivée clignote en rouge sur la minimap et
+  // l'ouverture franchie émet des ondes, une flèche pointée vers l'intérieur.
+  drawArrival(t, arr, age) {
+    const m = this.game.map, s = this.miniScale;
+    if (this._arrivalFor !== arr) {
+      this._arrivalFor = arr;
+      const a = this.miniArrC.getContext('2d');
+      a.clearRect(0, 0, this.miniArrC.width, this.miniArrC.height);
+      a.fillStyle = '#ef5350';
+      for (const i of arr.room) a.fillRect((i % m.w) * s, Math.floor(i / m.w) * s, s, s);
+    }
+    const fade = clamp((ARRIVAL_ALERT - age) / 2, 0, 1); // s'efface sur les deux dernières secondes
+    t.save();
+    t.globalAlpha = (0.32 + 0.26 * (0.5 + 0.5 * Math.cos(age * 7))) * fade;
+    t.drawImage(this.miniArrC, 0, 0);
+    const b = arr.breach, bx = b.cx / TILE * s, by = b.cy / TILE * s;
+    t.strokeStyle = '#ff8a80'; t.lineWidth = 1.5;
+    for (let k = 0; k < 2; k++) {
+      const ph = (age * 1.2 + k / 2) % 1;
+      t.globalAlpha = fade * (1 - ph);
+      t.beginPath(); t.arc(bx, by, 3 + ph * 14, 0, TAU); t.stroke();
+    }
+    const a = b.angle, cs = Math.cos(a), sn = Math.sin(a);
+    t.globalAlpha = fade;
+    t.fillStyle = '#ffd6d4';
+    t.beginPath();
+    t.moveTo(bx + cs * 11, by + sn * 11);
+    t.lineTo(bx + cs * 3 - sn * 4.5, by + sn * 3 + cs * 4.5);
+    t.lineTo(bx + cs * 3 + sn * 4.5, by + sn * 3 - cs * 4.5);
+    t.closePath(); t.fill();
+    t.restore();
   }
 
   toWorld(sx, sy) {
@@ -454,6 +503,8 @@ class Renderer {
       t.fillStyle = d.open ? '#4d7f5a' : d.progress > 0 ? '#c8a95a' : '#a9713f';
       for (const c of d.cells) t.fillRect(c.x * s, c.y * s, s, s);
     }
+    const arr = g.siege && g.siege.arrival;
+    if (arr && g.time - arr.at < ARRIVAL_ALERT) this.drawArrival(t, arr, g.time - arr.at);
     const dot = (x, y, r, col) => { t.fillStyle = col; t.beginPath(); t.arc(x / TILE * s, y / TILE * s, r, 0, TAU); t.fill(); };
     for (const h of g.hostages) if (h.alive && (h.visible || m.isExplored(h.tx, h.ty))) dot(h.x, h.y, 2.2, '#e8eef5');
     for (const e of g.enemies) if (e.alive && e.visible) dot(e.x, e.y, 2.2, '#ef5350');

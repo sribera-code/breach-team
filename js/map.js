@@ -5,9 +5,15 @@
 // (une case = TILE = 16 px) : chaque case ASCII (x,y) correspond à la petite case (2x,2y), et les petites
 // cases intermédiaires relient les murs voisins. Les murs n'ont donc plus qu'une petite case d'épaisseur,
 // les portes font trois petites cases de large.
-const FLOOR = { '.': 0, ',': 1, ':': 2 }; // béton, parquet, carrelage
+// béton, parquet, carrelage, moquette, dallage de marbre, tôle striée
+const FLOOR = { '.': 0, ',': 1, ':': 2, ';': 3, '=': 4, '%': 5 };
 const WINDOW_LEN = 3; // largeur d'une fenêtre, en petites cases
-const PROPS = { c: 'crate', B: 'barrel', T: 'table', p: 'plant', b: 'bed', k: 'desk' };
+const PROPS = {
+  c: 'crate', B: 'barrel', T: 'table', p: 'plant', b: 'bed', k: 'desk',
+  s: 'sofa', r: 'shelf', a: 'locker', R: 'server', P: 'pallet', C: 'counter',
+};
+// Meubles qui se posent dos au mur (et se prolongent d'une case à l'autre quand on les aligne).
+const PROP_AGAINST_WALL = new Set(['bed', 'sofa', 'shelf', 'locker', 'server', 'counter']);
 const DOOR_LEN = 3; // largeur d'une porte, en petites cases
 // Crans d'ouverture : fermée, entrebâillée (un filet de vue), entrouverte (on voit une part de la pièce), ouverte.
 const DOOR_PASS = 0.6; // à partir de ce cran (« entrouverte »), on se glisse dans l'embrasure
@@ -80,7 +86,7 @@ class GameMap {
     for (let y = 0; y < AH; y++) for (let x = 0; x < AW; x++) {
       const c = ch(x, y);
       if (c in FLOOR) { aFloor[y * AW + x] = FLOOR[c]; continue; }
-      const votes = [0, 0, 0];
+      const votes = Object.values(FLOOR).map(() => 0);
       for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, -1], [1, -1], [-1, 1]]) {
         const n = ch(x + dx, y + dy);
         if (n in FLOOR) votes[FLOOR[n]]++;
@@ -156,7 +162,8 @@ class GameMap {
           if (c in facing) this.enemySpawns.push({ x: sx, y: sy, angle: facing[c] });
           else if (c in PROPS) {
             // un meuble occupe un bloc 2×2 de petites cases
-            const p = { x: sx, y: sy, cx: (sx + 1) * TILE, cy: (sy + 1) * TILE, type: PROPS[c] };
+            const p = { x: sx, y: sy, cx: (sx + 1) * TILE, cy: (sy + 1) * TILE, type: PROPS[c], rot: 0, link: { l: false, r: false } };
+            if (PROP_AGAINST_WALL.has(p.type)) this.fitProp(p, ch, x, y, wallish);
             this.props.push(p);
             for (const [dx, dy] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
               const px = sx + dx, py = sy + dy;
@@ -175,6 +182,22 @@ class GameMap {
       }
       this.nearWall[y * this.w + x] = near;
     }
+  }
+
+  // Orientation d'un meuble : dos au mur voisin (rot 0 : dos en haut, face vers le bas), sinon dans
+  // l'axe de la rangée qu'il forme avec ses semblables. link.l / link.r : même meuble à sa gauche /
+  // à sa droite (vu de face), pour dessiner un canapé ou un comptoir de plusieurs cases d'un tenant.
+  fitProp(p, ch, x, y, wallish) {
+    const c = ch(x, y);
+    const rowH = ch(x - 1, y) === c || ch(x + 1, y) === c, rowV = ch(x, y - 1) === c || ch(x, y + 1) === c;
+    const backs = [[0, -1, 0], [-1, 0, -Math.PI / 2], [1, 0, Math.PI / 2], [0, 1, Math.PI]]
+      .filter(([dx, dy]) => wallish(ch(x + dx, y + dy)));
+    // une rangée ne s'adosse qu'au mur qui la longe (le bout d'une rangée peut toucher un autre mur)
+    const wall = backs.find(([dx, dy]) => (rowH && dy) || (rowV && dx)) || (rowH || rowV ? null : backs[0]);
+    if (wall) p.rot = wall[2];
+    else if (rowV && !rowH) p.rot = Math.PI / 2; // rangée verticale au milieu d'une pièce
+    const rx = Math.round(Math.cos(p.rot)), ry = Math.round(Math.sin(p.rot));
+    p.link = { l: ch(x - rx, y - ry) === c, r: ch(x + rx, y + ry) === c };
   }
 
   inBounds(x, y) { return x >= 0 && y >= 0 && x < this.w && y < this.h; }
@@ -238,11 +261,21 @@ class GameMap {
     });
   }
 
-  // Nom lisible d'un point d'entrée : « fenêtre nord », « porte est »...
+  // Nom lisible d'un point d'entrée : « Fenêtre nord », « Porte est »... Le côté est celui de la façade
+  // percée ; deux ouvertures de même nature sur la même façade se distinguent par leur position.
   breachLabel(b) {
-    const dx = b.cx - (this.w * TILE) / 2, dy = b.cy - (this.h * TILE) / 2;
-    const dir = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'est' : 'ouest') : (dy > 0 ? 'sud' : 'nord');
-    return (b.kind === 'window' ? 'Fenêtre ' : 'Porte ') + dir;
+    const side = o => {
+      const ix = Math.round(Math.cos(o.angle)), iy = Math.round(Math.sin(o.angle)); // vers l'intérieur
+      return iy > 0 ? 'nord' : iy < 0 ? 'sud' : ix > 0 ? 'ouest' : 'est';
+    };
+    const s = side(b);
+    let label = (b.kind === 'window' ? 'Fenêtre ' : 'Porte ') + s;
+    if (this.breaches.some(o => o !== b && o.kind === b.kind && side(o) === s)) {
+      const ns = s === 'nord' || s === 'sud';
+      const t = ns ? b.cx / (this.w * TILE) : b.cy / (this.h * TILE);
+      label += t < 0.4 ? (ns ? ' (ouest)' : ' (nord)') : t > 0.6 ? (ns ? ' (est)' : ' (sud)') : ' (centre)';
+    }
+    return label;
   }
 
   // Pièce contenant le point (x,y) en pixels : cases fines reliées sans franchir mur, porte ni fenêtre.

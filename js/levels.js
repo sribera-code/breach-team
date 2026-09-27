@@ -3,10 +3,14 @@
 //  '#' mur   ' ' vide (hors bâtiment)   'D' porte fermée
 //  Ouvertures sur l'extérieur (par où l'intervention peut entrer, jamais sortir) :
 //  'X' porte extérieure   'W' fenêtre (on voit et on tire au travers, on ne la franchit pas à pied)
-//  Sols : '.' béton   ',' parquet   ':' carrelage
+//  Sols : '.' béton   ',' parquet   ':' carrelage   ';' moquette   '=' marbre   '%' tôle striée
 //  'S' départ du joueur   'E' ennemi (orientation aléatoire)   '^' 'v' '<' '>' ennemi orienté
-//  'H' otage
-//  Mobilier (bloque le passage, pas la vue) : 'c' caisse   'B' baril   'T' table   'p' plante   'b' lit   'k' bureau
+//  'H' otage   un '#' isolé dans une pièce fait un pilier
+//  Mobilier (bloque le passage, pas la vue ; une grenade lancée passe par-dessus) :
+//  'c' caisse   'B' baril   'T' table   'p' plante   'b' lit   'k' bureau   'P' palette chargée
+//  's' canapé   'r' rayonnage   'a' armoire   'R' baie de serveurs   'C' comptoir
+//  (lit, canapé, rayonnage, armoire, baie et comptoir se mettent dos au mur voisin, et plusieurs
+//  cases alignées du même meuble se dessinent d'un seul tenant)
 const LEVELS = [
   {
     name: 'Entrepôt',
@@ -88,6 +92,92 @@ const LEVELS = [
       '#:::TT:::::#,,,kk,,,,,,#,,,,,,,H,,,#',
       '#:::TT:::::#,,,,,E,,,,,#,,bb,,,,,E,#',
       '########X###########################',
+    ],
+  },
+  {
+    name: 'Hôtel',
+    siegeBriefing: "L'hôtel a quatre accès : l'entrée du hall, la porte de service des cuisines, la fenêtre d'une chambre et celle du bout du couloir. Le couloir des chambres dessert tout l'étage : qui le tient voit venir.",
+    briefing: "Un commando a pris un hôtel et retient des clients. Les chambres s'alignent sur un long couloir moquetté où chaque porte peut cacher un tireur ; le restaurant, plein de tables, offre du couvert aux deux camps. Lancez vos flashs par-dessus le mobilier.",
+    enemyWeapons: ['ak', 'ak', 'pistol', 'pistol', 'uziE', 'sgE'],
+    map: [
+      '####W###############################',
+      '#;b;;;;p#;bb;;;;p#p;;;;;bb#bb;;;;;p#',
+      '#;;;;;;;#;;;;E;;;#;;E;;;;;#;;;;;E;;#',
+      '#s;;;;;;#;H;;;;;;#;;;;;;;;#;;;H;;;;#',
+      '#s;;;;k;#;;;;;ss;#;;E;;ss;#k;;;E;ss#',
+      '####D#######D########D########D#####',
+      '#p;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;W',
+      '#;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;p#',
+      '######D############D##########D#####',
+      '#=p========p=#,,,,,,,,,,,#:::::CCCC#',
+      '#============#,TT,,,,TT,,#:::::::::#',
+      '#==CCCC======D,TT,,E,TT,,D:::CC::::X',
+      'W============#,,,,,,,,,,,#:::::::::#',
+      '#============#,,H,,,,,,E,#:CCCC::::#',
+      '#s===========#,TT,,,,TT,,#######D###',
+      '#s====T======#,TT,E,,TT,,#;;;;;;;;a#',
+      '#============#,,,,,,,,,,,D;;;;E;;;a#',
+      '#==p======p==#,,,,,,,,,,,#;kk;;;H;;#',
+      '#============#,,,,p,,,,,,#;;;;;;;;p#',
+      '######X#############################',
+    ],
+  },
+  {
+    name: 'Banque',
+    siegeBriefing: "Vous tenez la banque. Le grand hall et ses trois ouvertures sur la rue sont intenables : repliez-vous derrière les guichets et les portes. L'entrée du personnel, par la salle de pause, est l'autre voie d'accès.",
+    briefing: "Un braquage a mal tourné : les braqueurs se sont repliés dans les bureaux, la salle des coffres et la salle informatique avec des employés. Le hall est vaste et dégagé ; derrière le comptoir, tout se joue porte par porte. Entre les baies de serveurs, les allées sont étroites.",
+    enemyWeapons: ['ak', 'ak', 'uziE', 'uziE', 'sgE', 'pistol'],
+    map: [
+      '###W######X######W################',
+      '#=p==ss======ss====p=#aa;;;;;;;;p#',
+      '#====================#;;;;;;;;;;;#',
+      '#=====#========#=====#;;;kk;;E;;;#',
+      '#====================#;s;;;;;;H;;#',
+      '#====================######D######',
+      '#=CCCCCCC====CCCCCCC=#,,,,,,,,,,,#',
+      '#,,,,,,,,,,,,,,,,,,,,#,,TTTTTT,E,#',
+      '#,,k,,,,k,,,,,k,,,,k,D,E,,,,,,,,,#',
+      '#,,,,,,,,,,,,,,,,,,,,#,,,,,,,,,,p#',
+      '#####D#########D##############D###',
+      '#;;;;;;;;;#%%%%%%%%%%#CCC::::::::#',
+      '#;kk;;;kk;D%%%%%%%%%%#:::::::::::#',
+      '#;;;;E;;;;#%%E%%%%%%%D:::T:::::::X',
+      '#;H;;;;;;p#a%%%%%%%%a#:::::::::::#',
+      '#####D#########D######ss:::::::p:#',
+      '#.........#%%%%%%%%%%######D######',
+      '#.rrr.rrr.#a%%%%%%%%a#%RRR%%%RRR%#',
+      '#.........#a%%E%%H%%a#%%%%%%%%%%%#',
+      '#.E.......#a%%%%%%%%a#%%E%%%%%H%%#',
+      '#rrrr.rrrr#%%cc%%%E%%#%RRR%%%RRR%#',
+      '##################################',
+    ],
+  },
+  {
+    name: 'Centre de données',
+    siegeBriefing: "Le quai de chargement et le hall d'accueil sont les deux portes du site, et chacun a sa fenêtre. La salle des serveurs, avec ses allées parallèles, est un piège pour qui s'y engage sans couverture : tenez-en les bouts.",
+    briefing: "Un groupe armé s'est emparé d'un centre de données. Entre les rangées de baies, les allées sont étroites et les lignes de tir longues ; la supervision et la sécurité sont à l'est, les réserves et les onduleurs au sud-ouest. Le quai et le hall d'accueil sont vides : le contact se fait derrière la première porte.",
+    enemyWeapons: ['ak', 'ak', 'ak', 'uziE', 'sgE', 'pistol'],
+    map: [
+      '#####W################################',
+      '#..........#%%%%%%%%%%%%%%%%#aa;;;;;p#',
+      '#.PP....B..#%%%%%%%E%%%%%%%%#;;;;;;;;#',
+      '#.PP.......#%%RRRRR%%RRRRR%%#;k;;E;;;#',
+      'X..........#%%%%%%%%%%%%%%%%#;;;;;;;;#',
+      '#..........D%%%%E%%%%%%%H%%%#;;;;;;;;#',
+      '#....c.....#%%RRRRR%%RRRRR%%#p;;;;;;;#',
+      '#...cc...PP#%%%%%%%%%%%%%%%%####D#####',
+      '#..........#%E%%%%%%%%%%%%%%#;;;;;;;;#',
+      '#..PP......#%%RRRRR%%RRRRR%%#;kkk;;;;#',
+      '#####D######%%%%%%%%%%%%%%%%D;;;;;E;;#',
+      '#..........#%%%%%%%%%%%%%E%%#R;;;;;H;#',
+      '#.rrr..rrr.#%%%%%%%%%%%%%%%%#;;;;;;;;#',
+      '#..........#####D#######D########D####',
+      '#.E......H.#BB......#::::CCC#========#',
+      '#.rrr..rrr.#........#:::::::#=CCC===p#',
+      '#..........D...E....D::E::::D========W',
+      '#..........#.....H..#:T:::H:#p======s#',
+      '#rrrrr..rrr#BB..cc.B#ss:::::#=======s#',
+      '################################X#####',
     ],
   },
 ];

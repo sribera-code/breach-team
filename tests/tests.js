@@ -113,6 +113,60 @@ test('collé à un mur, on ne tire pas à travers', () => {
   ok(game.grenades.every(gr => gr.x < spot.tx * TILE), 'et y reste');
 });
 
+// Meuble isolé avec 2,5 cases de sol libre de chaque côté, sur son axe horizontal.
+function lonelyProp() {
+  for (let i = 0; i < LEVELS.length; i++) {
+    const g = mkGame({ alone: true, level: i });
+    const map = g.game.map;
+    for (const pr of map.props) {
+      const y = pr.cy, x0 = pr.cx - 2.5 * U, x1 = pr.cx + 2.5 * U;
+      let clear = map.circleFree(x0, y, 12, true) && map.circleFree(x1, y, 12, true);
+      for (let x = x0; x <= x1 && clear; x += 4) for (const yy of [y - 6, y + 6]) {
+        const tx = Math.floor(x / TILE), ty = Math.floor(yy / TILE), o = map.prop(tx, ty);
+        if (map.isWall(tx, ty) || map.door(tx, ty) || map.window(tx, ty) || (o && o !== pr)) clear = false;
+      }
+      if (clear) return { g, pr, x0, x1, y };
+    }
+  }
+  return null;
+}
+
+test('une grenade lancée passe par-dessus le mobilier, mais bute dessus en roulant', () => {
+  const spot = lonelyProp();
+  ok(spot, 'un meuble isolé');
+  const { g, pr, x0, x1, y } = spot;
+  const game = g.game, p = game.player;
+  p.x = x0; p.y = y;
+  game.spawnFlash(p, x1, y);
+  const air = game.grenades[game.grenades.length - 1];
+  g.step(40);
+  ok(air.x > pr.cx + TILE, pr.type + ' : la grenade est passée par-dessus (' + Math.round(air.x - pr.cx) + ' px)');
+  game.grenades = [];
+  game.spawnFlash(p, x1, y);
+  const rolling = game.grenades[0];
+  rolling.t = rolling.flight;            // déjà retombée : elle roule vers le meuble
+  g.step(40);
+  ok(rolling.x < pr.cx - TILE, pr.type + ' : au sol, elle rebondit dessus (' + Math.round(rolling.x - pr.cx) + ' px)');
+  // l'IA en tient compte : un meuble survolé ne gêne pas, un meuble sur lequel elle roulerait si
+  ok(game.clearThrow(x0, y, x1, y), 'lancer libre par-dessus le meuble');
+  ok(!game.clearThrow(x0, y, pr.cx + 4, y), 'lancer refusé quand elle doit rouler sur le meuble');
+});
+
+test('une grenade retombée sur un meuble en roule jusqu’au sol', () => {
+  const spot = lonelyProp();
+  ok(spot, 'un meuble isolé');
+  const { g, pr, y } = spot;
+  const game = g.game;
+  game.grenades = [{ x: pr.cx, y, vx: 120, vy: 0, t: 0.5, flight: GRENADE_FLIGHT, friction: GRENADE_FRICTION, fuse: 10, cooked: 0,
+    h: 0, spin: 0, bounces: 0, post: null, kind: 'flash', team: 'ops', thrower: game.player }];
+  g.step(3);
+  ok(game.grenades[0].h >= 5, 'posée sur le plateau');
+  g.step(60);
+  const gr = game.grenades[0];
+  ok(gr.x > pr.cx + TILE && !game.grenadeOnProp(gr), 'elle a roulé hors du meuble');
+  eq(gr.bounces, 0, 'sans rebondir sur le meuble dont elle descend');
+});
+
 test('recharger s’anime, chargeur en main, pour le joueur comme pour l’équipe', () => {
   const g = mkGame({ noEnemyAI: true });
   const p = g.game.player;
@@ -710,6 +764,39 @@ test('un suspect placé dans la pièce d’entrée est reporté derrière une po
   } finally { LEVELS.length = 0; saved.forEach(l => LEVELS.push(l)); }
 });
 
+test('sols et meubles : nouveaux caractères, dos au mur, rangées d’un tenant', () => {
+  const map = new GameMap({ map: [
+    '#########',
+    '#;sss;==#',
+    '#;;;;;==#',
+    '#r%%%%%C#',
+    '#r%%%%%C#',
+    '#::::b::#',
+    '#########',
+  ] });
+  const at = (x, y) => map.props.find(p => p.x === 2 * x && p.y === 2 * y);
+  eq(map.floor(2, 2), FLOOR[';'], 'moquette');
+  eq(map.floor(12, 2), FLOOR['='], 'marbre');
+  eq(map.floor(6, 6), FLOOR['%'], 'tôle striée');
+  const [s1, s2, s3] = [at(2, 1), at(3, 1), at(4, 1)];
+  ok(s1 && s2 && s3 && [s1, s2, s3].every(p => p.type === 'sofa' && p.rot === 0), 'canapé dos au mur du haut');
+  ok(!s1.link.l && s1.link.r && s2.link.l && s2.link.r && s3.link.l && !s3.link.r, 'trois places d’un seul tenant');
+  ok([at(1, 3), at(1, 4)].every(p => p.type === 'shelf' && p.rot === -Math.PI / 2), 'rayonnage contre le mur de gauche');
+  ok([at(7, 3), at(7, 4)].every(p => p.type === 'counter' && p.rot === Math.PI / 2), 'comptoir contre le mur de droite');
+  eq(at(5, 5).rot, Math.PI, 'lit tête contre le mur du bas');
+  // chaque meuble de chaque carte se dessine
+  const c = document.createElement('canvas').getContext('2d');
+  for (const l of LEVELS) for (const p of new GameMap(l).props) Sprites.paintProp(c, p);
+});
+
+test('chaque ouverture a un nom distinct', () => {
+  for (const l of LEVELS) {
+    const map = new GameMap(l);
+    const names = map.breaches.map(b => map.breachLabel(b));
+    eq(new Set(names).size, names.length, l.name + ' : ' + names.join(', '));
+  }
+});
+
 test('on voit à travers une fenêtre mais on ne la franchit pas', () => {
   const map = new GameMap(LEVELS[0]);
   ok(map.windows.length > 0, 'des fenêtres existent');
@@ -740,11 +827,13 @@ test('le joueur ne peut pas sortir du bâtiment', () => {
 });
 
 // ---------------------------------------------------------------- siège
-test('chaque carte : neuf suspects, et trois, quatre puis cinq otages', () => {
+test('chaque carte : neuf suspects, et de trois à cinq otages', () => {
   LEVELS.forEach((l, i) => {
     const map = new GameMap(l);
     eq(map.enemySpawns.length, 9, l.name + ' : postes de suspects');
-    eq(map.hostageSpawns.length, 3 + i, l.name + ' : otages');
+    const h = map.hostageSpawns.length;
+    if (i < 3) eq(h, 3 + i, l.name + ' : otages (trois, quatre puis cinq sur les trois premières cartes)');
+    else ok(h >= 3 && h <= 5, l.name + ' : ' + h + ' otages');
   });
 });
 
@@ -817,6 +906,7 @@ test('l’assaut récupère les otages, et sans otage la partie est perdue', () 
   const game = g.game;
   game.siege.prep = 0.01; g.step(2);
   game.mates.forEach(m => { m.alive = false; }); // sinon les complices l'abattent avant la fin
+  game.player.hp = game.player.maxHp = 1e9;      // abattu, il ferait perdre la partie avant la remise
   const h = game.hostages[0];
   const op = game.enemies[0];
   op.hp = op.maxHp = 100000;
@@ -888,6 +978,34 @@ test('une vague qui tient n’empêche pas la suivante d’entrer', () => {
   near(s.nextWave, s.maxGap, 0.1, 'délai maximal armé');
   g.step(Math.ceil(s.maxGap * 60) + 2);
   eq(s.wave, 2, 'la deuxième vague est entrée sans attendre la fin de la première');
+});
+
+test('siège : la minimap signale la pièce où entre chaque vague', () => {
+  const g = mkGame({ mode: 'siege' });
+  const game = g.game, s = game.siege, r = g.r, map = game.map;
+  // pixels franchement rouges du plan réduit (le dessin de la minimap passe par miniTmpC)
+  const red = () => {
+    const c = r.miniTmpC.getContext('2d').getImageData(0, 0, r.miniTmpC.width, r.miniTmpC.height).data;
+    let n = 0;
+    for (let i = 0; i < c.length; i += 4) if (c[i + 3] && c[i] > c[i + 1] + 30) n++;
+    return n;
+  };
+  g.step(2);
+  eq(s.arrival, null, 'rien pendant la préparation');
+  const before = red();
+  s.prep = 0.01; g.step(2);
+  ok(s.arrival, 'l’arrivée de la vague est notée');
+  const b = s.arrival.breach, room = s.arrival.room;
+  ok(room.has(Math.floor(b.inside.y / TILE) * map.w + Math.floor(b.inside.x / TILE)), 'c’est la pièce derrière l’ouverture franchie');
+  const lit = room.size * r.miniScale * r.miniScale;
+  ok(red() > before + lit * 0.5, 'la pièce passe au rouge (' + (red() - before) + ' px pour ' + lit + ')');
+  const first = s.arrival;
+  g.step(Math.ceil(ARRIVAL_ALERT * 60) + 5);
+  if (s.arrival === first) ok(red() < before + lit * 0.25, 'le signal s’efface au bout de ' + ARRIVAL_ALERT + ' s');
+  // la vague suivante est signalée à son tour, par son ouverture
+  game.enemies.forEach(e => { e.alive = false; });
+  s.nextWave = 0.01; g.step(2);
+  ok(s.arrival !== first && s.arrival.at > first.at, 'nouvelle arrivée pour la vague suivante');
 });
 
 // Porte intérieure avec du champ libre des deux côtés : deux points à 1,5 case de part et d'autre.
@@ -1136,6 +1254,32 @@ test('après une victoire, « Missions » puis « Retour » ne fige pas le jeu',
   ok(game.time > t, 'le temps avance');
 });
 
+test('le choix de mission montre le plan de chaque carte', () => {
+  const g = mkGame();
+  const ui = g.ui;
+  ui.showLevels();
+  const btns = [...ui.panel.querySelectorAll('.levelbtn')];
+  eq(btns.length, LEVELS.length, 'une vignette par mission');
+  btns.forEach((b, i) => {
+    const c = b.querySelector('canvas');
+    ok(c && c.width > 0 && c.height > 0, LEVELS[i].name + ' : plan présent');
+    const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+    let n = 0, entry = 0;
+    for (let k = 0; k < d.length; k += 4) {
+      if (d[k + 3]) n++;
+      if (d[k] > 180 && d[k + 1] > 110 && d[k] - d[k + 2] > 90) entry++; // anneau orange d'une ouverture
+    }
+    ok(n > c.width * c.height * 0.5, LEVELS[i].name + ' : le plan est dessiné');
+    ok(entry > 0, LEVELS[i].name + ' : ses ouvertures sont marquées');
+    ok(b.textContent.includes(LEVELS[i].name), LEVELS[i].name + ' : nommée');
+  });
+  ok(btns[0].classList.contains('sel'), 'la mission en cours est signalée');
+  btns[1].click();
+  eq(g.game.levelIndex, 1, 'un clic charge la mission');
+  ok(ui.panel.querySelector('#ovGo'), 'et ouvre son briefing');
+  ui.hideOverlay();
+});
+
 test('le briefing propose les deux modes et l’équipement du camp', () => {
   const g = mkGame();
   const ui = g.ui;
@@ -1147,7 +1291,7 @@ test('le briefing propose les deux modes et l’équipement du camp', () => {
 });
 
 // ---------------------------------------------------------------- rendu
-test('trois missions se jouent sans exception, dans les deux modes', () => {
+test('chaque mission se joue sans exception, dans les deux modes', () => {
   for (const mode of ['assault', 'siege']) {
     for (let lvl = 0; lvl < LEVELS.length; lvl++) {
       const g = mkGame({ mode, level: lvl });
