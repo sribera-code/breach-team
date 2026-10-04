@@ -10,6 +10,8 @@
 // pierce : part des dégâts conservée après avoir traversé une porte (les murs, eux, arrêtent tout).
 // pen : classe de perforation face à un bouclier (1 : arme de poing, PM en 9 mm, chevrotine ; 2 : munition de
 // poing rapide, 4,6 × 30 et 7,62 × 25 ; 3 : balle de fusil). Déduite de kind, sauf exception (voir SHIELDS).
+// AK-74 : bois plus sombre, chargeur orangé, long frein de bouche (le même pour le joueur et les suspects).
+const AK74_TINT = { wood: '#5a3519', fore: '#64391b', mag: '#8a4524', brake74: true };
 const WEAPONS = {
   // ---- Fusils d'assaut ----
   hk416: {
@@ -82,6 +84,14 @@ const WEAPONS = {
     effRange: 8 * U, rangeSpread: 3.5 * DEG, mag: 30, reserve: 90, reload: 2.8, pierce: 0.6, speed: 950, gunLen: 20, heavy: true, range: 14 * U,
     snd: [0.12, 1700],
   },
+  ak74P: {
+    kind: 'ak', cat: 'ar', name: 'AK-74', maker: 'Kalachnikov', caliber: '5,45×39 mm', mode: 'Auto', rpm: 650, weight: 3.6,
+    note: "Le petit calibre de la famille : moins d'arrêt que l'AKM, mais une balle tendue et un frein de bouche qui tient la rafale.",
+    tint: AK74_TINT,
+    damage: 28, auto: true, spread: 1 * DEG, moveSpread: 4 * DEG, bloom: 1.8 * DEG, bloomMax: 9 * DEG, recoil: 5,
+    effRange: 9 * U, rangeSpread: 3 * DEG, mag: 30, reserve: 90, reload: 2.7, pierce: 0.55, speed: 1100, gunLen: 20, heavy: false, range: 15 * U,
+    snd: [0.1, 2000],
+  },
   makarovP: {
     kind: 'pistol', cat: 'hg', name: 'Makarov PM', maker: 'Ijmach', caliber: '9×18 mm', mode: 'Semi', rpm: 300, weight: 0.8,
     note: "Huit coups, sans plus. De quoi finir un chargeur vide, pas de quoi tenir un couloir.",
@@ -121,6 +131,7 @@ const WEAPONS = {
   mp5op:   { kind: 'smg', pickup: 'mp5',   name: 'HK MP5A3', damage: 20, rof: 13, auto: true, spread: 1.4 * DEG, moveSpread: 2 * DEG,   bloom: 1.2 * DEG, bloomMax: 7 * DEG, effRange: 6 * U, rangeSpread: 4 * DEG, mag: Infinity, reserve: 0, reload: 0, pierce: 0.4,  speed: 900,  gunLen: 16, heavy: false, burst: 4, pause: 0.7,  range: 11 * U, snd: [0.08, 2600] },
   // ---- Armes ennemies (munitions illimitées, tir en rafales) ----
   ak:      { kind: 'ak', pickup: 'akP',      name: 'AKM',        damage: 18, rof: 10,  auto: true,  spread: 4.5 * DEG,   moveSpread: 4 * DEG, bloom: 2 * DEG, bloomMax: 12 * DEG, effRange: 6 * U, rangeSpread: 4 * DEG, mag: Infinity, reserve: 0, reload: 0, pierce: 0.6, speed: 950, gunLen: 20, heavy: false, burst: 5, pause: 0.9, range: 12 * U, snd: [0.12, 1700] },
+  ak74E:   { kind: 'ak', pickup: 'ak74P',    name: 'AK-74',      damage: 15, auto: true, tint: AK74_TINT, rof: 10.8, spread: 3.8 * DEG, moveSpread: 4 * DEG, bloom: 1.6 * DEG, bloomMax: 10 * DEG, effRange: 7 * U, rangeSpread: 3.5 * DEG, mag: Infinity, reserve: 0, reload: 0, pierce: 0.55, speed: 1100, gunLen: 20, heavy: false, burst: 6, pause: 0.9, range: 13 * U, snd: [0.1, 2000] },
   pistolE: { kind: 'pistol', pickup: 'makarovP',  name: 'Makarov PM', damage: 18, rof: 4,   auto: true,  spread: 4 * DEG,   moveSpread: 3 * DEG, bloom: 1.5 * DEG, bloomMax: 9 * DEG, effRange: 4 * U, rangeSpread: 4 * DEG, mag: Infinity, reserve: 0, reload: 0, pierce: 0.3, speed: 900, gunLen: 10, heavy: false, burst: 2, pause: 0.8, range: 8 * U, snd: [0.07, 2400] },
 };
 // Mobilité (multiplicateur de vitesse) tirée de la masse.
@@ -150,7 +161,7 @@ const SUPPRESSORS = {
 };
 // Munition subsonique : multiplicateurs des dégâts, de la portée efficace, de la portée et de la vitesse de la balle.
 const SUBSONIC = { damage: 0.9, effRange: 0.85, range: 0.9, speed: 0.85 };
-// Module laser (masse en kg) : il lui faut un rail, que n'ont ni l'AKM, ni l'Uzi, ni le Škorpion, ni le
+// Module laser (masse en kg) : il lui faut un rail, que n'ont ni l'AKM, ni l'AK-74, ni l'Uzi, ni le Škorpion, ni le
 // Makarov, ni le Tokarev. Le point montre où part la balle sans épauler : la dispersion due au déplacement
 // est multipliée par LASER_MOVE, et la gêne de la tenue d'une main derrière un bouclier réduite de moitié.
 // Mais un faisceau se voit : un suspect qui l'aperçoit se tourne vers sa source (voir Game.spotLaser).
@@ -220,7 +231,7 @@ const DEFAULT_LOADOUT = { primary: 'hk416', sidearm: 'glock17', shield: null, ac
 // Deux modes de jeu : l'assaut (on incarne l'opérateur) et le siège (on incarne le groupe armé).
 const MODES = {
   assault: { name: 'Assaut', primaries: PRIMARY_WEAPONS, sidearms: SIDEARMS, shields: Object.keys(SHIELDS), loadout: DEFAULT_LOADOUT },
-  siege:   { name: 'Siège',  primaries: ['akP', 'uziP', 'skorpionP', 'm870'], sidearms: ['makarovP', 'tt33', 'glock17'], shields: [], loadout: { ...DEFAULT_LOADOUT, primary: 'akP', sidearm: 'makarovP' } },
+  siege:   { name: 'Siège',  primaries: ['akP', 'ak74P', 'uziP', 'skorpionP', 'm870'], sidearms: ['makarovP', 'tt33', 'glock17'], shields: [], loadout: { ...DEFAULT_LOADOUT, primary: 'akP', sidearm: 'makarovP' } },
 };
 
 // acc : accessoires ({ sup, laser }), ou true pour un simple silencieux
@@ -313,7 +324,7 @@ const SIEGE_MATE_DEFS = [
 
 // Chacun son arme : on tire au sort dans le lot de son camp plutôt que d'armer tout le monde pareil.
 const MATE_POOL = ['hk416', 'scarh', 'mp5', 'mp7', 'm870', 'm4super90'];
-const SIEGE_MATE_POOL = ['akP', 'akP', 'uziP', 'skorpionP', 'makarovP', 'tt33', 'm870'];
+const SIEGE_MATE_POOL = ['akP', 'akP', 'ak74P', 'uziP', 'skorpionP', 'makarovP', 'tt33', 'm870'];
 const OPERATOR_POOL = ['hk416op', 'mp5op'];
 // Tirage sans doublon tant que le lot n'est pas épuisé.
 function dealWeapons(pool, n) {

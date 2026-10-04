@@ -107,7 +107,7 @@ Known gaps and pending tuning are tracked in `TODO.md`; read it before starting 
 
 ## Game modes
 
-`game.mode` is `'assault'` (the original) or `'siege'`, saved in `localStorage` under `breach.mode` and switched from the briefing via `Game.setMode`, which reloads the level. `MODES` in `js/entities.js` holds each mode's weapon lists and default loadout (the siege side fields `akP`, `uziP`, `skorpionP`, `m870`, `makarovP`, `tt33`, `glock17`), and loadouts are stored per mode (`breach.loadout.<mode>`).
+`game.mode` is `'assault'` (the original) or `'siege'`, saved in `localStorage` under `breach.mode` and switched from the briefing via `Game.setMode`, which reloads the level. `MODES` in `js/entities.js` holds each mode's weapon lists and default loadout (the siege side fields `akP`, `ak74P`, `uziP`, `skorpionP`, `m870`, `makarovP`, `tt33`, `glock17`), and loadouts are stored per mode (`breach.loadout.<mode>`).
 
 Every map has 9 enemy spawns and 3 to 5 hostages (3, 4 and 5 on the first three maps, 4, 4 and 5 on Hôtel, Banque and Centre de données) — those counts are what `loadLevel` spawns; keep them when editing maps. The positions themselves are drawn per game by `Game.buildPosts`, which shuffles the map's own spawns together with a grid of free tiles, keeps them 2 U apart (1.2 U if a map is cramped) and skips the assault entry room. In siege the player takes the first drawn post, so the leader moves around too. In siege mode the mates take no orders: `Game.canCommand` refuses `T`, the right click and every `order*` call, so each militant holds its post.
 

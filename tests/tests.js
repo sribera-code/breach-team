@@ -199,13 +199,18 @@ test('recharger s’anime, chargeur en main, pour le joueur comme pour l’équi
 });
 
 test('le groupe armé a son arsenal, et son chef ne porte aucun signe distinctif', () => {
-  for (const k of ['uziP', 'skorpionP', 'tt33']) {
+  for (const k of ['ak74P', 'uziP', 'skorpionP', 'tt33']) {
     ok(WEAPONS[k] && WEAPONS[k].maker, k + ' : arme décrite');
     ok(SIEGE_MATE_POOL.includes(k), k + ' : un complice peut la porter');
   }
   ok(MODES.siege.primaries.includes('uziP') && MODES.siege.primaries.includes('skorpionP'), 'Uzi et Škorpion au briefing');
   ok(MODES.siege.sidearms.includes('tt33'), 'TT-33 au briefing');
+  ok(MODES.siege.primaries.includes('ak74P'), 'un second fusil d’assaut au briefing');
+  ok(WEAPONS.ak74P.cat === 'ar' && WEAPONS.ak74P.pen === 3, 'l’AK-74 est un fusil d’assaut, qui perce comme une balle de fusil');
+  ok(WEAPONS.ak74P.damage < WEAPONS.akP.damage && WEAPONS.ak74P.recoil < WEAPONS.akP.recoil, 'moins d’arrêt que l’AKM, mais moins de recul');
   ok(WEAPONS.uziE.pickup === 'uziP', 'l’Uzi d’un suspect se ramasse');
+  ok(WEAPONS.ak74E.pickup === 'ak74P', 'l’AK-74 d’un suspect se ramasse');
+  ok(LEVELS.every(l => l.enemyWeapons.includes('ak74E')), 'des suspects portent l’AK-74');
   ok(LEVELS.every(l => l.enemyWeapons.includes('uziE')), 'les suspects en portent aussi');
   eq(STYLE_BOSS.band, undefined, 'pas de bandeau sur la tête du chef');
   for (const k of ['head', 'hair', 'skin', 'gloves', 'boots']) eq(STYLE_BOSS[k], STYLE_MILITANT[k], 'le chef a la même tête que ses hommes (' + k + ')');

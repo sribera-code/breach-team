@@ -610,26 +610,32 @@ const Sprites = {
         break;
       }
 
-      case 'ak': { // AKM
+      case 'ak': { // AKM, ou AK-74 (t.brake74 : bois plus sombre, chargeur orangé, long frein de bouche)
         part(-6.4, -5.4, 2.9, '#26282b', 0, 0.3);              // plaque de couche
-        poly([[-5.4, -1.4], [-4.4, -1.55], [4.8, -1.2], [4.8, 1.2], [-4.4, 1.55], [-5.4, 1.4]], '#70441f'); // crosse bois
+        poly([[-5.4, -1.4], [-4.4, -1.55], [4.8, -1.2], [4.8, 1.2], [-4.4, 1.55], [-5.4, 1.4]], t.wood || '#70441f'); // crosse bois
         grain(-4.3, 4.6, [-0.7, 0.2, 1]);
         part(4.6, 14, 3.1, '#2c2e32', 0, 0.35);                // boîtier
         ribs(6, 13.4, 1.15, 0, 1.4, 0.25);                     // nervures du couvercle
         dark(9.6, 0.9, 2.8, 0.7, 0.55);                        // fenêtre d'éjection
         shine(5.2, 13.8, -1.4);
-        poly([[8.5, 1.4], [11.2, 1.4], [12.7, 4.8], [10.3, 5.1]], '#4a3220'); // chargeur bakélite courbe
+        poly([[8.5, 1.4], [11.2, 1.4], [12.7, 4.8], [10.3, 5.1]], t.mag || '#4a3220'); // chargeur bakélite courbe
         ctx.strokeStyle = 'rgba(0,0,0,0.3)'; ctx.lineWidth = 0.32;
         for (let k = 1; k <= 2; k++) { ctx.beginPath(); ctx.moveTo(8.9 + k * 0.5, A + 1.9 + k * 1.05); ctx.lineTo(11.4 + k * 0.45, A + 1.9 + k * 1.05); ctx.stroke(); }
         part(13.8, 14.8, 3.1, '#23252a', 0, 0.25);             // hausse
-        part(14.8, 20.8, 2.7, '#7a4a24', 0, 0.9);              // garde-main bois
+        part(14.8, 20.8, 2.7, t.fore || '#7a4a24', 0, 0.9);    // garde-main bois
         grain(15.2, 20.4, [-0.8, 0.7]);
         part(14.8, 22.4, 1.4, '#5e3a1d', 0, 0.4);              // cache du tube à gaz
-        part(20.8, M - 2.6, 1.2, '#1a1c1f', 0, 0.3);           // canon
+        part(20.8, M - (t.brake74 ? 3.6 : 2.6), 1.2, '#1a1c1f', 0, 0.3); // canon
         part(22.4, 23.6, 1.9, '#1c1e22', 0, 0.25);             // bloc de gaz
         poly([[M - 4.6, -1.2], [M - 3.8, -1.2], [M - 3.5, 0], [M - 4.9, 0]], '#1c1e22'); // guidon
-        part(M - 2.6, M, 1.8, '#141619', 0, 0.3);              // frein de bouche
-        dark(M - 2, -0.85, 0.35, 1.7, 0.55);
+        if (t.brake74) {                                       // frein de bouche à deux chambres, plus long
+          part(M - 3.6, M, 1.9, '#141619', 0, 0.35);
+          dark(M - 3, -0.9, 0.4, 1.8, 0.6); dark(M - 1.8, -0.9, 0.4, 1.8, 0.6);
+          shine(M - 3.4, M - 0.3, -0.85, 0.14);
+        } else {
+          part(M - 2.6, M, 1.8, '#141619', 0, 0.3);            // frein de bouche
+          dark(M - 2, -0.85, 0.35, 1.7, 0.55);
+        }
         break;
       }
 
