@@ -54,7 +54,7 @@ En maintenant le clic droit, une flèche part du point visé : la direction trac
 
 ## Armes
 
-L'équipement se choisit dans l'écran de briefing (le choix est mémorisé) : une arme principale — ou un bouclier — et une arme de poing, chacune avec ses accessoires. Les armes sont réelles ; calibre, cadence, capacité et masse reprennent les données constructeur, les dégâts suivent le calibre et la mobilité découle de la masse.
+L'équipement se choisit dans l'écran de briefing (le choix est mémorisé), qui tient sur un seul écran : à gauche le plan, où l'on clique l'ouverture par laquelle entrer ; au milieu une arme principale — ou un bouclier — et une arme de poing, chacune avec ses accessoires ; à droite leurs fiches, qui restent à la même place d'une arme à l'autre pour les comparer. Les armes sont réelles ; calibre, cadence, capacité et masse reprennent les données constructeur, les dégâts suivent le calibre et la mobilité découle de la masse.
 
 | Catégorie | Arme | Calibre | Capacité | Cadence | À travers une porte | Bruit (cases) |
 |---|---|---|---|---|---|---|

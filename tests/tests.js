@@ -1937,6 +1937,49 @@ function briefingGearTest() {
   game.paused = false;
 }
 
+test('briefing : les fiches gardent la même disposition, le plan choisit l’ouverture', () => {
+  const KEYS = ['breach.loadout.assault', 'breach.entry'];
+  const sauve = {};
+  try { KEYS.forEach(k => { sauve[k] = localStorage.getItem(k); }); } catch (e) { /* stockage indisponible */ }
+  try { briefingLayoutTest(); } finally {
+    try { KEYS.forEach(k => { if (sauve[k] === null) localStorage.removeItem(k); else localStorage.setItem(k, sauve[k]); }); } catch (e) { /* idem */ }
+  }
+});
+
+function briefingLayoutTest() {
+  const g = mkGame({ loadout: { primary: 'hk416', sidearm: 'glock17' } });
+  const game = g.game, ui = g.ui;
+  game.paused = true;
+  ui.showBriefing();
+  const cols = ui.panel.querySelectorAll('.brief-col');
+  eq(cols.length, 3, 'trois colonnes');
+  ok(cols[0].querySelector('#ovPlan') && cols[0].querySelector('.entrybtn'), 'à gauche : le plan et les ouvertures');
+  ok(cols[1].querySelector('.wcard') && cols[1].querySelector('.accbtn'), 'au milieu : les armes et leurs accessoires');
+  ok(cols[2].querySelector('#wdetail'), 'à droite : les caractéristiques');
+  // chaque fiche a le même squelette : en-tête, 7 lignes de barres au plus, 8 données, puis le texte
+  const forme = () => [...ui.$('wdetail').querySelectorAll('.wd')].map(w =>
+    [w.children.length, w.querySelectorAll('.wd-specs dt').length, w.querySelectorAll('.wd-bars .bar').length <= 7, !!w.querySelector('.wd-slot')].join());
+  const ref = forme();
+  eq(ref.length, 2, 'deux fiches : arme principale (ou bouclier) et arme de poing');
+  for (const b of ui.panel.querySelectorAll('.wcard')) {
+    b.click();
+    eq(forme().join('|'), ref.join('|'), b.dataset.key + ' : même disposition');
+    eq(ui.$('waccs').querySelectorAll('.accrow').length, 2, b.dataset.key + ' : deux lignes d’accessoires');
+  }
+  // un clic sur une ouverture du plan la choisit comme point d'entrée
+  const c = ui.panel.querySelector('#ovPlan'), r = c.getBoundingClientRect(), m = game.map, b = m.breaches[1];
+  c.onclick({ clientX: r.left + (b.cx / TILE + PLAN_PAD) / (m.w + 2 * PLAN_PAD) * r.width,
+              clientY: r.top + (b.cy / TILE + PLAN_PAD) / (m.h + 2 * PLAN_PAD) * r.height });
+  ok(!game.entryRandom && game.entryIndex === 1, 'ouverture choisie sur le plan');
+  ok(ui.panel.querySelector('.entrybtn[data-entry="1"]').classList.contains('sel'), 'son bouton est coché');
+  // l'aide des commandes ramène au briefing
+  ui.panel.querySelector('#ovHelp').click();
+  ui.panel.querySelector('#ovClose').click();
+  ok(ui.panel.querySelector('#ovGo'), 'retour au briefing après l’aide');
+  ui.hideOverlay();
+  game.paused = false;
+}
+
 test('le bouclier arrête de face les balles de son niveau, pas de flanc ni de dos', () => {
   const g = mkGame({ alone: true, loadout: { primary: 'hk416', sidearm: 'glock17', shield: 'shieldL' } });
   const game = g.game, p = game.player;
