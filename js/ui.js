@@ -1,5 +1,10 @@
 'use strict';
 // HUD DOM + overlays (briefing, pause, fin de mission, missions, aide).
+
+// Taille des cartes d'équipement du briefing par rapport au dessin de référence (170 × 50).
+const CARD_SCALE = 0.62;
+// Marge autour du plan du briefing, en petites cases.
+const PLAN_PAD = 3;
 class UI {
   constructor(game) {
     this.game = game;
@@ -89,7 +94,7 @@ class UI {
     });
   }
 
-  showOverlay(html) { this.panel.classList.remove('wide'); this.panel.innerHTML = html; this.overlay.classList.remove('hidden'); }
+  showOverlay(html) { this.panel.classList.remove('wide', 'brief'); this.panel.innerHTML = html; this.overlay.classList.remove('hidden'); }
   hideOverlay() { this.overlay.classList.add('hidden'); }
   isOpen() { return !this.overlay.classList.contains('hidden'); }
 
@@ -101,33 +106,42 @@ class UI {
       temps que les négociations aboutissent. Les otages sont votre seule protection : s'il ne vous en reste plus un seul de vivant, tout est perdu.`;
   }
 
+  // Briefing sur un seul écran, sans défilement : à gauche le plan et le point d'entrée, au milieu
+  // l'équipement et ses accessoires, à droite les fiches de ce qu'on emporte, toujours à la même place.
   showBriefing() {
     const g = this.game;
     g.paused = true;
     const siege = g.mode === 'siege';
-    this.showOverlay(`<h1>Mission ${g.levelIndex + 1} — ${g.def.name}</h1>
-      <div class="modes">${Object.keys(MODES).map(m => `<button class="modebtn${m === g.mode ? ' sel' : ''}" data-mode="${m}">${m === 'siege' ? '☠ Siège — vous tenez le bâtiment' : '🛡 Assaut — vous menez l\'intervention'}</button>`).join('')}</div>
-      <p>${siege ? (g.def.siegeBriefing || this.siegeBriefing()) : g.def.briefing}</p>
-      ${siege ? '' : this.entryPicker()}
-      <p><small><kbd>ZQSD</kbd>/<kbd>WASD</kbd> se déplacer · <kbd>A</kbd> marche/course · souris viser · <kbd>clic</kbd> tirer · <kbd>R</kbd> / clic molette recharger · <kbd>E</kbd> ouvrir/fermer une porte · molette haut/bas ouvrir/fermer par étapes · <kbd>Alt</kbd> changer d'arme · <kbd>L</kbd> allumer/éteindre le laser · ${siege ? '<kbd>Espace</kbd> grenade à fragmentation · ' : '<kbd>Espace</kbd> flash · <kbd>F</kbd> fibre sous la porte · <kbd>H</kbd> emmener un otage / le faire attendre · '}<kbd>V</kbd> ramasser une arme · <kbd>M</kbd> minimap · ${siege ? '' : "<kbd>T</kbd> équipe suivre/tenir · clic droit envoyer l'équipe (maintenir et tirer : direction à couvrir ; sur vous : suivre) · "}<kbd>Échap</kbd> pause</small></p>
-      <h2>Équipement</h2>
-      <div class="loadout">
-        ${['ar', 'smg', 'sg'].map(c => this.weaponGroup(c, MODES[g.mode].primaries, 'primary')).join('')}
-        ${this.shieldGroup(MODES[g.mode].shields)}
-        ${this.weaponGroup('hg', MODES[g.mode].sidearms, 'sidearm')}
+    this.showOverlay(`<div class="brief-head"><h1>Mission ${g.levelIndex + 1} — ${g.def.name}</h1>
+        <div class="modes">${Object.keys(MODES).map(m => `<button class="modebtn${m === g.mode ? ' sel' : ''}" data-mode="${m}">${m === 'siege' ? '☠ Siège — vous tenez le bâtiment' : '🛡 Assaut — vous menez l\'intervention'}</button>`).join('')}</div></div>
+      <p class="brief-text">${siege ? (g.def.siegeBriefing || this.siegeBriefing()) : g.def.briefing}</p>
+      <div class="brief-cols">
+        <section class="brief-col">${siege ? this.buildingPlan() : this.entryPicker()}</section>
+        <section class="brief-col">
+          <h2>Équipement</h2>
+          <div class="loadout">
+            ${['ar', 'smg', 'sg'].map(c => this.weaponGroup(c, MODES[g.mode].primaries, 'primary')).join('')}
+            ${this.shieldGroup(MODES[g.mode].shields)}
+            ${this.weaponGroup('hg', MODES[g.mode].sidearms, 'sidearm')}
+          </div>
+          <h2>Accessoires</h2>
+          <div id="waccs"></div>
+          ${siege ? '' : `<div class="suprow"><button class="supbtn${g.loadout.teamSup ? ' sel' : ''}" id="ovSup">${g.loadout.teamSup ? '🔇 Coéquipiers au silencieux' : '🔊 Coéquipiers sans silencieux'}</button>
+            <small>Bravo et Charlie reçoivent alors une arme qui en accepte un (pas de fusil à pompe).</small></div>`}
+        </section>
+        <section class="brief-col brief-specs"><div class="brief-specs-in"><h2>Caractéristiques</h2><div id="wdetail"></div></div></section>
       </div>
-      <div id="wdetail"></div>
-      <p class="accnote"><small>Accessoires, arme par arme. <b>Silencieux</b> : un coup de feu ne s'entend plus qu'à 2 à 5 cases au lieu de 13 à 18 ; l'arme s'alourdit et s'allonge. Il ne freine pas la balle : une balle de fusil ne perd rien mais claque encore, et le 9 mm ne se tait qu'avec une munition subsonique, plus faible (le .45 l'est d'origine). <b>Laser</b> : en mouvement, la dispersion est divisée par deux (la gêne du bouclier aussi), mais le faisceau se voit — un adversaire qui l'aperçoit se tourne vers vous, puis vient voir. <kbd>L</kbd> l'éteint en jeu.</small></p>
-      ${siege ? '' : `<div class="suprow"><button class="supbtn${g.loadout.teamSup ? ' sel' : ''}" id="ovSup">${g.loadout.teamSup ? '🔇 Coéquipiers au silencieux' : '🔊 Coéquipiers sans silencieux'}</button>
-        <small>Bravo et Charlie montent un silencieux : chacun reçoit alors une arme qui en accepte un (pas de fusil à pompe).</small></div>`}
-      <div class="row"><button class="primary" id="ovGo">${siege ? 'Prendre position' : "Lancer l'assaut"}</button><button id="ovLevels">Missions</button></div>`);
-    this.panel.classList.add('wide');
+      <div class="row"><button class="primary" id="ovGo">${siege ? 'Prendre position' : "Lancer l'assaut"}</button><button id="ovLevels">Missions</button><button id="ovHelp">Commandes</button></div>`);
+    this.panel.classList.add('wide', 'brief');
     this.panel.querySelectorAll('.modebtn').forEach(b => {
       b.onclick = () => { g.setMode(b.dataset.mode); this.showBriefing(); };
     });
     this.panel.querySelectorAll('.entrybtn').forEach(b => {
       b.onclick = () => { g.setEntry(b.dataset.entry === 'random' ? null : +b.dataset.entry); this.showBriefing(); };
+      b.onmouseenter = () => this.drawBriefPlan(b.dataset.entry === 'random' ? null : +b.dataset.entry);
+      b.onmouseleave = () => this.drawBriefPlan();
     });
+    this.hookPlan();
     const sup = this.panel.querySelector('#ovSup');
     if (sup) sup.onclick = () => { g.setLoadout({ teamSup: !g.loadout.teamSup }); this.showBriefing(); };
     // une arme principale remplace le bouclier, et inversement
@@ -143,17 +157,60 @@ class UI {
       this.hideOverlay();
     };
     this.panel.querySelector('#ovLevels').onclick = () => this.showLevels(() => this.showBriefing());
+    this.panel.querySelector('#ovHelp').onclick = () => this.showHelp(() => this.showBriefing());
   }
 
-  // Point d'entrée : l'équipe choisit par où elle pénètre dans le bâtiment.
+  // Point d'entrée : l'équipe choisit par où elle pénètre dans le bâtiment, sur le plan ou par son nom.
   entryPicker() {
     const g = this.game, bs = g.map.breaches;
-    if (bs.length < 2) return '';
+    const legend = `<p class="planlegend"><i class="lg-door"></i> porte <i class="lg-win"></i> fenêtre <i class="lg-entry"></i> ouverture</p>`;
+    if (bs.length < 2) return `<h2>Point d'entrée</h2><canvas class="plan" id="ovPlan"></canvas>${legend}`;
     // « Au hasard » ne dit pas ce qui est sorti : on le découvre sur place
     const hasard = `<button class="entrybtn${g.entryRandom ? ' sel' : ''}" data-entry="random">Au hasard</button>`;
     const btns = bs.map((b, i) =>
       `<button class="entrybtn${!g.entryRandom && i === g.entryIndex ? ' sel' : ''}" data-entry="${i}">${g.map.breachLabel(b)}</button>`).join('');
-    return `<h2>Point d'entrée</h2><div class="entries">${hasard}${btns}</div>`;
+    return `<h2>Point d'entrée</h2><canvas class="plan pick" id="ovPlan" title="Cliquez une ouverture pour entrer par là"></canvas>${legend}<div class="entries">${hasard}${btns}</div>`;
+  }
+
+  // Siège : le plan du bâtiment à tenir et les ouvertures par où l'assaut peut venir.
+  buildingPlan() {
+    const m = this.game.map;
+    return `<h2>Le bâtiment</h2><canvas class="plan" id="ovPlan"></canvas>
+      <p class="planlegend"><i class="lg-door"></i> porte <i class="lg-win"></i> fenêtre <i class="lg-entry threat"></i> ouverture à surveiller</p>
+      <p class="brief-note">${m.breaches.length} ouvertures : ${m.breaches.map(b => m.breachLabel(b).toLowerCase()).join(', ')}. Votre poste et ceux de vos complices sont tirés au sort.</p>`;
+  }
+
+  // Plan du briefing : l'ouverture retenue (ou survolée) ressort, un clic sur une autre la choisit.
+  drawBriefPlan(hover = null) {
+    const g = this.game, c = this.panel.querySelector('#ovPlan');
+    if (!c) return;
+    const siege = g.mode === 'siege';
+    UI.drawPlan(c, g.def, { map: g.map, s: 4, pad: PLAN_PAD, threat: siege, sel: siege || g.entryRandom ? null : g.entryIndex, hover });
+  }
+
+  hookPlan() {
+    const g = this.game, c = this.panel.querySelector('#ovPlan');
+    if (!c) return;
+    this._planHover = null;
+    this.drawBriefPlan();
+    if (!c.classList.contains('pick')) return;
+    // l'ouverture la plus proche du pointeur, à deux cases au plus
+    const at = ev => {
+      const r = c.getBoundingClientRect(), m = g.map;
+      const x = ((ev.clientX - r.left) / r.width * (m.w + 2 * PLAN_PAD) - PLAN_PAD) * TILE;
+      const y = ((ev.clientY - r.top) / r.height * (m.h + 2 * PLAN_PAD) - PLAN_PAD) * TILE;
+      let best = null, bd = 2 * U;
+      m.breaches.forEach((b, i) => { const d = Math.hypot(b.cx - x, b.cy - y); if (d < bd) { bd = d; best = i; } });
+      return best;
+    };
+    c.onmousemove = ev => {
+      const i = at(ev);
+      c.style.cursor = i === null ? '' : 'pointer';
+      c.title = i === null ? 'Cliquez une ouverture pour entrer par là' : g.map.breachLabel(g.map.breaches[i]);
+      if (i !== this._planHover) { this._planHover = i; this.drawBriefPlan(i); }
+    };
+    c.onmouseleave = () => { this._planHover = null; this.drawBriefPlan(); };
+    c.onclick = ev => { const i = at(ev); if (i !== null) { g.setEntry(i); this.showBriefing(); } };
   }
 
   // ---- Équipement ----
@@ -161,7 +218,7 @@ class UI {
     if (!keys || !keys.length) return '';
     const cards = keys.map(k => {
       const sh = SHIELDS[k];
-      return `<button class="wcard" data-slot="shield" data-key="${k}"><canvas></canvas><span class="wname">${sh.name}</span><small>${sh.rating} · ${String(sh.weight).replace('.', ',')} kg</small></button>`;
+      return `<button class="wcard" data-slot="shield" data-key="${k}"><canvas></canvas><span class="wtxt"><span class="wname">${sh.name}</span><small>${sh.rating} · ${String(sh.weight).replace('.', ',')} kg</small></span></button>`;
     }).join('');
     return `<div class="wcat"><div class="wcat-name">${WEAPON_CATS.sh}</div><div class="wcards">${cards}</div></div>`;
   }
@@ -170,7 +227,7 @@ class UI {
     if (!keys.some(k => WEAPONS[k].cat === cat)) return '';
     const cards = keys.filter(k => WEAPONS[k].cat === cat).map(k => {
       const w = WEAPONS[k];
-      return `<button class="wcard" data-slot="${slot}" data-key="${k}"><canvas></canvas><span class="wname">${w.name}</span><small>${w.caliber}</small></button>`;
+      return `<button class="wcard" data-slot="${slot}" data-key="${k}" title="${w.name} · ${w.caliber}"><canvas></canvas><span class="wtxt"><span class="wname">${w.name}</span><small>${w.caliber}</small></span></button>`;
     }).join('');
     return `<div class="wcat"><div class="wcat-name">${WEAPON_CATS[cat]}</div><div class="wcards">${cards}</div></div>`;
   }
@@ -180,32 +237,45 @@ class UI {
     return fittedDef(key, accOf(this.game.loadout, key));
   }
 
-  // Cartes (sélection, et dessin qui montre les accessoires) et fiches de ce qu'on emporte.
+  // Cartes (sélection, et dessin qui montre les accessoires), boutons d'accessoires et fiches de ce
+  // qu'on emporte. Les fiches gardent la même disposition d'une arme à l'autre : on compare d'un coup d'œil.
   refreshLoadout() {
     const g = this.game, l = g.loadout;
     this.panel.querySelectorAll('.wcard').forEach(b => {
       const k = b.dataset.key, slot = b.dataset.slot;
       b.classList.toggle('sel', slot === 'shield' ? l.shield === k : slot === 'primary' ? !l.shield && l.primary === k : l[slot] === k);
-      if (slot === 'shield') UI.drawShield(b.querySelector('canvas'), SHIELDS[k]);
-      else UI.drawWeapon(b.querySelector('canvas'), this.loadoutDef(k));
+      if (slot === 'shield') UI.drawShield(b.querySelector('canvas'), SHIELDS[k], CARD_SCALE);
+      else UI.drawWeapon(b.querySelector('canvas'), this.loadoutDef(k), CARD_SCALE);
     });
     const sh = SHIELDS[l.shield];
-    this.$('wdetail').innerHTML = (sh ? this.shieldDetail(sh) : this.weaponDetail(this.loadoutDef(l.primary), l.primary))
-      + this.weaponDetail(this.loadoutDef(l.sidearm), l.sidearm);
-    this.$('wdetail').querySelectorAll('.accbtn').forEach(b => {
+    this.$('waccs').innerHTML = (sh ? this.accRow(null, sh.name) : this.accRow(l.primary)) + this.accRow(l.sidearm);
+    this.$('waccs').querySelectorAll('.accbtn').forEach(b => {
       b.onclick = () => { const k = b.dataset.key, a = b.dataset.acc; g.setAccessory(k, a, !accOf(g.loadout, k)[a]); this.refreshLoadout(); };
+    });
+    this.$('wdetail').innerHTML = (sh ? this.shieldDetail(sh) : this.weaponDetail(this.loadoutDef(l.primary), l.primary, 'Arme principale'))
+      + this.weaponDetail(this.loadoutDef(l.sidearm), l.sidearm, 'Arme de poing');
+    this.$('wdetail').querySelectorAll('.wd-text').forEach(t => {
+      const fade = () => t.classList.toggle('more', t.scrollTop + t.clientHeight < t.scrollHeight - 2);
+      t.onscroll = fade; fade();
     });
   }
 
-  // Accessoires d'une arme : un bouton par accessoire, grisé si l'arme n'en accepte pas ; son effet sur
-  // cette arme en bulle d'aide, et en clair sous les boutons une fois monté.
-  accRow(key) {
-    const a = accOf(this.game.loadout, key), w = WEAPONS[key];
+  // Accessoires d'une arme : un bouton par accessoire, grisé si l'arme n'en accepte pas, son effet sur
+  // cette arme en bulle d'aide. Sans clé (un bouclier), la ligne reste là, boutons grisés.
+  accRow(key, label) {
+    const a = key ? accOf(this.game.loadout, key) : {}, w = key && WEAPONS[key];
     const tip = name => { const t = UI.accEffect(key, name); return t[0].toUpperCase() + t.slice(1); };
-    const btn = (name, label, fits, why) => `<button class="accbtn${fits && a[name] ? ' sel' : ''}" data-key="${key}" data-acc="${name}" title="${fits ? tip(name) : why}"${fits ? '' : ' disabled'}>${fits && a[name] ? '✓' : '+'} ${label}</button>`;
-    const fitted = [['sup', 'Silencieux', SUPPRESSORS[key]], ['laser', 'Laser', LASERS[key]]].filter(([name, , fits]) => fits && a[name]);
-    const notes = fitted.map(([name, label]) => `<b>${label}</b> : ${UI.accEffect(key, name)}`).join('<br>');
-    return `<div class="accrow">${btn('sup', 'Silencieux', !!SUPPRESSORS[key], w.kind === 'shotgun' ? 'Pas de silencieux sur un fusil à pompe' : 'Pas de silencieux pour cette arme')}${btn('laser', 'Laser', !!LASERS[key], 'Pas de rail pour fixer un laser')}</div>${notes ? `<p class="wd-acc">${notes}</p>` : ''}`;
+    const btn = (name, txt, fits, why) => `<button class="accbtn${fits && a[name] ? ' sel' : ''}" data-key="${key}" data-acc="${name}" title="${fits ? tip(name) : why}"${fits ? '' : ' disabled'}>${fits && a[name] ? '✓' : '+'} ${txt}</button>`;
+    const supWhy = !w ? 'Pas d\'accessoire sur un bouclier' : w.kind === 'shotgun' ? 'Pas de silencieux sur un fusil à pompe' : 'Pas de silencieux pour cette arme';
+    return `<div class="accrow"><span class="accname">${w ? w.name : label}</span>${btn('sup', 'Silencieux', !!(key && SUPPRESSORS[key]), supWhy)}${btn('laser', 'Laser', !!(key && LASERS[key]), w ? 'Pas de rail pour fixer un laser' : supWhy)}</div>`;
+  }
+
+  // Effet des accessoires montés, en clair dans la fiche.
+  accNotes(key) {
+    const a = accOf(this.game.loadout, key);
+    const notes = [['sup', 'Silencieux', SUPPRESSORS[key]], ['laser', 'Laser', LASERS[key]]]
+      .filter(([name, , fits]) => fits && a[name]).map(([name, label]) => `<b>${label}</b> : ${UI.accEffect(key, name)}`);
+    return notes.length ? `<p class="wd-acc">${notes.join('<br>')}</p>` : '';
   }
 
   // Ce qu'un accessoire change sur une arme donnée. Le silencieux dépend de la munition : une balle
@@ -222,6 +292,19 @@ class UI {
     return `la balle reste supersonique : ni puissance ni portée perdues, mais son claquement s'entend encore à ${cases} cases. ${kg}`;
   }
 
+  // Fiche : en-tête d'une ligne, barres et données côte à côte sur un nombre fixe de lignes, puis le
+  // texte, qui défile seul s'il déborde. Rien ne bouge quand on change d'arme.
+  static fiche(name, sub, slot, bars, specs, text) {
+    return `<div class="wd">
+      <div class="wd-head"><b>${name}</b>${sub ? ` <small>${sub}</small>` : ''}<span class="wd-slot">${slot}</span></div>
+      <div class="wd-grid">
+        <div class="wd-bars">${bars.map(([k, v]) => `<span>${k}</span><div class="bar"><div style="width:${Math.round(v * 100)}%"></div></div>`).join('')}</div>
+        <dl class="wd-specs">${specs.map(([k, v]) => `<dt>${k}</dt><dd title="${v}">${v}</dd>`).join('')}</dl>
+      </div>
+      <div class="wd-text">${text}</div>
+    </div>`;
+  }
+
   shieldDetail(sh) {
     const n = (v, a, b) => clamp((v - a) / (b - a), 0.05, 1);
     const bars = [
@@ -230,16 +313,22 @@ class UI {
       ['Précision', n(1 / sh.aim, 0.5, 1)],
       ['Champ de vision', n(sh.fov, 60 * DEG, 120 * DEG)],
     ];
+    const specs = [
+      ['Niveau', sh.rating],
+      ['Taille', sh.size],
+      ['Poids', String(sh.weight).replace('.', ',') + ' kg'],
+      ['Arrête', sh.stops >= 3 ? 'tout, fusils compris' : 'pas les fusils'],
+      ['Vision', Math.round(sh.fov / DEG) + '°'],
+      ['Chargeurs', `+${SHIELD_EXTRA_MAGS} de poing`],
+      ['Arme', 'de poing, à une main'],
+      ['Couvre', "l'avant seulement"],
+    ];
     const stops = sh.stops >= 3 ? 'armes de poing, pistolets mitrailleurs, chevrotine et fusils' : 'armes de poing, pistolets mitrailleurs (pas le 4,6 mm) et chevrotine';
-    return `<div class="wd">
-      <div class="wd-head"><b>${sh.name}</b> <small>${sh.rating}</small></div>
-      <div class="wd-specs">${sh.size} · ${String(sh.weight).replace('.', ',')} kg · arrête : ${stops} · champ de vision ${Math.round(sh.fov / DEG)}° · ${SHIELD_EXTRA_MAGS} chargeurs de poing en plus</div>
-      <p>${sh.note} Il ne couvre que l'avant : de flanc ou de dos, on est à découvert. L'arme de poing se tient d'une main, moins précise ; pas d'arme d'épaule, et on ne ramasse qu'une arme de poing.</p>
-      <div class="wd-bars">${bars.map(([k, v]) => `<span>${k}</span><div class="bar"><div style="width:${Math.round(v * 100)}%"></div></div>`).join('')}</div>
-    </div>`;
+    return UI.fiche(sh.name, '', 'À la place de l\'arme principale', bars, specs,
+      `<p>${sh.note} Arrête : ${stops}. Il ne couvre que l'avant : de flanc ou de dos, on est à découvert. L'arme de poing se tient d'une main, moins précise ; pas d'arme d'épaule, et on ne ramasse qu'une arme de poing.</p>`);
   }
 
-  weaponDetail(w, key) {
+  weaponDetail(w, key, slot) {
     const n = (v, a, b) => clamp((v - a) / (b - a), 0.05, 1);
     const bars = [
       ['Puissance', Math.sqrt(w.damage * (w.pellets || 1) / 135)],
@@ -251,17 +340,17 @@ class UI {
       ['Mobilité', n(w.mobility, 0.85, 1.04)],
       ['Discrétion', n(12 - w.noise, 0, 10)],
     ];
-    const kg = w.weight.toFixed(1).replace('.', ',');
-    const cap = w.reloadType === 'shell' ? `${w.mag} cartouches (tube)` : `${w.mag} coups`;
-    const dmg = w.pellets ? `${w.pellets} × ${w.damage}` : w.damage;
-    const pierce = Math.round((w.pierce === undefined ? 0.4 : w.pierce) * 100);
-    return `<div class="wd">
-      <div class="wd-head"><b>${w.name}</b> ${w.name.startsWith(w.maker) ? '' : `<small>${w.maker}</small>`}</div>
-      <div class="wd-specs">${w.caliber} · ${cap} · ${w.mode === 'Pompe' ? 'pompe' : w.rpm + ' cps/min'} · ${w.mode} · ${kg} kg · dégâts ${dmg} · à travers une porte ${pierce} % · ${w.suppressed ? 'silencieux : ' : ''}s'entend à ${String(w.noise).replace('.', ',')} cases</div>
-      <p>${w.note}</p>
-      ${this.accRow(key)}
-      <div class="wd-bars">${bars.map(([k, v]) => `<span>${k}</span><div class="bar"><div style="width:${Math.round(v * 100)}%"></div></div>`).join('')}</div>
-    </div>`;
+    const specs = [
+      ['Calibre', w.caliber],
+      ['Capacité', w.reloadType === 'shell' ? `${w.mag} cartouches` : `${w.mag} coups`],
+      ['Cadence', w.mode === 'Pompe' ? 'à la pompe' : w.rpm + ' cps/min'],
+      ['Tir', w.mode],
+      ['Poids', w.weight.toFixed(1).replace('.', ',') + ' kg'],
+      ['Dégâts', w.pellets ? `${w.pellets} × ${w.damage}` : w.damage],
+      ['Porte', `${Math.round((w.pierce === undefined ? 0.4 : w.pierce) * 100)} % traverse`],
+      ['Bruit', `${String(w.noise).replace('.', ',')} cases${w.suppressed ? ' (silencieux)' : ''}`],
+    ];
+    return UI.fiche(w.name, w.name.startsWith(w.maker) ? '' : w.maker, slot, bars, specs, this.accNotes(key) + `<p>${w.note}</p>`);
   }
 
   // Plaquette claire des cartes d'équipement : une arme vue de dessus est presque noire, il lui faut
@@ -281,20 +370,20 @@ class UI {
   }
 
   // Bouclier vu de face, couché sur la plaquette comme lâché au sol en jeu.
-  static drawShield(canvas, sh) {
-    const W = 170, H = 50, ctx = UI.cardPlate(canvas, W, H);
+  static drawShield(canvas, sh, k = 1) {
+    const W = Math.round(170 * k), H = Math.round(50 * k), ctx = UI.cardPlate(canvas, W, H);
     ctx.translate(W / 2, H / 2);
-    ctx.scale(2.7, 2.7);
+    ctx.scale(2.7 * k, 2.7 * k);
     Sprites.shieldFlat(ctx, sh.look);
   }
 
   // Arme vue de dessus, même dessin qu'en jeu et même échelle pour toutes (proportions réelles) : la
   // plus longue, le SCAR-H avec son silencieux, tient tout juste sur la plaquette.
-  static drawWeapon(canvas, w) {
-    const W = 170, H = 50, sc = 3.45, ctx = UI.cardPlate(canvas, W, H);
+  static drawWeapon(canvas, w, k = 1) {
+    const W = Math.round(170 * k), H = Math.round(50 * k), sc = 3.45 * k, ctx = UI.cardPlate(canvas, W, H);
     const x0 = { pistol: 8.2, pdw: -2.8, smg: -5.4 }[w.kind] ?? -6.6;
     const x1 = 13 + w.gunLen;
-    ctx.translate((W - (x1 - x0) * sc) / 2 - x0 * sc, H / 2 - 4);
+    ctx.translate((W - (x1 - x0) * sc) / 2 - x0 * sc, H / 2 - 4 * k);
     ctx.scale(sc, sc * GUN_THICK);
     ctx.shadowColor = 'rgba(0,0,0,0.4)'; ctx.shadowBlur = 1.2; ctx.shadowOffsetY = 0.8;
     Sprites.gun(ctx, w.kind, w.gunLen, w.tint);
@@ -329,16 +418,37 @@ class UI {
 
   // Aperçu d'une mission : le plan de la minimap, portes fermées comprises, et ses ouvertures sur
   // l'extérieur soulignées. Les postes des suspects et des otages sont tirés au sort : on ne les montre pas.
-  static drawPlan(canvas, def) {
-    const m = new GameMap(def), s = 3, dpr = window.devicePixelRatio || 1;
-    canvas.width = m.w * s * dpr; canvas.height = m.h * s * dpr;
+  // opts (briefing) : map (déjà construite), s (pixels par case), sel (l'ouverture d'entrée, pleine,
+  // flèche vers l'intérieur), hover (survolée, cerclée de blanc), threat (siège : ouvertures en rouge).
+  static drawPlan(canvas, def, opts = {}) {
+    const m = opts.map || new GameMap(def), s = opts.s || 3, dpr = window.devicePixelRatio || 1;
+    const pad = (opts.pad || 0) * s; // marge en cases : les anneaux des ouvertures ne sont pas coupés au bord
+    canvas.width = (m.w * s + 2 * pad) * dpr; canvas.height = (m.h * s + 2 * pad) * dpr;
     const ctx = canvas.getContext('2d');
     ctx.scale(dpr, dpr);
+    ctx.translate(pad, pad);
     Renderer.paintPlan(ctx, m, s, true);
-    ctx.strokeStyle = '#ffb347'; ctx.lineWidth = 1.5;
-    for (const b of m.breaches) {
-      ctx.beginPath(); ctx.arc((b.cx / TILE) * s, (b.cy / TILE) * s, 4.5, 0, TAU); ctx.stroke();
-    }
+    const col = opts.threat ? '#ef6a5a' : '#ffb347', r = 1.5 * s;
+    ctx.lineWidth = 1.5;
+    m.breaches.forEach((b, i) => {
+      const x = (b.cx / TILE) * s, y = (b.cy / TILE) * s;
+      ctx.strokeStyle = i === opts.hover ? '#fff' : col;
+      ctx.beginPath(); ctx.arc(x, y, i === opts.hover ? r + 1.5 : r, 0, TAU); ctx.stroke();
+      if (i !== opts.sel) return;
+      ctx.fillStyle = col;
+      ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.fill();
+      // flèche : l'équipe entre par là
+      const ca = Math.cos(b.angle), sa = Math.sin(b.angle), L = 4 * s;
+      const tx = x + ca * (r + L), ty = y + sa * (r + L);
+      ctx.strokeStyle = col; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(x + ca * (r + 1), y + sa * (r + 1)); ctx.lineTo(tx, ty); ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(tx + ca * 2, ty + sa * 2);
+      ctx.lineTo(tx - ca * 4 - sa * 4, ty - sa * 4 + ca * 4);
+      ctx.lineTo(tx - ca * 4 + sa * 4, ty - sa * 4 - ca * 4);
+      ctx.closePath(); ctx.fill();
+      ctx.lineWidth = 1.5;
+    });
   }
 
   showPause() {
@@ -384,7 +494,8 @@ class UI {
     this.panel.querySelector('#ovLevels').onclick = () => this.showLevels(() => this.showEnd(result));
   }
 
-  showHelp() {
+  // back : écran à rouvrir en fermant l'aide (le briefing) ; sinon la pause, ou le jeu.
+  showHelp(back) {
     this.showOverlay(`<h1>Comment jouer</h1>
       <p>Vous contrôlez un seul opérateur en temps réel. Les ennemis ne sont visibles que dans votre champ de vision ; les portes fermées bloquent la vue dans les deux sens.</p>
       <p><b>Déplacement</b> : <kbd>ZQSD</kbd> / <kbd>WASD</kbd> / flèches. <kbd>A</kbd> (ou <kbd>Maj</kbd>) bascule entre course et marche : en marchant on est lent mais précis.<br>
@@ -412,6 +523,6 @@ class UI {
       elle tient encore. Repoussez la dernière et vous avez gagné. Portes, fibre optique et
       tir à travers les battants sont vos meilleurs outils ; les otages sont votre protection, jamais une cible.</p>
       <div class="row"><button class="primary" id="ovClose">Compris</button></div>`);
-    this.panel.querySelector('#ovClose').onclick = () => { if (this.game.paused) this.showPause(); else this.hideOverlay(); };
+    this.panel.querySelector('#ovClose').onclick = back || (() => { if (this.game.paused) this.showPause(); else this.hideOverlay(); });
   }
 }
