@@ -25,6 +25,7 @@ class Renderer {
     this.miniTmpC = document.createElement('canvas');  // composition des deux
     this.miniArrC = document.createElement('canvas');  // pièce où la dernière vague d'assaut est entrée
     this.noiseC = document.createElement('canvas');    // halo du dernier bruit du joueur (une case = un pixel)
+    this.darkC = document.createElement('canvas');     // obscurité quand le courant est coupé, trouée par les lumières
     this._noiseId = 0;
     this.miniScale = 4;
     this.dpr = 1;
@@ -46,7 +47,7 @@ class Renderer {
   buildStatic() {
     const m = this.game.map;
     const W = m.w * TILE, H = m.h * TILE;
-    for (const c of [this.staticC, this.decalC, this.fogC, this.exploredC]) { c.width = W; c.height = H; }
+    for (const c of [this.staticC, this.decalC, this.fogC, this.exploredC, this.darkC]) { c.width = W; c.height = H; }
     this.exploredC.getContext('2d').clearRect(0, 0, W, H);
     m.newlyExplored = [];
     for (let i = 0; i < m.explored.length; i++) if (m.explored[i]) m.newlyExplored.push(i);
@@ -166,6 +167,7 @@ class Renderer {
     this.drawCasings();
     this.drawBodies();
     this.drawDoors();
+    this.drawCharges();
     for (const h of g.hostages) {
       if (!this.hostageShown(h)) continue;
       if (h.standing) Sprites.hostageStanding(ctx, h); else Sprites.hostage(ctx, h);
@@ -173,6 +175,7 @@ class Renderer {
     for (const e of g.enemies) {
       if (!e.visible) continue;
       if (e.dying) Sprites.dying(ctx, e, this.enemyStyle(e), e.dying);
+      else if (e.alive && e.surrender) Sprites.kneeling(ctx, e, this.enemyStyle(e));
       else if (e.alive) this.drawEnemy(e);
     }
     this.drawGrenades();
@@ -209,8 +212,11 @@ class Renderer {
     }
     if (p.fiber) this.drawFiber(p, p.fiber);
     ctx.save(); this.clipToVision(); this.drawLaser(g.laserBeam(p)); this.drawEffects(); ctx.restore();
+    this.drawLamps();
+    if (g.dark) this.drawDark();
     this.drawOwnNoise();
     this.drawFog();
+    if (g.dark) this.drawGlimpsed();
     this.drawFlashes();
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -242,8 +248,97 @@ class Renderer {
         ctx.fillStyle = '#2a2016';
         ctx.beginPath(); ctx.moveTo(L - 11, -2.5); ctx.lineTo(L - 4, -0.5); ctx.lineTo(L - 10, 2.5); ctx.closePath(); ctx.fill();
         ctx.fillStyle = 'rgba(255,240,200,0.25)'; ctx.fillRect(L - 9, -2.5, 1, 5);
+      } else if (d.locked && d.lockKnown) {
+        // fermée à clé (on l'a essayée) : serrure rouge
+        ctx.fillStyle = '#e0533d'; ctx.fillRect(L - 9, -1.6, 4, 3.2);
+        ctx.strokeStyle = 'rgba(0,0,0,0.6)'; ctx.lineWidth = 0.6; ctx.strokeRect(L - 9, -1.6, 4, 3.2);
       } else ctx.fillStyle = '#d8c06a', ctx.fillRect(L - 8, -1, 3, 2);
       ctx.fillStyle = '#2a2016'; ctx.fillRect(-1.5, -1.5, 3, 3);
+      ctx.restore();
+    }
+  }
+
+  // Charge de brèche posée : un boudin d'explosif collé au battant, une diode qui clignote.
+  drawCharges() {
+    const ctx = this.ctx;
+    for (const c of this.game.charges) {
+      const d = c.door;
+      ctx.save();
+      ctx.translate(c.x, c.y);
+      if (!d.horizontal) ctx.rotate(Math.PI / 2);
+      ctx.fillStyle = '#5b6347'; ctx.strokeStyle = 'rgba(0,0,0,0.6)'; ctx.lineWidth = 0.8;
+      roundRect(ctx, -11, -1.8, 22, 3.6, 1.5); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = '#2b2f26'; ctx.fillRect(-3, -2.4, 6, 4.8);
+      ctx.fillStyle = Math.sin(c.t * 9) > 0 ? '#ff4a3d' : '#5a1a16';
+      ctx.beginPath(); ctx.arc(0, 0, 1.2, 0, TAU); ctx.fill();
+      ctx.restore();
+    }
+  }
+
+  // Faisceau des lampes : une lueur chaude dans le cône éclairé (bien plus marquée courant coupé).
+  drawLamps() {
+    const g = this.game, ctx = this.ctx;
+    for (const a of g.ops) {
+      if (!g.lampLit(a)) continue;
+      const poly = g.visionPolys.find(q => q.lamp && q.x === a.x && q.y === a.y);
+      const R = LAMP_RANGE, alpha = g.dark ? 0.09 : 0.05;
+      ctx.save();
+      ctx.beginPath();
+      if (poly) { ctx.moveTo(poly.x, poly.y); for (const q of poly.pts) ctx.lineTo(q.x, q.y); ctx.closePath(); }
+      else {
+        // bâtiment éclairé : pas de cône de vision dédié, on le trace ici, arrêté par les murs
+        ctx.moveTo(a.x, a.y);
+        for (let i = 0; i <= 12; i++) { const r = g.map.castRay(a.x, a.y, a.angle - LAMP_HALF + 2 * LAMP_HALF * i / 12, 5 * U, false); ctx.lineTo(r.x, r.y); }
+        ctx.closePath();
+      }
+      ctx.clip();
+      const grad = ctx.createRadialGradient(a.x, a.y, 0, a.x, a.y, R);
+      grad.addColorStop(0, `rgba(255,244,214,${alpha * 1.6})`); grad.addColorStop(1, 'rgba(255,244,214,0)');
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.fillStyle = grad; ctx.fillRect(a.x - R, a.y - R, 2 * R, 2 * R);
+      ctx.restore();
+    }
+  }
+
+  // Courant coupé : un voile sombre sur tout le bâtiment, troué par les faisceaux des lampes, les flammes de
+  // bouche, les flashs et un peu autour de soi (les yeux s'habituent).
+  drawDark() {
+    const g = this.game, c = this.darkC, d = c.getContext('2d');
+    d.setTransform(1, 0, 0, 1, 0, 0);
+    d.globalCompositeOperation = 'source-over';
+    d.clearRect(0, 0, c.width, c.height);
+    d.fillStyle = 'rgba(2,4,12,0.62)';
+    d.fillRect(0, 0, c.width, c.height);
+    d.globalCompositeOperation = 'destination-out';
+    const hole = (x, y, r, a) => {
+      const grad = d.createRadialGradient(x, y, 0, x, y, r);
+      grad.addColorStop(0, `rgba(0,0,0,${a})`); grad.addColorStop(1, 'rgba(0,0,0,0)');
+      d.fillStyle = grad; d.beginPath(); d.arc(x, y, r, 0, TAU); d.fill();
+    };
+    for (const q of g.visionPolys) {
+      if (!q.lamp) continue;
+      d.save();
+      d.beginPath(); d.moveTo(q.x, q.y); for (const r of q.pts) d.lineTo(r.x, r.y); d.closePath(); d.clip();
+      hole(q.x, q.y, LAMP_RANGE, 0.95);
+      d.restore();
+    }
+    const p = g.player;
+    if (p.alive) hole(p.x, p.y, DARK_SIGHT, 0.45);
+    for (const a of [...g.ops, ...g.enemies]) if (a.alive && a.glowT > 0) hole(a.x, a.y, 2.5 * U, 0.8 * a.glowT / SHOT_GLOW);
+    for (const f of g.effects) if (f.type === 'flash' || f.type === 'frag') hole(f.x, f.y, 8 * U, 1 - f.t / f.life);
+    d.globalCompositeOperation = 'source-over';
+    this.ctx.drawImage(c, 0, 0);
+  }
+
+  // Dans le noir, un suspect trahi par la flamme de son arme (ou pris dans un faisceau hors du champ) se devine
+  // un instant par-dessus le brouillard.
+  drawGlimpsed() {
+    const g = this.game, ctx = this.ctx;
+    for (const e of g.enemies) {
+      if (!e.alive || !e.visible || g.seesPoint(e.x, e.y)) continue;
+      ctx.save();
+      ctx.globalAlpha = 0.75;
+      if (e.surrender) Sprites.kneeling(ctx, e, this.enemyStyle(e)); else this.drawEnemy(e);
       ctx.restore();
     }
   }
@@ -461,7 +556,7 @@ class Renderer {
     for (const f of this.game.effects) {
       if (f.type === 'frag') {
         // boule de feu brève puis fumée
-        const k = f.t / f.life, r = 18 + 70 * Math.sqrt(k);
+        const k = f.t / f.life, r = (18 + 70 * Math.sqrt(k)) * (f.small ? 0.6 : 1);
         ctx.globalAlpha = (1 - k) * 0.9;
         const g = ctx.createRadialGradient(f.x, f.y, 0, f.x, f.y, r);
         g.addColorStop(0, k < 0.25 ? '#fff3c4' : '#6b6259'); g.addColorStop(0.45, k < 0.35 ? 'rgba(255,140,40,0.85)' : 'rgba(70,64,58,0.7)'); g.addColorStop(1, 'rgba(40,36,32,0)');
@@ -600,7 +695,7 @@ class Renderer {
     // portes (leur état change en cours de partie) et points d'entrée
     for (const d of m.doors) {
       if (!m.isExplored(d.x, d.y)) continue;
-      t.fillStyle = d.open ? '#4d7f5a' : d.progress > 0 ? '#c8a95a' : '#a9713f';
+      t.fillStyle = d.open ? '#4d7f5a' : d.progress > 0 ? '#c8a95a' : d.locked && d.lockKnown ? '#c0392b' : '#a9713f';
       for (const c of d.cells) t.fillRect(c.x * s, c.y * s, s, s);
     }
     const arr = g.siege && g.siege.arrival;
@@ -617,7 +712,7 @@ class Renderer {
       if (!this.hostageShown(h)) continue;
       dot(h.x, h.y, 2.2, !h.escort ? '#e8eef5' : h.escort.team === 'ops' ? '#9be7a6' : '#ffb347');
     }
-    for (const e of g.enemies) if (e.alive && e.visible) dot(e.x, e.y, 2.2, '#ef5350');
+    for (const e of g.enemies) if (e.alive && e.visible) dot(e.x, e.y, 2.2, e.cuffed ? '#9aa4ae' : e.surrender ? '#ffb347' : '#ef5350');
     for (const mt of g.mates) if (mt.alive) dot(mt.x, mt.y, 2.2, mt.accent || '#7fd18a');
     const p = g.player;
     if (p.alive) {

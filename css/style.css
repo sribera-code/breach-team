@@ -92,7 +92,7 @@ button.primary:hover { background: #38945d; }
 .supbtn { flex: none; padding: 6px 12px; font-size: 13px; font-weight: 600; }
 .supbtn.sel { border-color: #ffb347; background: #262017; color: #ffd27a; }
 .suprow small { color: #8e99a6; font-size: 11px; line-height: 1.4; }
-.accrow { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 6px; margin-bottom: 6px; }
+.accrow { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; align-items: center; gap: 6px; margin-bottom: 6px; }
 .accname { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .accbtn { padding: 4px 10px; font-size: 12px; font-weight: 600; }
 .accbtn.sel { border-color: #ffb347; background: #262017; color: #ffd27a; }
@@ -156,3 +156,21 @@ button.primary:hover { background: #38945d; }
   .wcards { grid-template-columns: 1fr; }
 }
 kbd { background: #2a323d; border-radius: 3px; padding: 1px 6px; font-family: Consolas, monospace; }
+
+/* Note de fin de mission : la lettre, le total, et le détail ligne par ligne */
+.score { display: grid; grid-template-columns: auto 1fr; gap: 4px 16px; align-items: center; margin: 10px 0 6px; padding: 10px 14px; background: #11151a; border: 1px solid #2c3540; border-radius: 6px; }
+.grade { grid-row: span 2; width: 64px; height: 64px; display: flex; align-items: center; justify-content: center; font-size: 40px; font-weight: 800; border-radius: 8px; background: #262017; color: #ffd27a; border: 2px solid #ffb347; }
+.grade-S { background: #1d2a1f; color: #9be7a6; border-color: #6fcf7a; }
+.grade-A { background: #1d2a1f; color: #c9f0a0; border-color: #9bd46a; }
+.grade-D { background: #2a1a1a; color: #ef9a8f; border-color: #ef6a5a; }
+.score-sum b { font-size: 20px; color: #fff; }
+.score-sum small { display: block; color: #8e99a6; font-size: 12px; }
+.score-lines { display: grid; grid-template-columns: 1fr auto auto; gap: 2px 14px; font-size: 13px; }
+.score-lines .sd { color: #8e99a6; text-align: right; }
+.score-lines b { color: #9be7a6; text-align: right; min-width: 32px; }
+.score-lines b.neg { color: #ef6a5a; }
+.powerrow { display: flex; flex-direction: column; align-items: stretch; gap: 3px; margin-top: 10px; }
+.powerrow small { color: #8e99a6; font-size: 11px; line-height: 1.4; }
+.mode.lamp { background: #b88a1f; color: #fff; display: none; margin-left: 6px; }
+.mode.lamp.on { display: inline-block; }
+.mode.lamp.off { background: #3a4250; color: #8e99a6; text-decoration: line-through; }

@@ -16,7 +16,7 @@ const LEVELS = [
     name: 'Entrepôt',
     siegeBriefing: "Vous tenez l'entrepôt : de grands volumes, peu de cloisons, et des portes qui grincent. L'intervention peut entrer par les deux portes extérieures comme par les fenêtres — surveillez large.",
     briefing: "Un groupe armé s'est retranché dans un entrepôt et retient des otages. Nettoyez le bâtiment pièce par pièce. Les portes fermées bloquent la vue : ouvrez-les (E) et jetez une flash (G) avant d'entrer quand vous doutez. Ne touchez pas les otages.",
-    enemyWeapons: ['ak', 'ak', 'pistol', 'uziE', 'sgE'],
+    enemyWeapons: ['ak', 'ak74E', 'ak', 'pistol', 'uziE', 'sgE'],
     map: [
       '######W##################W######',
       '#..........#,,,,,,,,,#.........#',
@@ -44,7 +44,7 @@ const LEVELS = [
     name: 'Bureaux',
     siegeBriefing: "Un long couloir central dessert tout l'étage : c'est par là qu'ils passeront, mais les fenêtres des bureaux leur ouvrent aussi les flancs. Refermez derrière vous.",
     briefing: "Prise d'otages dans un immeuble de bureaux. Un long couloir central dessert des salles bondées : ne vous exposez pas dans le couloir plus longtemps que nécessaire et utilisez les bureaux comme couvert.",
-    enemyWeapons: ['ak', 'ak', 'ak', 'pistol', 'uziE', 'sgE'],
+    enemyWeapons: ['ak', 'ak74E', 'ak', 'ak', 'pistol', 'uziE', 'sgE'],
     map: [
       '##X###############################',
       '#::::::::#,,,,,,,#,,,,,v,#,,,,,,,#',
@@ -72,7 +72,7 @@ const LEVELS = [
     name: 'Villa',
     siegeBriefing: "Trois rangées de pièces en enfilade et beaucoup de portes : l'intervention peut se glisser partout. Tenez les angles, gardez vos otages près de vous.",
     briefing: "Villa fortifiée : trois rangées de pièces en enfilade, beaucoup de portes, beaucoup d'ennemis. Prenez votre temps, une pièce après l'autre, et rechargez avant chaque entrée.",
-    enemyWeapons: ['ak', 'ak', 'ak', 'ak', 'pistol', 'uziE', 'sgE'],
+    enemyWeapons: ['ak', 'ak74E', 'ak', 'ak', 'ak', 'pistol', 'uziE', 'sgE'],
     map: [
       '######W###########W#################',
       '#:S:::::::::.#,,,,,,,,,,#,,,,,,,E,,#',
@@ -98,7 +98,7 @@ const LEVELS = [
     name: 'Hôtel',
     siegeBriefing: "L'hôtel a quatre accès : l'entrée du hall, la porte de service des cuisines, la fenêtre d'une chambre et celle du bout du couloir. Le couloir des chambres dessert tout l'étage : qui le tient voit venir.",
     briefing: "Un commando a pris un hôtel et retient des clients. Les chambres s'alignent sur un long couloir moquetté où chaque porte peut cacher un tireur ; le restaurant, plein de tables, offre du couvert aux deux camps. Lancez vos flashs par-dessus le mobilier.",
-    enemyWeapons: ['ak', 'ak', 'pistol', 'pistol', 'uziE', 'sgE'],
+    enemyWeapons: ['ak', 'ak74E', 'ak', 'pistol', 'pistol', 'uziE', 'sgE'],
     map: [
       '####W###############################',
       '#;b;;;;p#;bb;;;;p#p;;;;;bb#bb;;;;;p#',
@@ -126,7 +126,7 @@ const LEVELS = [
     name: 'Banque',
     siegeBriefing: "Vous tenez la banque. Le grand hall et ses trois ouvertures sur la rue sont intenables : repliez-vous derrière les guichets et les portes. L'entrée du personnel, par la salle de pause, est l'autre voie d'accès.",
     briefing: "Un braquage a mal tourné : les braqueurs se sont repliés dans les bureaux, la salle des coffres et la salle informatique avec des employés. Le hall est vaste et dégagé ; derrière le comptoir, tout se joue porte par porte. Entre les baies de serveurs, les allées sont étroites.",
-    enemyWeapons: ['ak', 'ak', 'uziE', 'uziE', 'sgE', 'pistol'],
+    enemyWeapons: ['ak', 'ak74E', 'ak', 'uziE', 'uziE', 'sgE', 'pistol'],
     map: [
       '###W######X######W################',
       '#=p==ss======ss====p=#aa;;;;;;;;p#',
@@ -156,7 +156,7 @@ const LEVELS = [
     name: 'Centre de données',
     siegeBriefing: "Le quai de chargement et le hall d'accueil sont les deux portes du site, et chacun a sa fenêtre. La salle des serveurs, avec ses allées parallèles, est un piège pour qui s'y engage sans couverture : tenez-en les bouts.",
     briefing: "Un groupe armé s'est emparé d'un centre de données. Entre les rangées de baies, les allées sont étroites et les lignes de tir longues ; la supervision et la sécurité sont à l'est, les réserves et les onduleurs au sud-ouest. Le quai et le hall d'accueil sont vides : le contact se fait derrière la première porte.",
-    enemyWeapons: ['ak', 'ak', 'ak', 'uziE', 'sgE', 'pistol'],
+    enemyWeapons: ['ak', 'ak74E', 'ak', 'ak', 'uziE', 'sgE', 'pistol'],
     map: [
       '#####W################################',
       '#..........#%%%%%%%%%%%%%%%%#aa;;;;;p#',

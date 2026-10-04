@@ -16,13 +16,13 @@ puis aller sur http://localhost:8000.
 
 Le briefing propose deux rôles pour chaque mission.
 
-**Assaut** — le mode d'origine : vous menez l'intervention avec Bravo et Charlie et vous nettoyez le bâtiment sans perdre un seul otage ; les faire sortir les met à l'abri, mais n'est pas exigé. Le point d'entrée est tiré au sort à chaque partie — le briefing ne dit pas lequel est sorti, vous le découvrez sur place — et il vous laisse le fixer si vous préférez : chaque carte a plusieurs portes extérieures et fenêtres, et la pièce par laquelle vous entrez est toujours vide : le premier contact se fait derrière une porte.
+**Assaut** — le mode d'origine : vous menez l'intervention avec Bravo et Charlie et vous neutralisez les suspects (abattus, ou rendus et menottés) sans perdre un seul otage ; les faire sortir les met à l'abri, mais n'est pas exigé. Le point d'entrée est tiré au sort à chaque partie — le briefing ne dit pas lequel est sorti, vous le découvrez sur place — et il vous laisse le fixer si vous préférez : chaque carte a plusieurs portes extérieures et fenêtres, et la pièce par laquelle vous entrez est toujours vide : le premier contact se fait derrière une porte.
 
 **Siège** — vous incarnez le chef du groupe armé. Vous connaissez les lieux (le plan vous est acquis dès le départ), vous êtes neuf — vous et huit complices, chacun à son poste et sans ordres à recevoir : personne ne commande personne —, vous verrouillez les portes, et une équipe d'intervention donne l'assaut après dix secondes de préparation — par une porte extérieure ou une fenêtre, sans que vous sachiez laquelle. Elle progresse secteur par secteur, converge sur les coups de feu, lance des flashs avant d'entrer là où elle vous a entendu, et attaque en **trois vagues de trois opérateurs**, chaque fois par une autre ouverture. Pas de temps mort : la vague suivante entre six secondes après l'élimination de la précédente, ou au bout de trente secondes si celle-ci tient encore. Le HUD indique la vague en cours (« Vague 2 / 3 »). Repoussez la dernière et les négociations aboutissent.
 
 Chaque carte a ses otages : trois à l'Entrepôt, quatre aux Bureaux, à l'Hôtel et à la Banque, cinq à la Villa et au Centre de données. Quand une vague entre, la minimap fait clignoter en rouge la pièce où elle arrive, avec une flèche sur l'ouverture franchie. Vous perdez si tout votre groupe tombe (à votre mort, vous reprenez la main dans un complice), ou s'il ne vous reste plus aucun otage vivant : tous morts, ou évacués par l'intervention. Un opérateur qui trouve un otage le relève et l'emmène vers la sortie la plus proche ; s'il l'atteint, l'otage est perdu pour vous. Abattez l'escorte en route : l'otage se remet à genoux là où il est, jusqu'à ce qu'un autre opérateur vienne le chercher. Perdre un otage ne met pas fin à la partie tant qu'il en reste un. L'intervention ne tire jamais avec un otage dans l'axe ou juste derrière sa cible : elle se décale pour trouver un angle. Garder un otage près de soi protège donc vraiment. Les otages sont votre seule protection.
 
-L'équipement suit le camp : AKM, Uzi, Škorpion vz. 61 ou Remington 870 en arme principale, Makarov, Tokarev TT-33 ou Glock en arme de poing, et **deux grenades à fragmentation** au lieu des flashs (`Espace`). Elles éclatent au bout de deux secondes et tuent dans un rayon d'environ une case, blessent jusqu'à trois cases et demie, vous et vos otages compris ; un mur ou une porte fermée arrête l'éclat. Pas de fibre optique de ce côté. Les opérateurs sont plus précis et portent un gilet ; vous frappez plus fort et connaissez le terrain. Portes, grenades et tir à travers les battants sont vos meilleurs outils. Les opérateurs, eux, lancent des flashs, mais seulement quand la trajectoire est libre (jamais contre une porte fermée) et jamais sur leurs équipiers ; leur propre camp détourne les yeux et n'est gêné que si l'éclair part à ses pieds.
+L'équipement suit le camp : AKM, AK-74, Uzi, Škorpion vz. 61 ou Remington 870 en arme principale, Makarov, Tokarev TT-33 ou Glock en arme de poing, et **deux grenades à fragmentation** au lieu des flashs (`Espace`). Elles éclatent au bout de deux secondes et tuent dans un rayon d'environ une case, blessent jusqu'à trois cases et demie, vous et vos otages compris ; un mur ou une porte fermée arrête l'éclat. Pas de fibre optique de ce côté. Les opérateurs sont plus précis et portent un gilet ; vous frappez plus fort et connaissez le terrain. Portes, grenades et tir à travers les battants sont vos meilleurs outils. Les opérateurs, eux, lancent des flashs, mais seulement quand la trajectoire est libre (jamais contre une porte fermée) et jamais sur leurs équipiers ; leur propre camp détourne les yeux et n'est gêné que si l'éclair part à ses pieds.
 
 ## Missions
 
@@ -38,12 +38,15 @@ Six cartes : Entrepôt, Bureaux, Villa, Hôtel (chambres sur un long couloir, ha
 | Recharger | `R` ou clic molette |
 | Changer d'arme | `1` / `2` / `Alt` |
 | Laser | `L` allume / éteint le laser de l'arme qui en porte un |
-| Porte | `E` ouvre / ferme d'un coup ; molette : fermée ↔ entrebâillée ↔ entrouverte ↔ ouverte (chaque cran est un geste) |
+| Lampe | `X` allume / éteint la lampe (et celles des coéquipiers) |
+| Porte | `E` ouvre / ferme d'un coup (crochète une porte verrouillée) ; molette : fermée ↔ entrebâillée ↔ entrouverte ↔ ouverte (chaque cran est un geste) |
+| Charge de brèche | `B` devant une porte fermée : poser ; `B` à nouveau : mise à feu |
+| Sommation | `C` : « Police ! À terre ! » |
 | Fibre optique | `F` maintenu devant une porte fermée ou entrouverte |
 | Grenade flash | `Espace` ou `G` maintenu : la mèche part à la fin de l'armement, la grenade au relâchement |
 | Ramasser une arme | `V` près d'un corps (échange avec l'arme de même catégorie) |
-| Otage | `H` près d'un otage : il se relève et vous suit ; `H` à nouveau : il attend à genoux |
-| Équipe | `T` suivre / tenir ; clic droit : aller là (sur soi : suivre) |
+| Otage / menottes | `H` près d'un otage : il se relève et vous suit ; `H` à nouveau : il attend à genoux. Près d'un suspect rendu : le menotter |
+| Équipe | `T` suivre / tenir ; clic droit : aller là (sur soi : suivre ; sur une porte fermée : en colonne, prêts à entrer) |
 | Direction à couvrir | clic droit **maintenu**, puis tirer vers la direction avant de relâcher |
 | Minimap | `M` (affichée par défaut) |
 | Pause | `Échap` |
@@ -76,7 +79,8 @@ Les fusils à pompe se rechargent cartouche par cartouche ; tirer interrompt le 
 Ils se choisissent arme par arme, sous la fiche de chacune, et chaque arme garde les siens : un silencieux sur le HK416 ne passe pas au MP5.
 
 - **Silencieux** (fusils d'assaut, pistolets mitrailleurs, armes de poing ; pas les fusils à pompe) : voir **Bruit et silencieux**. Les coéquipiers ont leur propre bouton, à part.
-- **Laser** (toute arme à rail : pas l'AKM, l'Uzi, le Škorpion, le Makarov ni le Tokarev) : le point montre où part la balle sans épauler, ce qui divise par deux la dispersion due au déplacement (barre « En mouvement » de la fiche), et la gêne de la tenue d'une main derrière un bouclier ; à l'arrêt, arme épaulée, il n'apporte rien. Mais un faisceau se voit : un suspect qui aperçoit le trait ou le point dans son champ se tourne vers sa source, et s'il le voit encore, il vient voir. `L` l'éteint ou le rallume ; il s'éteint de lui-même pendant un geste, un rechargement, la fibre ou une grenade dégoupillée.
+- **Lampe** (toute arme à rail, comme le laser) : elle éclaire un cône devant l'arme, sur douze cases. Inutile dans un bâtiment éclairé ; courant coupé, c'est elle qui fait voir loin. Prise en face à moins de six cases, elle éblouit un suspect, qui met six dixièmes de seconde de plus à viser. Mais dans le noir, elle se voit de loin. `X` l'éteint ou la rallume, celles de l'équipe avec (voir **Courant coupé**).
+- **Laser** (toute arme à rail : pas l'AKM, l'AK-74, l'Uzi, le Škorpion, le Makarov ni le Tokarev) : le point montre où part la balle sans épauler, ce qui divise par deux la dispersion due au déplacement (barre « En mouvement » de la fiche), et la gêne de la tenue d'une main derrière un bouclier ; à l'arrêt, arme épaulée, il n'apporte rien. Mais un faisceau se voit : un suspect qui aperçoit le trait ou le point dans son champ se tourne vers sa source, et s'il le voit encore, il vient voir. `L` l'éteint ou le rallume ; il s'éteint de lui-même pendant un geste, un rechargement, la fibre ou une grenade dégoupillée.
 
 ### Boucliers
 
@@ -87,7 +91,7 @@ Un bouclier balistique se prend à la place de l'arme principale (assaut seuleme
 | Léger | NIJ IIIA | 50 × 90 cm | 7,3 kg | armes de poing, pistolets mitrailleurs 9 mm, chevrotine | ×0,88 | 110° |
 | Lourd | NIJ III | 55 × 95 cm | 14 kg | tout, balles de fusil comprises | ×0,74 | 95° |
 
-Les suspects portent surtout des AKM : face à eux, le bouclier léger ne suffit pas. Le 4,6 mm du MP7 et le 7,62 Tokarev, plus rapides que le 9 mm, le traversent aussi.
+Les suspects portent surtout des Kalachnikov (AKM, parfois AK-74) : face à eux, le bouclier léger ne suffit pas. Le 4,6 mm du MP7 et le 7,62 Tokarev, plus rapides que le 9 mm, le traversent aussi.
 
 Personne n'a la même arme : à chaque partie, coéquipiers, opérateurs d'assaut et suspects tirent la leur au sort dans le lot de leur camp. Les coéquipiers en ont toujours deux différentes, et les suspects panachent Kalachnikov, pistolet, Uzi et fusil à pompe scié. Toute arme ramassée sur un corps devient sa version complète, avec de vraies munitions.
 
@@ -117,6 +121,10 @@ On se glisse dans l'embrasure dès le cran « entrouverte » : une porte entreb�
 
 On ne peut pas refermer une porte si quelqu'un (vous compris) ou une grenade se trouve dans l'embrasure ; le message dit lequel. Toute autre manœuvre refusée est annoncée elle aussi — porte déjà fermée, déjà grande ouverte, ou en train de bouger.
 
+Certaines portes sont **fermées à clé** (environ une sur trois, tirées au sort à chaque partie, en assaut). `E` ou la molette lance alors le crochetage : quatre secondes, presque sans bruit, arme basse ; la porte est ensuite déverrouillée et c'est à vous de choisir comment l'ouvrir. Une serrure rouge, sur la porte et sur la minimap, marque celles qu'on a essayées. Pour aller plus vite : la chevrotine dans la serrure, ou une charge. Les suspects, eux, ont les clés. Bravo et Charlie crochètent aussi les portes verrouillées sur leur trajet.
+
+**Charge de brèche** : deux par mission. `B` devant une porte fermée pose une charge sur le battant, de votre côté (1,4 s) ; `B` à nouveau la fait sauter, où que vous soyez. La porte vole en éclats et ne se referme plus ; derrière, tout ce qui se tient à moins de deux cases et demie de l'embrasure est sonné (jusqu'à quatre secondes), et blessé tout contre le battant — un otage aussi : regardez d'abord à la fibre. De votre côté, écartez-vous à plus d'une case et demie. L'explosion s'entend dans tout le bâtiment. Si quelqu'un ouvre la porte avant la mise à feu, la charge tombe.
+
 ## Grenades
 
 Une grenade lancée vole par-dessus le mobilier (tables, plantes, caisses, canapés...) : seuls les murs, les fenêtres et les portes l'arrêtent en l'air. Une fois retombée, elle roule et rebondit sur les meubles qu'elle rencontre ; tombée sur une table ou un lit, elle en roule jusqu'au sol. Les opérateurs de l'IA en tiennent compte pour décider s'ils lancent.
@@ -133,7 +141,21 @@ Devant une porte fermée ou entrouverte, maintenir `F` glisse une fibre sous le 
 
 ## Coéquipiers
 
+**Entrée coordonnée** : un clic droit sur une porte fermée met Bravo et Charlie en colonne de part et d'autre de l'embrasure, de votre côté (« En colonne » dans le HUD, puis « Équipe en position »). Dès que la porte s'ouvre — vous l'ouvrez, la charge la souffle, la chevrotine fait sauter la serrure —, ils entrent chacun vers l'angle de la pièce de son côté et surveillent le fond. Si une flash est dégoupillée ou en vol, ils attendent qu'elle éclate. Tout autre ordre annule la colonne.
+
 Bravo et Charlie ne tirent jamais à travers vous ni à travers un otage, et ils tiennent compte de la gerbe de leur arme : plus elle s'ouvre, plus ils exigent de marge avant de presser la détente. Quand l'axe reste bouché, ils se décalent pour dégager l'angle plutôt que d'attendre, et un ordre de déplacement l'emporte sur un contact : ils rompent et progressent en gardant le suspect en joue.
+
+## Sommation et arrestation
+
+`C` crie « Police ! À terre ! ». Chaque suspect que vous voyez à moins de sept cases peut se rendre : il lâche son arme, se met à genoux, les mains sur la tête, et plus personne ne lui tire dessus. Ses chances dépendent de la situation : presque à coup sûr s'il est aveuglé par une flash ou sonné par une charge et blessé ; bien plus s'il est pris de dos ou tenu en joue par plusieurs d'entre vous ; bien moins s'il est en plein échange de tirs ou si un complice se tient à côté de lui. Approchez-vous et `H` le menotte (1,6 s). Un suspect compte comme neutralisé une fois menotté ; s'il ne reste que des suspects rendus, le HUD le rappelle. Un suspect rendu que plus personne de l'équipe ne voit pendant sept secondes ramasse son arme et reprend le combat. Le cri s'entend comme tout cri : les autres viennent voir. La minimap montre en orange un suspect rendu, en gris un suspect menotté.
+
+## Note de fin de mission
+
+Chaque mission est notée sur 100, de S à D, avec le détail ligne par ligne. En assaut : mission accomplie (25), otages en vie (30, moins 4 par otage blessé), otages évacués (10), suspects arrêtés plutôt qu'abattus (20), équipe indemne (15) ; un suspect abattu après sa reddition coûte 15 points, chaque balle dans un coéquipier 3. En siège : assaut repoussé (40), otages encore entre vos mains (30), groupe debout (20), opérateurs neutralisés (10). Une mission échouée ne dépasse pas D. Votre meilleure note par mission et par mode est gardée dans le navigateur.
+
+## Courant coupé
+
+Au briefing (colonne de gauche, en assaut), vous pouvez couper le courant avant d'entrer. Le bâtiment est alors dans le noir : on ne voit qu'à quatre cases, vous comme les suspects, sauf ce qu'éclaire une lampe. Un tireur sans silencieux se trahit un instant par la flamme de son arme ; un silencieux, lui, ne s'allume pas. Bravo et Charlie reçoivent une lampe et allument ou éteignent la leur avec vous (`X`). Le courant qui tombe inquiète les suspects, sans leur dire d'où viendra la menace. Une lampe allumée fait voir loin, mais se voit de loin : tout l'art est de l'allumer au bon moment.
 
 ## Dispositions
 
@@ -147,7 +169,7 @@ Rien ne se mémorise d'une partie à l'autre : à chaque chargement, les postes 
 
 ## Relais et armes au sol
 
-Si vous tombez, la partie ne s'arrête pas : après un court instant, vous reprenez la main dans le coéquipier debout le plus proche, avec son arme, de vraies munitions (sa réserve n'est plus illimitée) et une flash. La mission n'est perdue que lorsque toute l'équipe est à terre.
+Si vous tombez, la partie ne s'arrête pas : après un court instant, vous reprenez la main dans le coéquipier debout le plus proche, avec son arme, de vraies munitions (sa réserve n'est plus illimitée), une flash et les charges de brèche qui vous restaient. La mission n'est perdue que lorsque toute l'équipe est à terre.
 
 Chaque corps garde son arme au sol. Près d'un corps, `V` la ramasse, avec un bref geste pendant lequel vous ne tirez pas. Elle remplace l'arme de même catégorie (arme de poing contre arme de poing, arme principale contre arme principale), qui reste au sol à sa place : vous pouvez la reprendre plus tard, avec son chargeur entamé. Une arme prise à un suspect ou à un opérateur est rechargée comme une arme réelle, chargeur plein et réserve normale.
 

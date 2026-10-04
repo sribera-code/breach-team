@@ -65,10 +65,22 @@ de chaque section.
 - **Le laser n'est réglé qu'à l'estime** : dispersion en mouvement divisée par deux, et un suspect qui voit le
   faisceau vient voir au bout de trois coups d'œil (0,6 s). Les coéquipiers n'en ont pas.
 
+## Sommation, lampe, serrures, charges, entrée coordonnée
+
+- **Tout est réglé à l'estime** : chances de reddition (`surrenderChance`), sept secondes avant qu'un suspect
+  rendu laissé seul reprenne son arme, vue à quatre cases dans le noir, faisceau de 44° sur douze cases, une
+  porte sur trois verrouillée, quatre secondes de crochetage, souffle de la charge. À rejouer à la main.
+- **Les coéquipiers ne menottent pas** et ne font pas de sommation : seul le joueur arrête.
+- **L'entrée coordonnée est simple** : chacun file vers l'angle de son côté. Pas d'entrée en croix, pas de
+  coéquipier qui ouvre ou lance la flash lui-même au signal.
+- **Pas de courant coupé en siège**, ni de lampe pour l'intervention ou le groupe armé.
+- **La note de fin ne tient pas compte du temps** ni de la discrétion.
+
 ## Confort de jeu
 
 - **Pas de réglage de difficulté.** Ni pour l'assaut, ni pour le siège.
-- **Pas de sauvegarde de progression** : les missions sont toutes accessibles, rien n'est débloqué ni retenu.
+- **Pas de sauvegarde de progression** : les missions sont toutes accessibles, rien n'est débloqué ; seule la
+  meilleure note de chaque mission est retenue.
 - **Le son est minimal** : bruits synthétisés, pas de spatialisation. En siège, entendre d'où vient un bruit
   compte pourtant beaucoup.
 
