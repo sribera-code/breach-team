@@ -523,9 +523,22 @@ const Sprites = {
       part(x0, x1, 1.2, '#1b1d21', dy, 0.3);
       ctx.fillStyle = '#bcc3c9'; ctx.fillRect(x1 - 0.55, A + dy - 0.4, 0.5, 0.8);
     };
+    // Chargeur (quadrilatère : deux points contre le boîtier, puis les deux du bout) ; t.extMag, un nombre :
+    // chargeur grande capacité, allongé d'autant depuis le boîtier.
+    const mag = (pts, fill) => {
+      const f = typeof t.extMag === 'number' ? Math.min(1.35, t.extMag) : 1; // au-delà, il cacherait le reste
+      const out = i => { const b = pts[3 - i]; return [b[0] + (pts[i][0] - b[0]) * f, b[1] + (pts[i][1] - b[1]) * f]; };
+      poly(f === 1 ? pts : [pts[0], pts[1], out(2), out(3)], fill);
+    };
+    // Poignée avant verticale sous le garde-main : un petit bloc qui dépasse sur le côté, vu de dessus.
+    const grip = x0 => {
+      poly([[x0, 1.2], [x0 + 1.5, 1.2], [x0 + 1.35, 3.5], [x0 + 0.2, 3.5]], '#1b1d21');
+      dark(x0 + 0.3, 2.2, 0.9, 0.3, 0.4); dark(x0 + 0.3, 2.9, 0.9, 0.3, 0.4);
+    };
 
     switch (kind) {
       case 'pistol': {
+        if (t.extMag) poly([[9.4, 1.4], [11.4, 1.4], [11.2, 3.7], [9.6, 3.7]], '#1b1d20'); // chargeur long qui dépasse de la poignée
         part(8.2, 12.8, 2.3, '#17191c', 0.5, 0.45);            // carcasse / poignée
         part(12.6, M - 2.6, 1.3, '#1c1f22', 1, 0.3);           // rail sous le canon
         part(9.8, M, 2, t.slide || '#3e434b', 0, 0.3);         // culasse
@@ -553,8 +566,9 @@ const Sprites = {
         dark(7.6, 0.95, 3, 0.7, 0.6);                          // fenêtre d'éjection
         shine(5, 13.2, -1.45);
         part(13.2, M, 1.45, '#191b1e', -0.85, 0.3);            // canon
-        part(13.2, M - 3.2, 1.3, '#23262b', 1, 0.3);           // tube magasin
-        part(M - 3.6, M - 2.8, 1.5, '#15171a', 1, 0.25);       // bouchon de tube
+        const tube = t.extMag === 'tube' ? 1.4 : 3.2;          // rallonge : le tube court presque jusqu'à la bouche
+        part(13.2, M - tube, 1.3, '#23262b', 1, 0.3);          // tube magasin
+        part(M - tube - 0.4, M - tube + 0.4, 1.5, '#15171a', 1, 0.25); // bouchon de tube
         shine(13.6, M - 1, -1.35, 0.15);
         if (t.semi) {
           part(15, 21.8, 2.8, '#1f2125', 0.1, 0.8);            // garde-main synthétique
@@ -580,11 +594,12 @@ const Sprites = {
         ctx.fillStyle = '#0d0f12'; circle(ctx, 5.1, A, 0.55); ctx.fill();
         dark(9.1, 0.8, 2.3, 0.6, 0.55);                        // fenêtre d'éjection
         shine(4.6, 13.8, -1.3);
-        poly([[9.5, 1.3], [11.6, 1.3], [12.6, 4.5], [10.7, 4.8]], '#202327'); // chargeur courbe
+        mag([[9.5, 1.3], [11.6, 1.3], [12.6, 4.5], [10.7, 4.8]], '#202327'); // chargeur courbe
         ctx.strokeStyle = 'rgba(255,255,255,0.1)'; ctx.lineWidth = 0.3;
         ctx.beginPath(); ctx.moveTo(10.3, A + 1.8); ctx.lineTo(11.4, A + 4.4); ctx.stroke();
         part(14, 20.6, 2.6, '#22252a', 0, 0.8);                // garde-main
         ribs(15, 20, 1.1, 0, 1.6, 0.25);
+        if (t.grip) grip(18.6);
         part(14.4, 19.4, 0.9, STEEL_D, -1.7, 0.3);             // tube du levier d'armement
         part(15.1, 16.2, 1.1, '#141619', -1.95, 0.3);          // poignée d'armement
         part(20.6, 22.2, 2.5, '#191b1f', 0, 0.6);              // guidon annulaire
@@ -618,9 +633,17 @@ const Sprites = {
         ribs(6, 13.4, 1.15, 0, 1.4, 0.25);                     // nervures du couvercle
         dark(9.6, 0.9, 2.8, 0.7, 0.55);                        // fenêtre d'éjection
         shine(5.2, 13.8, -1.4);
-        poly([[8.5, 1.4], [11.2, 1.4], [12.7, 4.8], [10.3, 5.1]], t.mag || '#4a3220'); // chargeur bakélite courbe
-        ctx.strokeStyle = 'rgba(0,0,0,0.3)'; ctx.lineWidth = 0.32;
-        for (let k = 1; k <= 2; k++) { ctx.beginPath(); ctx.moveTo(8.9 + k * 0.5, A + 1.9 + k * 1.05); ctx.lineTo(11.4 + k * 0.45, A + 1.9 + k * 1.05); ctx.stroke(); }
+        if (t.extMag === 'drum') { // tambour de 75 : un gros disque sous le boîtier
+          part(9, 11.2, 1.4, '#2a2c30', 1.7, 0.3);
+          ctx.fillStyle = '#3a3c40'; circle(ctx, 10.1, A + 4, 2.6); ctx.fill();
+          ctx.lineWidth = 0.5; ctx.strokeStyle = OUT; ctx.stroke();
+          ctx.strokeStyle = 'rgba(0,0,0,0.35)'; ctx.lineWidth = 0.3; circle(ctx, 10.1, A + 4, 1.7); ctx.stroke();
+          ctx.fillStyle = '#26282b'; circle(ctx, 10.1, A + 4, 0.65); ctx.fill();
+        } else {
+          mag([[8.5, 1.4], [11.2, 1.4], [12.7, 4.8], [10.3, 5.1]], t.mag || '#4a3220'); // chargeur bakélite courbe
+          ctx.strokeStyle = 'rgba(0,0,0,0.3)'; ctx.lineWidth = 0.32;
+          for (let k = 1; k <= 2; k++) { ctx.beginPath(); ctx.moveTo(8.9 + k * 0.5, A + 1.9 + k * 1.05); ctx.lineTo(11.4 + k * 0.45, A + 1.9 + k * 1.05); ctx.stroke(); }
+        }
         part(13.8, 14.8, 3.1, '#23252a', 0, 0.25);             // hausse
         part(14.8, 20.8, 2.7, t.fore || '#7a4a24', 0, 0.9);    // garde-main bois
         grain(15.2, 20.4, [-0.8, 0.7]);
@@ -650,9 +673,10 @@ const Sprites = {
         ribs(6, 13.8, 0.85, 0, 1.1);                           // rail supérieur
         dark(9.6, 0.85, 2.6, 0.65, 0.55);                      // fenêtre d'éjection
         shine(5.4, 14, -1.35);
-        if (t.straightMag) poly([[9.3, 1.3], [11.5, 1.3], [11.4, 3.9], [9.4, 3.9]], magc); // 7,62 : chargeur droit
-        else poly([[9.3, 1.3], [11.5, 1.3], [11.9, 4.1], [9.9, 4.2]], magc);               // 5,56 : légèrement courbe
+        if (t.straightMag) mag([[9.3, 1.3], [11.5, 1.3], [11.4, 3.9], [9.4, 3.9]], magc); // 7,62 : chargeur droit
+        else mag([[9.3, 1.3], [11.5, 1.3], [11.9, 4.1], [9.9, 4.2]], magc);               // 5,56 : légèrement courbe
         dark(9.7, 3.2, 1.8, 0.35, 0.3);
+        if (t.grip) grip(19.4);
         part(14.2, 23.8, 2.6, body, 0, 0.35);                  // garde-main
         ribs(15, 23, 1.05, 0, 0.9);
         for (let x = 15.4; x < 23; x += 1.7) { dark(x, -1.25, 0.9, 0.35, 0.45); dark(x, 0.9, 0.9, 0.35, 0.45); } // fentes de ventilation
@@ -798,7 +822,7 @@ const Sprites = {
 
   // ---- Personnages ----
   // Dessin générique d'un personnage à partir d'une pose (voir POSE_STAND / POSE_LIE).
-  // st : { body, shoulder, vest, vestLight, pack, sleeve, gloves, skin, boots, helmet | hair/head, band, gun, gunLen, gunTint }
+  // st : { body, shoulder, vest, vestLight, plates, pack, sleeve, gloves, skin, boots, helmet | hair/head, band, gun, gunLen, gunTint }
   // held : true si l'arme est tenue (mains dessus), walk : phase de marche, moving : bool
   figure(ctx, x, y, angle, st, pose, held, walk, moving) {
     ctx.save();
@@ -841,7 +865,10 @@ const Sprites = {
     // gilet tactique ou brelage
     const V = pose.vest;
     if (st.vest) {
+      // gilet lourd : plus épais, la plaque avant en relief
+      if (st.plates) { ctx.fillStyle = 'rgba(0,0,0,0.5)'; roundRect(ctx, V.x - 1.2, V.y - 1.2, V.w + 2.4, V.h + 2.4, 3); ctx.fill(); }
       ctx.fillStyle = st.vest; roundRect(ctx, V.x, V.y, V.w, V.h, 2); ctx.fill();
+      if (st.plates) { ctx.fillStyle = 'rgba(255,255,255,0.12)'; roundRect(ctx, V.x + V.w - 3.2, V.y + 1.2, 2.6, V.h - 2.4, 1); ctx.fill(); }
       ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fillRect(V.x, V.y + V.h / 2 - 1, V.w, 2);
       ctx.fillStyle = st.vestLight || 'rgba(255,255,255,0.1)'; ctx.fillRect(V.x + V.w / 2 - 1.1, V.y, 2.2, V.h);
       ctx.fillStyle = 'rgba(255,255,255,0.08)'; ctx.fillRect(V.x, V.y, V.w, 2.5);

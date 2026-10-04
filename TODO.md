@@ -1,6 +1,6 @@
 # Reste à faire
 
-État des chantiers ouverts au 27 septembre 2026. Les points sont classés par ordre d'intérêt au sein
+État des chantiers ouverts au 4 octobre 2026. Les points sont classés par ordre d'intérêt au sein
 de chaque section.
 
 ## Mode siège
@@ -75,6 +75,17 @@ de chaque section.
   coéquipier qui ouvre ou lance la flash lui-même au signal.
 - **Pas de courant coupé en siège**, ni de lampe pour l'intervention ou le groupe armé.
 - **La note de fin ne tient pas compte du temps** ni de la discrétion.
+
+## Poignée, chargeur, gilets, rondes, alerte générale
+
+- **Tout est réglé à l'estime** : poignée (−25 % d'ouverture par tir, −30 % de recul), chargeurs (rechargement +10 %,
+  +40 % pour le tambour), gilets (moitié des dégâts sur le souple, 30 % sur une plaque, ±55° de plaques, ×0,86 de
+  vitesse), deux rondes par mission au pas (×0,55), trois secondes avant l'alerte générale, réaction ×0,7 ensuite.
+- **Le gilet souple par défaut adoucit l'assaut** : les suspects au pistolet, à l'Uzi ou au fusil scié ne font plus
+  que la moitié de leurs dégâts au joueur. À rejouer : si c'est trop facile, réduire la couverture (tête et bras).
+- **Les coéquipiers n'ont pas de gilet à choisir**, et ni les suspects ni l'intervention du siège n'en portent.
+- **Les rondes ne referment pas les portes** derrière elles : au fil de la partie, le bâtiment s'ouvre.
+- **L'alerte générale ne change que la vigilance** : personne ne se replie, ne se barricade ni ne menace un otage.
 
 ## Confort de jeu
 

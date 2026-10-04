@@ -171,14 +171,33 @@ const LASER_MOVE = 0.5;
 // quand le bâtiment est éclairé, décisive quand le courant est coupé ; elle éblouit celui qu'elle prend en
 // face de près, mais elle se voit de loin (voir Game.lampLit).
 const LIGHTS = { hk416: 0.15, scarh: 0.15, mp5: 0.15, mp7: 0.12, m870: 0.15, m4super90: 0.15, glock17: 0.1, usp45: 0.1 };
+// Poignée avant verticale (masse en kg), sous le garde-main d'une arme d'épaule à rail : la main avant tient
+// mieux l'arme en rafale. Le MP7 a déjà la sienne, repliable ; les armes du groupe armé n'ont pas de rail.
+const GRIPS = { hk416: 0.15, scarh: 0.15, mp5: 0.15 };
+// Effet de la poignée : multiplicateurs de l'ouverture à chaque tir, de son plafond et du recul.
+const GRIP = { bloom: 0.75, bloomMax: 0.85, recoil: 0.7 };
+// Chargeur grande capacité : capacité, masse ajoutée (kg, chargé) et multiplicateur du temps de rechargement
+// (plus long à engager, surtout un tambour). La réserve, elle, ne change pas : on emporte autant de cartouches,
+// on recharge moins souvent. Modèles réels : PMAG 40 pour le HK416, chargeur de 33 Glock, tambour de 75
+// pour l'AKM, chargeur de 45 du RPK-74 pour l'AK-74, chargeur de 40 de l'Uzi, rallonge de tube de deux
+// cartouches pour le Remington 870.
+const MAGS = {
+  hk416:   { mag: 40, weight: 0.2,  reload: 1.1 },
+  glock17: { mag: 33, weight: 0.2,  reload: 1.1 },
+  akP:     { mag: 75, weight: 1.3,  reload: 1.4, drum: true },
+  ak74P:   { mag: 45, weight: 0.35, reload: 1.1 },
+  uziP:    { mag: 40, weight: 0.25, reload: 1.1 },
+  m870:    { mag: 8,  weight: 0.25, reload: 1, tube: true },
+};
 const FITTED = {};
-// L'arme équipée de ses accessoires (acc : { sup, laser, light }) ; ceux qu'elle n'accepte pas sont ignorés.
-// Chaque combinaison n'est calculée qu'une fois.
+// L'arme équipée de ses accessoires (acc : { sup, laser, light, grip, mag }) ; ceux qu'elle n'accepte pas sont
+// ignorés. Chaque combinaison n'est calculée qu'une fois.
 function fittedDef(key, acc) {
   const w = WEAPONS[key], s = SUPPRESSORS[key];
   const sup = !!(acc && acc.sup && s), laser = !!(acc && acc.laser && LASERS[key]), light = !!(acc && acc.light && LIGHTS[key]);
-  if (!sup && !laser && !light) return w;
-  const id = key + (sup ? '+sup' : '') + (laser ? '+laser' : '') + (light ? '+light' : '');
+  const grip = !!(acc && acc.grip && GRIPS[key]), mag = !!(acc && acc.mag && MAGS[key]);
+  if (!sup && !laser && !light && !grip && !mag) return w;
+  const id = key + (sup ? '+sup' : '') + (laser ? '+laser' : '') + (light ? '+light' : '') + (grip ? '+grip' : '') + (mag ? '+mag' : '');
   if (FITTED[id]) return FITTED[id];
   const d = { ...w, tint: { ...(w.tint || {}) } };
   if (sup) {
@@ -196,6 +215,16 @@ function fittedDef(key, acc) {
   }
   if (laser) { d.laser = true; d.weight += LASERS[key]; d.tint.laser = true; }
   if (light) { d.light = true; d.weight += LIGHTS[key]; d.tint.light = true; }
+  if (grip) {
+    Object.assign(d, { grip: true, bloom: w.bloom * GRIP.bloom, bloomMax: w.bloomMax * GRIP.bloomMax, recoil: w.recoil * GRIP.recoil });
+    d.weight += GRIPS[key]; d.tint.grip = true;
+  }
+  if (mag) {
+    const m = MAGS[key];
+    Object.assign(d, { extMag: true, mag: m.mag, reload: w.reload * m.reload });
+    d.weight += m.weight;
+    d.tint.extMag = m.drum ? 'drum' : m.tube ? 'tube' : m.mag / w.mag;
+  }
   d.mobility = mobilityOf(d.weight);
   return (FITTED[id] = d);
 }
@@ -223,6 +252,21 @@ const SHIELDS = {
     stops: 3, through: 0.75, arc: 66 * DEG, mobility: 0.74, aim: 1.5, fov: 95 * DEG, look: { r: 18, span: 60 * DEG, thick: 5, color: '#5b6150' },
   },
 };
+// Gilets pare-balles (assaut). Le gilet souple (NIJ IIIA) entoure le torse et arrête les balles de classe de
+// perforation soft (pen des armes) : le choc passe, le porteur encaisse blunt des dégâts. Le gilet lourd y
+// ajoute des plaques devant et derrière (±arc) qui arrêtent jusqu'à la classe plate (fusils compris), avec
+// un choc moindre (plateBlunt). Au-delà, la balle perce et frappe de tous ses dégâts. Le poids coûte de la
+// vitesse (mobility). Masses de gilets de service courants.
+const VESTS = {
+  vestL: {
+    name: 'Gilet souple', short: 'Gilet souple', rating: 'NIJ IIIA', weight: 2.5, soft: 1, plate: 0, arc: 0, blunt: 0.5, plateBlunt: 0.5, mobility: 1,
+    note: "Arrête les balles d'arme de poing, de pistolet mitrailleur en 9 mm et la chevrotine, tout autour du torse : le choc ne fait plus que la moitié des dégâts. Une balle de fusil le traverse.",
+  },
+  vestH: {
+    name: 'Gilet lourd à plaques', short: 'Gilet lourd', rating: 'NIJ IV', weight: 11, soft: 1, plate: 3, arc: 55 * DEG, blunt: 0.5, plateBlunt: 0.3, mobility: 0.86,
+    note: "Le gilet souple, plus deux plaques de céramique devant et derrière : de face ou de dos, même une balle de fusil s'y arrête. De flanc, seul le gilet souple protège. Onze kilos : on avance nettement moins vite.",
+  },
+};
 // Chargeurs d'arme de poing en plus pour le porteur de bouclier : c'est sa seule arme.
 const SHIELD_EXTRA_MAGS = 2;
 
@@ -231,16 +275,16 @@ const PRIMARY_WEAPONS = ['hk416', 'scarh', 'mp5', 'mp7', 'm870', 'm4super90'];
 const SIDEARMS = ['glock17', 'usp45'];
 // shield : bouclier pris à la place de l'arme principale (null : aucun) ; acc : accessoires de chaque arme
 // ({ hk416: { sup, laser, light } }) ; teamSup : silencieux pour les coéquipiers ; cutPower : courant coupé
-// avant d'entrer (assaut).
-const DEFAULT_LOADOUT = { primary: 'hk416', sidearm: 'glock17', shield: null, acc: {}, teamSup: false, cutPower: false };
+// avant d'entrer (assaut) ; vest : gilet (VESTS, assaut ; null en siège).
+const DEFAULT_LOADOUT = { primary: 'hk416', sidearm: 'glock17', shield: null, acc: {}, teamSup: false, cutPower: false, vest: 'vestL' };
 
 // Deux modes de jeu : l'assaut (on incarne l'opérateur) et le siège (on incarne le groupe armé).
 const MODES = {
-  assault: { name: 'Assaut', primaries: PRIMARY_WEAPONS, sidearms: SIDEARMS, shields: Object.keys(SHIELDS), loadout: DEFAULT_LOADOUT },
-  siege:   { name: 'Siège',  primaries: ['akP', 'ak74P', 'uziP', 'skorpionP', 'm870'], sidearms: ['makarovP', 'tt33', 'glock17'], shields: [], loadout: { ...DEFAULT_LOADOUT, primary: 'akP', sidearm: 'makarovP' } },
+  assault: { name: 'Assaut', primaries: PRIMARY_WEAPONS, sidearms: SIDEARMS, shields: Object.keys(SHIELDS), vests: Object.keys(VESTS), loadout: DEFAULT_LOADOUT },
+  siege:   { name: 'Siège',  primaries: ['akP', 'ak74P', 'uziP', 'skorpionP', 'm870'], sidearms: ['makarovP', 'tt33', 'glock17'], shields: [], vests: [], loadout: { ...DEFAULT_LOADOUT, primary: 'akP', sidearm: 'makarovP', vest: null } },
 };
 
-// acc : accessoires ({ sup, laser, light }), ou true pour un simple silencieux
+// acc : accessoires ({ sup, laser, light, grip, mag }), ou true pour un simple silencieux
 const makeSlot = (key, acc) => {
   const def = fittedDef(key, acc === true ? { sup: true } : acc);
   return { def, mag: def.mag, reserve: def.reserve };
@@ -303,6 +347,7 @@ class Player extends Agent {
   // Avec un bouclier, l'arme de poing est la seule arme, avec des chargeurs en plus.
   equip(loadout) {
     this.shield = SHIELDS[loadout.shield] || null;
+    this.vest = VESTS[loadout.vest] || null;
     const side = makeSlot(loadout.sidearm, accOf(loadout, loadout.sidearm));
     if (this.shield) side.reserve += side.def.mag * SHIELD_EXTRA_MAGS;
     this.slots = this.shield ? [side] : [makeSlot(loadout.primary, accOf(loadout, loadout.primary)), side];
@@ -407,6 +452,9 @@ class Enemy extends Agent {
     this.blind = null;    // tir dans une porte : { x, y, t, off } (voir Game.startBlindFire)
     this.surrender = null; // rendu, à genoux : { t, lapse } (voir Game.shout) ; cuffed : menotté
     this.cuffed = false;
+    this.patrol = null;   // ronde : { pts, i, wait, going } (voir Game.buildPatrols)
+    this.spotT = null;    // temps écoulé depuis qu'il a vu un opérateur : à ALARM_TIME, alerte générale
+    this.alerted = false; // prévenu par l'alerte générale
     this.visible = false;
     this.engaged = false;
     const pick = arr => arr[Math.floor(Math.random() * arr.length)];

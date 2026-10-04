@@ -80,6 +80,8 @@ Ils se choisissent arme par arme, sous la fiche de chacune, et chaque arme garde
 
 - **Silencieux** (fusils d'assaut, pistolets mitrailleurs, armes de poing ; pas les fusils à pompe) : voir **Bruit et silencieux**. Les coéquipiers ont leur propre bouton, à part.
 - **Lampe** (toute arme à rail, comme le laser) : elle éclaire un cône devant l'arme, sur douze cases. Inutile dans un bâtiment éclairé ; courant coupé, c'est elle qui fait voir loin. Prise en face à moins de six cases, elle éblouit un suspect, qui met six dixièmes de seconde de plus à viser. Mais dans le noir, elle se voit de loin. `X` l'éteint ou la rallume, celles de l'équipe avec (voir **Courant coupé**).
+- **Poignée avant** (HK416, SCAR-H, MP5 ; le MP7 a déjà la sienne, repliable) : la main avant tient l'arme en rafale. Chaque tir ouvre la dispersion d'un quart de moins, son plafond baisse de 15 %, le recul de 30 %. Rien ne change au premier coup. 150 g de plus.
+- **Chargeur grande capacité** : PMAG de 40 pour le HK416, chargeur de 33 pour le Glock 17, rallonge de tube de deux cartouches pour le Remington 870 ; en siège, tambour de 75 pour l'AKM, chargeur de 45 du RPK-74 pour l'AK-74, chargeur de 40 pour l'Uzi. On recharge moins souvent, mais la réserve ne change pas : autant de cartouches en tout. L'arme s'alourdit (1,3 kg pour le tambour) et le rechargement s'allonge de 10 % (40 % pour le tambour).
 - **Laser** (toute arme à rail : pas l'AKM, l'AK-74, l'Uzi, le Škorpion, le Makarov ni le Tokarev) : le point montre où part la balle sans épauler, ce qui divise par deux la dispersion due au déplacement (barre « En mouvement » de la fiche), et la gêne de la tenue d'une main derrière un bouclier ; à l'arrêt, arme épaulée, il n'apporte rien. Mais un faisceau se voit : un suspect qui aperçoit le trait ou le point dans son champ se tourne vers sa source, et s'il le voit encore, il vient voir. `L` l'éteint ou le rallume ; il s'éteint de lui-même pendant un geste, un rechargement, la fibre ou une grenade dégoupillée.
 
 ### Boucliers
@@ -90,6 +92,17 @@ Un bouclier balistique se prend à la place de l'arme principale (assaut seuleme
 |---|---|---|---|---|---|---|
 | Léger | NIJ IIIA | 50 × 90 cm | 7,3 kg | armes de poing, pistolets mitrailleurs 9 mm, chevrotine | ×0,88 | 110° |
 | Lourd | NIJ III | 55 × 95 cm | 14 kg | tout, balles de fusil comprises | ×0,74 | 95° |
+
+### Gilets
+
+En assaut, on choisit son gilet au briefing (bouton à côté de celui des coéquipiers). Une balle arrêtée par le gilet ne laisse que le choc, et dérange un instant la visée ; une balle qui le perce frappe de tous ses dégâts. Seul le joueur choisit : Bravo et Charlie gardent leur équipement.
+
+| Gilet | Niveau | Masse | Arrête | Choc | Vitesse |
+|---|---|---|---|---|---|
+| Souple (par défaut) | NIJ IIIA | 2,5 kg | tout autour : armes de poing, pistolets mitrailleurs 9 mm, chevrotine | moitié des dégâts | ×1 |
+| Lourd à plaques | NIJ IV | 11 kg | le souple, plus des plaques devant et derrière (±55°) qui arrêtent aussi les balles de fusil | moitié (souple), 30 % (plaque) | ×0,86 |
+
+C'est la classe de perforation des armes qui décide, comme pour les boucliers : une balle d'AK traverse le gilet souple, mais s'arrête sur une plaque, de face ou de dos ; de flanc, seul le gilet souple protège.
 
 Les suspects portent surtout des Kalachnikov (AKM, parfois AK-74) : face à eux, le bouclier léger ne suffit pas. Le 4,6 mm du MP7 et le 7,62 Tokarev, plus rapides que le 9 mm, le traversent aussi.
 
@@ -151,7 +164,7 @@ Bravo et Charlie ne tirent jamais à travers vous ni à travers un otage, et ils
 
 ## Note de fin de mission
 
-Chaque mission est notée sur 100, de S à D, avec le détail ligne par ligne. En assaut : mission accomplie (25), otages en vie (30, moins 4 par otage blessé), otages évacués (10), suspects arrêtés plutôt qu'abattus (20), équipe indemne (15) ; un suspect abattu après sa reddition coûte 15 points, chaque balle dans un coéquipier 3. En siège : assaut repoussé (40), otages encore entre vos mains (30), groupe debout (20), opérateurs neutralisés (10). Une mission échouée ne dépasse pas D. Votre meilleure note par mission et par mode est gardée dans le navigateur.
+Chaque mission est notée sur 100, de S à D, avec le détail ligne par ligne. En assaut : mission accomplie (25), otages en vie (30, moins 4 par otage blessé), otages évacués (10), suspects arrêtés plutôt qu'abattus (20), équipe indemne (15) ; un suspect abattu après sa reddition coûte 15 points, chaque balle dans un coéquipier 3, l'alerte générale 5. En siège : assaut repoussé (40), otages encore entre vos mains (30), groupe debout (20), opérateurs neutralisés (10). Une mission échouée ne dépasse pas D. Votre meilleure note par mission et par mode est gardée dans le navigateur.
 
 ## Courant coupé
 
@@ -160,6 +173,12 @@ Au briefing (colonne de gauche, en assaut), vous pouvez couper le courant avant 
 ## Dispositions
 
 Rien ne se mémorise d'une partie à l'autre : à chaque chargement, les postes des terroristes et des otages sont tirés au sort parmi les emplacements de la carte et un quadrillage de cases libres, bien répartis. En siège, votre propre poste change aussi. En assaut, aucun poste ne tombe dans la pièce par laquelle vous entrez.
+
+## Rondes et alerte générale
+
+En assaut, deux suspects tirés au sort ne tiennent pas un poste : ils font une ronde au pas (à un peu plus de la moitié de leur vitesse) entre deux ou trois points, chaque étape faisant de quatre à douze cases de chemin, avec une pause de deux à cinq secondes à chaque point pour regarder autour d'eux. Ils ont les clés et ouvrent les portes sur leur route ; aucune ronde ne passe par la pièce d'entrée. Un bruit les fait aller voir comme les autres, puis ils reprennent leur ronde. Observez avant d'entrer : une pièce vide peut ne pas le rester.
+
+Un suspect qui vous a vu, vous ou un coéquipier, et reste debout trois secondes donne l'**alerte générale** : un « ! » rouge au-dessus de lui, dont l'anneau se remplit, le signale. Le temps où il est sonné ne compte pas ; abattu, rendu ou menotté avant, il ne prévient personne. L'alerte une fois donnée (une seule fois par mission, le HUD l'affiche), tous les autres suspects se tournent vers l'endroit signalé, réagiront 30 % plus vite, et les deux plus proches viennent voir. Elle coûte 5 points à la note de fin.
 
 ## Otages
 
