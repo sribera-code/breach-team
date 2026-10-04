@@ -167,14 +167,18 @@ const SUBSONIC = { damage: 0.9, effRange: 0.85, range: 0.9, speed: 0.85 };
 // Mais un faisceau se voit : un suspect qui l'aperçoit se tourne vers sa source (voir Game.spotLaser).
 const LASERS = { hk416: 0.2, scarh: 0.2, mp5: 0.2, mp7: 0.15, m870: 0.2, m4super90: 0.2, glock17: 0.1, usp45: 0.1 };
 const LASER_MOVE = 0.5;
+// Lampe tactique (masse en kg), sur le même rail que le laser : elle éclaire un cône devant l'arme. Inutile
+// quand le bâtiment est éclairé, décisive quand le courant est coupé ; elle éblouit celui qu'elle prend en
+// face de près, mais elle se voit de loin (voir Game.lampLit).
+const LIGHTS = { hk416: 0.15, scarh: 0.15, mp5: 0.15, mp7: 0.12, m870: 0.15, m4super90: 0.15, glock17: 0.1, usp45: 0.1 };
 const FITTED = {};
-// L'arme équipée de ses accessoires (acc : { sup, laser }) ; ceux qu'elle n'accepte pas sont ignorés.
+// L'arme équipée de ses accessoires (acc : { sup, laser, light }) ; ceux qu'elle n'accepte pas sont ignorés.
 // Chaque combinaison n'est calculée qu'une fois.
 function fittedDef(key, acc) {
   const w = WEAPONS[key], s = SUPPRESSORS[key];
-  const sup = !!(acc && acc.sup && s), laser = !!(acc && acc.laser && LASERS[key]);
-  if (!sup && !laser) return w;
-  const id = key + (sup ? '+sup' : '') + (laser ? '+laser' : '');
+  const sup = !!(acc && acc.sup && s), laser = !!(acc && acc.laser && LASERS[key]), light = !!(acc && acc.light && LIGHTS[key]);
+  if (!sup && !laser && !light) return w;
+  const id = key + (sup ? '+sup' : '') + (laser ? '+laser' : '') + (light ? '+light' : '');
   if (FITTED[id]) return FITTED[id];
   const d = { ...w, tint: { ...(w.tint || {}) } };
   if (sup) {
@@ -191,6 +195,7 @@ function fittedDef(key, acc) {
     d.tint.sup = s.len;
   }
   if (laser) { d.laser = true; d.weight += LASERS[key]; d.tint.laser = true; }
+  if (light) { d.light = true; d.weight += LIGHTS[key]; d.tint.light = true; }
   d.mobility = mobilityOf(d.weight);
   return (FITTED[id] = d);
 }
@@ -225,8 +230,9 @@ const WEAPON_CATS = { ar: "Fusils d'assaut", smg: 'Pistolets mitrailleurs', sg: 
 const PRIMARY_WEAPONS = ['hk416', 'scarh', 'mp5', 'mp7', 'm870', 'm4super90'];
 const SIDEARMS = ['glock17', 'usp45'];
 // shield : bouclier pris à la place de l'arme principale (null : aucun) ; acc : accessoires de chaque arme
-// ({ hk416: { sup, laser } }) ; teamSup : silencieux pour les coéquipiers (assaut).
-const DEFAULT_LOADOUT = { primary: 'hk416', sidearm: 'glock17', shield: null, acc: {}, teamSup: false };
+// ({ hk416: { sup, laser, light } }) ; teamSup : silencieux pour les coéquipiers ; cutPower : courant coupé
+// avant d'entrer (assaut).
+const DEFAULT_LOADOUT = { primary: 'hk416', sidearm: 'glock17', shield: null, acc: {}, teamSup: false, cutPower: false };
 
 // Deux modes de jeu : l'assaut (on incarne l'opérateur) et le siège (on incarne le groupe armé).
 const MODES = {
@@ -234,7 +240,7 @@ const MODES = {
   siege:   { name: 'Siège',  primaries: ['akP', 'ak74P', 'uziP', 'skorpionP', 'm870'], sidearms: ['makarovP', 'tt33', 'glock17'], shields: [], loadout: { ...DEFAULT_LOADOUT, primary: 'akP', sidearm: 'makarovP' } },
 };
 
-// acc : accessoires ({ sup, laser }), ou true pour un simple silencieux
+// acc : accessoires ({ sup, laser, light }), ou true pour un simple silencieux
 const makeSlot = (key, acc) => {
   const def = fittedDef(key, acc === true ? { sup: true } : acc);
   return { def, mag: def.mag, reserve: def.reserve };
@@ -290,6 +296,8 @@ class Player extends Agent {
     this.fiber = null; // fibre optique glissée sous une porte (voir Game.updateFiber)
     this.flashT = 0; // aveuglé (écran blanc)
     this.laserOn = true; // L éteint ou rallume le laser de l'arme qui en porte un
+    this.lampOn = true;  // X éteint ou rallume la lampe (celle des coéquipiers suit)
+    this.charges = 0;    // charges de brèche (assaut, voir Game.chargeKey)
   }
   get slot() { return this.slots[this.cur]; }
   // Avec un bouclier, l'arme de poing est la seule arme, avec des chargeurs en plus.
@@ -344,7 +352,8 @@ class Teammate extends Agent {
     this.style = def.militant
       ? { ...STYLE_MILITANT, body: def.jacket, shoulder: def.jacket, sleeve: def.jacket, pants: def.pants }
       : { ...STYLE_PLAYER, helmet: def.helmet, vest: def.vest };
-    this.slot = { ...makeSlot(def.weapon, def.sup), reserve: Infinity };
+    this.slot = { ...makeSlot(def.weapon, def.acc || def.sup), reserve: Infinity };
+    this.lampOn = true;
     this.fov = 130 * DEG;
     this.viewRange = 13 * U;
     this.reaction = 0.4;
@@ -396,6 +405,8 @@ class Enemy extends Agent {
     this.pauseT = 0;
     this.lastKnown = null;
     this.blind = null;    // tir dans une porte : { x, y, t, off } (voir Game.startBlindFire)
+    this.surrender = null; // rendu, à genoux : { t, lapse } (voir Game.shout) ; cuffed : menotté
+    this.cuffed = false;
     this.visible = false;
     this.engaged = false;
     const pick = arr => arr[Math.floor(Math.random() * arr.length)];

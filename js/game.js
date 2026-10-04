@@ -58,6 +58,18 @@ const LASER_RANGE = 22 * U, LASER_LOOK = 0.2, LASER_ALARM = 0.4;
 // Tir dans une porte (suspects) : durée pendant laquelle il arrose une porte derrière laquelle il sait quelqu'un,
 // écart latéral de ses rafales autour du point visé, et distance à laquelle une balle sortie d'une porte le fait riposter.
 const BLIND_FIRE = 2.5, BLIND_SWEEP = 0.6 * U, BLIND_NEAR = 1.2 * U;
+// Sommation (assaut) : portée de la voix, délai entre deux cris ; un suspect rendu mais laissé sans
+// surveillance SURRENDER_LAPSE s reprend son arme ; menotter prend CUFF_TIME s.
+const SHOUT_RANGE = 7 * U, SHOUT_COOLDOWN = 1.5, SURRENDER_LAPSE = 7, CUFF_TIME = 1.6;
+// Courant coupé : portée du regard sans lumière. Lampe : demi-ouverture et portée du faisceau, retard
+// infligé à celui qui la prend en face d'assez près. Un coup de feu sans silencieux éclaire le tireur SHOT_GLOW s.
+const DARK_SIGHT = 4 * U, LAMP_HALF = 22 * DEG, LAMP_RANGE = 12 * U, LAMP_DAZZLE = 0.6, LAMP_DAZZLE_RANGE = 6 * U, SHOT_GLOW = 0.4;
+// Portes fermées à clé (assaut) : part des portes verrouillées, durée du crochetage.
+const LOCK_CHANCE = 0.3, LOCKPICK_TIME = 4;
+// Charge de brèche : nombre par mission, durée de la pose, portée du souffle derrière la porte.
+const CHARGES = 2, CHARGE_PLACE = 1.4, CHARGE_RADIUS = 2.5 * U;
+// Entrée coordonnée : délai entre l'ouverture de la porte et l'entrée de l'équipe (sans flash en préparation).
+const ENTRY_DELAY = 0.5;
 
 class Game {
   constructor() {
@@ -76,6 +88,8 @@ class Game {
     this.mode = Game.loadSavedMode();
     this.loadout = Game.loadSavedLoadout(this.mode);
     this.entryRandom = Game.loadSavedEntry(); // par défaut, le point d'entrée est tiré au sort
+    this.lockDoors = true;   // assaut : certaines portes sont fermées à clé (les tests l'écartent)
+    this.saveRecords = true; // meilleure note par mission, gardée dans le navigateur
   }
 
   static loadSavedEntry() {
@@ -124,20 +138,22 @@ class Game {
       primary: l.primary, sidearm: l.sidearm, acc,
       shield: (m.shields || []).includes(l.shield) ? l.shield : null,
       teamSup: !!(l.teamSup || l.sup),
+      cutPower: !!l.cutPower && m !== MODES.siege,
     };
   }
 
   setLoadout(l) {
-    const teamBefore = !!this.loadout.teamSup;
+    const teamBefore = !!this.loadout.teamSup, cutBefore = !!this.loadout.cutPower;
     this.loadout = { ...this.loadout, ...l };
     try { localStorage.setItem('breach.loadout.' + this.mode, JSON.stringify(this.loadout)); } catch (e) { /* stockage indisponible */ }
-    // les silencieux des coéquipiers changent leur arme : on la leur redistribue
-    if (!!this.loadout.teamSup !== teamBefore && this.mode !== 'siege') { this.loadLevel(this.levelIndex); return; }
+    // les silencieux (ou les lampes, courant coupé) des coéquipiers changent leur arme : on la leur redistribue
+    const changed = !!this.loadout.teamSup !== teamBefore || !!this.loadout.cutPower !== cutBefore;
+    if (changed && this.mode !== 'siege') { this.loadLevel(this.levelIndex); return; }
     this.player.equip(this.loadout);
     this.emit('weapon');
   }
 
-  // Accessoire (sup | laser) monté ou retiré sur une arme : le choix est retenu arme par arme.
+  // Accessoire (sup | laser | light) monté ou retiré sur une arme : le choix est retenu arme par arme.
   setAccessory(key, name, on) {
     const acc = { ...this.loadout.acc, [key]: { ...accOf(this.loadout, key), [name]: !!on } };
     this.setLoadout({ acc });
@@ -183,9 +199,11 @@ class Game {
     // armes tirées au sort, une par coéquipier ; silencieux pour les coéquipiers (assaut) : chacun en
     // reçoit une qui en accepte un (pas de fusil à pompe)
     const sup = !siege && !!this.loadout.teamSup;
+    // courant coupé : chacun a une lampe sur son arme (toutes celles du lot ont un rail)
+    this.dark = !siege && !!this.loadout.cutPower;
     const pool = siege ? SIEGE_MATE_POOL : sup ? MATE_POOL.filter(k => SUPPRESSORS[k]) : MATE_POOL;
     const dealt = dealWeapons(pool, baseDefs.length);
-    const mateDefs = baseDefs.map((d, i) => ({ ...d, weapon: dealt[i], sup }));
+    const mateDefs = baseDefs.map((d, i) => ({ ...d, weapon: dealt[i], acc: { sup, light: this.dark } }));
     if (siege) {
       // Chaque complice à son poste, tiré au sort lui aussi, en position tenue.
       this.mates = mateDefs.map((d, i) => {
@@ -217,6 +235,11 @@ class Game {
       });
       if (entryBreach) this.clearEntryZone(entryBreach);
       this.siege = null;
+      this.player.charges = CHARGES;
+      // Des portes fermées à clé : il faut crocheter, faire sauter la serrure ou poser une charge.
+      if (this.lockDoors) for (const d of this.map.doors) d.locked = Math.random() < LOCK_CHANCE;
+      // le courant tombe d'un coup : ils s'inquiètent, sans savoir encore d'où viendra la menace
+      if (this.dark) for (const e of this.enemies) e.suspicion = 0.8;
     }
     this.bullets = [];
     this.beam = null; // faisceau du laser du joueur, recalculé à chaque pas (voir spotLaser)
@@ -229,14 +252,19 @@ class Game {
     this.over = null;
     this.loseReason = '';
     this.paused = false;
-    this.stats = { kills: 0, shots: 0, hits: 0, flashes: 0, losses: 0 };
+    this.stats = { kills: 0, shots: 0, hits: 0, flashes: 0, losses: 0, arrests: 0, badKills: 0, friendly: 0 };
+    this.charges = [];   // charges de brèche posées, en attente de mise à feu
+    this.stack = null;   // équipe en colonne de part et d'autre d'une porte (entrée coordonnée)
+    this.shoutT = -9;    // dernière sommation
+    this.score = null;   // note de fin de mission (voir scoreReport)
+    this.record = null;  // meilleure note précédente pour cette mission, et si elle vient d'être battue
     this.squadSize = 1 + this.mates.length; // vous compris : c'est le groupe entier qui compte ses pertes
     this.orderMarker = null;
     this.orderDrag = null;
     this.relayT = 0;
     this.pickHint = null;
     this.hostHint = null;
-    this.cues = {}; // annonces d'objectif déjà faites (otages tous dehors)
+    this.cues = {}; // annonces d'objectif déjà faites (otages tous dehors, suspects à menotter)
     this.heard = [];      // bruits entendus hors de vue : direction et intensité (repères autour du joueur)
     this.ownNoise = null; // halo du dernier bruit du joueur
     if (this.player) this.player.cooking = null;
@@ -473,6 +501,38 @@ class Game {
     return !!(a.alive && a.laserOn && a.weapon && a.weapon.laser && !a.act && !(a.reloadT > 0) && !a.fiber && !a.cooking);
   }
 
+  // Lampe de l'arme en main allumée (même règle que le laser, sauf le rechargement : elle reste pointée).
+  lampLit(a) {
+    return !!(a.alive && a.lampOn && a.weapon && a.weapon.light && !a.act && !a.fiber && !a.cooking);
+  }
+
+  // Un point pris dans le faisceau d'une lampe allumée (à portée, dans le cône, sans obstacle).
+  inLamp(x, y) {
+    for (const a of this.ops) {
+      if (!this.lampLit(a)) continue;
+      const d = dist(a.x, a.y, x, y);
+      if (d > LAMP_RANGE || (d > 6 && Math.abs(angleDiff(a.angle, Math.atan2(y - a.y, x - a.x))) > LAMP_HALF)) continue;
+      if (this.map.hasLOS(a.x, a.y, x, y)) return true;
+    }
+    return false;
+  }
+
+  // Courant coupé : on ne voit plus qu'à DARK_SIGHT, sauf qui est éclairé (pris dans un faisceau), qui porte
+  // une lampe allumée, ou qui vient de tirer sans silencieux (la flamme de bouche).
+  sightOf(agent, o) {
+    if (!this.dark) return agent.viewRange;
+    if (this.lampLit(o) || o.glowT > 0 || this.inLamp(o.x, o.y)) return agent.viewRange;
+    return Math.min(agent.viewRange, DARK_SIGHT);
+  }
+
+  // Éblouissement : celui qui reçoit une lampe en face, d'assez près, met plus de temps à viser.
+  dazzles(src, e) {
+    if (!this.lampLit(src)) return false;
+    const d = dist(src.x, src.y, e.x, e.y);
+    if (d > LAMP_DAZZLE_RANGE || Math.abs(angleDiff(src.angle, Math.atan2(e.y - src.y, e.x - src.x))) > LAMP_HALF) return false;
+    return Math.abs(angleDiff(e.angle, Math.atan2(src.y - e.y, src.x - e.x))) < e.fov / 2 && this.map.hasLOS(src.x, src.y, e.x, e.y);
+  }
+
   // Faisceau du laser : de la bouche du canon jusqu'au premier obstacle qui arrête le regard, ou jusqu'à
   // la première personne qu'il rencontre (le mobilier, plus bas, ne l'arrête pas). null s'il est éteint
   // ou si le canon touche le mur.
@@ -559,6 +619,8 @@ class Game {
     this.updateCooking(this.player, dt);
     this.updatePlayer(dt);
     this.beam = this.laserBeam(this.player);
+    this.updateCharges(dt);
+    this.updateStack(dt);
     for (const m of this.mates) this.updateMate(m, dt);
     for (const e of this.enemies) (this.siege ? this.updateAssault(e, dt) : this.updateEnemy(e, dt));
     this.updateHostages(dt);
@@ -573,6 +635,7 @@ class Game {
     this.casings = this.casings.filter(c => c.t < c.life);
     for (const f of this.effects) f.t += dt;
     this.effects = this.effects.filter(f => f.t < f.life);
+    for (const a of [...this.ops, ...this.enemies]) if (a.glowT > 0) a.glowT -= dt;
     for (const h of this.heard) h.t += dt;
     this.heard = this.heard.filter(h => h.t < NOISE_KINDS[h.kind].life);
     if (this.message.t > 0) this.message.t -= dt;
@@ -600,19 +663,74 @@ class Game {
       else if (this.siege.wave >= this.siege.waves.length && !this.enemies.some(e => e.alive)) this.over = 'win';
     } else if (!this.ops.some(o => o.alive)) { this.over = 'lose'; this.loseReason = "Toute l'équipe est hors de combat."; }
     else if (this.hostages.some(h => !h.alive)) { this.over = 'lose'; this.loseReason = 'Un otage a été tué.'; }
-    // tous les suspects neutralisés : c'est gagné, que les otages soient déjà dehors ou non
-    else if (this.enemies.every(e => !e.alive)) this.over = 'win';
+    // tous les suspects neutralisés (abattus ou menottés) : c'est gagné, que les otages soient déjà dehors ou non
+    else if (this.enemies.every(e => !e.alive || e.cuffed)) this.over = 'win';
     else this.objectiveCues();
-    if (this.over) this.emit('over', this.over);
+    if (this.over) {
+      this.score = this.scoreReport(this.over);
+      if (this.saveRecords) this.saveRecord(this.score);
+      this.emit('over', this.over);
+    }
   }
 
+  // Suspect encore à neutraliser : debout, ou rendu mais pas encore menotté.
+  static active(e) { return e.alive && !e.cuffed; }
+
   // Assaut : faire sortir les otages n'est pas exigé, mais les met à l'abri ; on annonce une fois qu'ils le sont tous.
+  // Un suspect rendu compte tant qu'il n'est pas menotté : on le rappelle quand il ne reste que ceux-là.
   objectiveCues() {
     const inside = this.hostages.filter(h => h.alive && !h.evacuated).length;
-    if (!this.cues.out && this.hostages.length && !inside && this.enemies.some(e => e.alive)) {
+    const left = this.enemies.filter(Game.active);
+    if (!this.cues.out && this.hostages.length && !inside && left.length) {
       this.cues.out = true;
       this.say('Tous les otages sont dehors — reste à neutraliser les suspects', 3.5);
     }
+    if (!this.cues.cuff && left.length && left.every(e => e.surrender)) {
+      this.cues.cuff = true;
+      this.say(left.length > 1 ? 'Il reste des suspects rendus — menottez-les (H) pour terminer' : 'Il reste un suspect rendu — menottez-le (H) pour terminer', 3.5);
+    }
+  }
+
+  // ---- Note de fin de mission ----
+  // Lignes { label, detail, pts } et total sur 100. En assaut, on gagne surtout à garder les otages en vie et
+  // à arrêter plutôt qu'abattre ; abattre un suspect rendu coûte cher. En siège, à tenir avec ses otages.
+  scoreReport(result) {
+    const win = result === 'win', H = this.hostages.length, size = this.squadSize || 1;
+    const lost = this.ops.filter(o => !o.alive).length, s = this.stats, lines = [];
+    const add = (label, detail, pts) => lines.push({ label, detail: String(detail), pts: Math.round(pts) });
+    const share = (n, of, pts) => (of ? pts * n / of : pts);
+    if (this.siege) {
+      const held = this.hostages.filter(h => h.alive && !h.evacuated).length, n = this.enemies.length;
+      add('Assaut', win ? 'repoussé' : 'réussi', win ? 40 : 0);
+      add('Otages entre vos mains', `${held} / ${H}`, share(held, H, 30));
+      add('Groupe debout', `${size - lost} / ${size}`, share(size - lost, size, 20));
+      add('Opérateurs neutralisés', `${s.kills} / ${n}`, share(s.kills, n, 10));
+    } else {
+      const alive = this.hostages.filter(h => h.alive).length, hurt = this.hostages.filter(h => h.alive && h.wounded).length;
+      const out = this.hostages.filter(h => h.evacuated).length, n = this.enemies.length;
+      add('Mission', win ? 'accomplie' : 'échouée', win ? 25 : 0);
+      add('Otages en vie', `${alive} / ${H}`, share(alive, H, 30));
+      if (hurt) add('Otages blessés', hurt, -4 * hurt);
+      add('Otages évacués', `${out} / ${H}`, share(out, H, 10));
+      add('Suspects arrêtés', `${s.arrests} / ${n}`, share(s.arrests, n, 20));
+      add('Équipe indemne', `${size - lost} / ${size}`, share(size - lost, size, 15));
+      if (s.badKills) add('Suspects abattus après reddition', s.badKills, -15 * s.badKills);
+      if (s.friendly) add("Balles dans l'équipe", s.friendly, -3 * s.friendly);
+    }
+    let total = clamp(lines.reduce((t, l) => t + l.pts, 0), 0, 100);
+    if (!win) total = Math.min(total, 49);
+    const grade = !win ? 'D' : total >= 95 ? 'S' : total >= 85 ? 'A' : total >= 70 ? 'B' : total >= 55 ? 'C' : 'D';
+    return { lines, total, grade };
+  }
+
+  // Meilleure note par mission et par mode, gardée dans le navigateur.
+  saveRecord(sc) {
+    const key = `breach.best.${this.mode}.${this.levelIndex}`;
+    let prev = null;
+    try { const v = parseInt(localStorage.getItem(key), 10); if (Number.isFinite(v)) prev = v; } catch (e) { /* stockage indisponible */ }
+    const beaten = prev === null || sc.total > prev;
+    if (beaten) { try { localStorage.setItem(key, String(sc.total)); } catch (e) { /* idem */ } }
+    this.record = { prev, beaten };
   }
 
   // ---- Joueur ----
@@ -645,7 +763,7 @@ class Game {
       if (Math.abs(p.x - bx) + Math.abs(p.y - by) < 0.01) {
         const ax = p.x + dx * (p.radius + 6), ay = p.y + dy * (p.radius + 6);
         const door = this.map.door(Math.floor(ax / TILE), Math.floor(ay / TILE));
-        if (door && !door.open && this.message.t <= 0) this.say('E : ouvrir · molette haut : entrouvrir', 1.2);
+        if (door && !door.open && this.message.t <= 0) this.say(door.locked && door.lockKnown ? 'Porte verrouillée — E : crocheter · B : charge' : 'E : ouvrir · molette haut : entrouvrir', 1.2);
       }
     }
 
@@ -669,6 +787,18 @@ class Game {
       if (!p.slots.some(s => s.def.laser)) this.say('Aucun laser sur vos armes', 1.2);
       else { p.laserOn = !p.laserOn; this.say(p.laserOn ? 'Laser allumé' : 'Laser éteint', 1.2); }
     }
+    // X : la lampe, et celles des coéquipiers avec (ils ne la gardent pas allumée quand vous éteignez la vôtre)
+    if (pr.KeyX) {
+      const team = this.mates.some(m => m.alive && m.weapon && m.weapon.light);
+      if (!p.slots.some(s => s.def.light) && !team) this.say('Aucune lampe sur vos armes', 1.2);
+      else {
+        p.lampOn = !p.lampOn;
+        for (const m of this.mates) m.lampOn = p.lampOn;
+        this.say(p.lampOn ? (team ? 'Lampes allumées' : 'Lampe allumée') : (team ? 'Lampes éteintes' : 'Lampe éteinte'), 1.2);
+      }
+    }
+    if (pr.KeyC) this.shout(p);
+    if (pr.KeyB) this.chargeKey(p);
     if (pr.KeyV) this.pickUp(p);
     else {
       // rappel discret en passant près d'une arme au sol (une fois par corps)
@@ -679,12 +809,14 @@ class Game {
         this.pickHint = drop;
       }
     }
-    if (pr.KeyH) this.toggleEscort(p);
+    if (pr.KeyH) this.interact(p);
     else if (p.team === this.rescueTeam) {
-      // même rappel en passant près d'un otage qui attend (une fois par otage)
-      const h = this.nearestHostage(p, HOSTAGE_REACH);
-      if (!h || h.escort) this.hostHint = null;
-      else if (h !== this.hostHint && this.message.t <= 0) { this.say("H : emmener l'otage", 1.5); this.hostHint = h; }
+      // même rappel en passant près d'un otage qui attend, ou d'un suspect rendu (une fois chacun)
+      const e = this.nearestSurrendered(p, HOSTAGE_REACH);
+      const h = e ? null : this.nearestHostage(p, HOSTAGE_REACH);
+      const who = e || (h && !h.escort ? h : null);
+      if (!who) this.hostHint = null;
+      else if (who !== this.hostHint && this.message.t <= 0) { this.say(e ? 'H : menotter le suspect' : "H : emmener l'otage", 1.5); this.hostHint = who; }
     }
     // Clic droit : ordre de déplacement. Maintenu puis tiré, il fixe en plus une direction
     // à couvrir, confiée au coéquipier placé de ce côté. En siège, personne ne commande : pas d'ordres.
@@ -697,8 +829,11 @@ class Game {
     if (pr.Mouse2Up && this.orderDrag) {
       const o = this.orderDrag;
       this.orderDrag = null;
-      // clic droit sur soi : l'équipe reprend le suivi ; ailleurs : ordre de déplacement
+      // clic droit sur soi : l'équipe reprend le suivi ; sur une porte fermée : en colonne de part et d'autre,
+      // prête à entrer ; ailleurs : ordre de déplacement
+      const door = o.onSelf ? null : this.doorAtPoint(o.x, o.y);
       if (o.onSelf) this.orderFollow();
+      else if (door && !door.broken && !this.map.doorPassable(door)) this.orderStack(door);
       else this.orderMove(o.x, o.y, o.angle);
     }
     if (pr.KeyT && this.canCommand(true)) this.toggleHold();
@@ -787,7 +922,7 @@ class Game {
     m.cur = 0;
     Object.assign(m, {
       runSpeed: 118, walkSpeed: 62, walkMode: old.walkMode, fov: 120 * DEG, viewRange: 15 * U, spreadMul: 1, shield: null, laserOn: true,
-      reloadT: 0, switchT: 0.3, fiber: null, flashT: 0, act: null, path: [], moving: false,
+      reloadT: 0, switchT: 0.3, fiber: null, flashT: 0, act: null, path: [], moving: false, charges: old.charges || 0,
       target: null, lookAt: null, alertAngle: null, order: null, coverAngle: null, blockedLine: false,
     });
     m.moveDir = m.angle;
@@ -883,6 +1018,102 @@ class Game {
       if (d < bd && this.map.hasLOS(a.x, a.y, h.x, h.y)) { bd = d; best = h; }
     }
     return best;
+  }
+
+  // ---- Sommation et arrestation (assaut) ----
+  // C : « Police ! À terre ! ». Chaque suspect que vous voyez à portée de voix peut se rendre : il lâche son
+  // arme et se met à genoux, les mains sur la tête. Ses chances montent s'il est aveuglé, blessé, pris de
+  // dos ou tenu en joue par plusieurs d'entre vous ; elles baissent s'il est en plein échange de tirs ou si un
+  // complice est à côté de lui. Le cri s'entend comme tout cri : les autres viennent voir.
+  shout(p) {
+    if (this.siege) { this.say("Personne ne se rend de ce côté-ci : c'est vous qu'on somme", 1.6); return; }
+    if (!p.alive || this.time - this.shoutT < SHOUT_COOLDOWN) return;
+    this.shoutT = this.time;
+    Sound.shout();
+    let asked = 0, gave = 0;
+    for (const e of this.enemies) {
+      if (!e.alive || e.surrender || e instanceof Operator) continue;
+      if (dist(p.x, p.y, e.x, e.y) > SHOUT_RANGE || !this.playerSees(e)) continue;
+      asked++;
+      if (Math.random() < this.surrenderChance(e)) { this.surrenderTo(e); gave++; }
+    }
+    this.noise(p.x, p.y, SHOUT_RANGE, p, 'voice');
+    this.say(gave > 1 ? `${gave} suspects se rendent — H : menotter` : gave ? 'Le suspect se rend — H : menotter'
+      : asked ? 'Police ! — il refuse de se rendre' : 'Police ! — personne en vue', 1.8);
+  }
+
+  // Le joueur voit-il cet agent (dans son champ, ou tout près) ?
+  playerSees(o) {
+    const p = this.player;
+    return p.alive && (this.canSee(p, o) || (dist(p.x, p.y, o.x, o.y) < (this.nearRange || 2.6 * U) && this.map.hasLOS(p.x, p.y, o.x, o.y)));
+  }
+
+  surrenderChance(e) {
+    const p = this.player;
+    let c = 0.15;
+    if (e.stun > 0) c += 0.45;                                   // aveuglé, sonné
+    if (e.hp < e.maxHp) c += e.hp < e.maxHp * 0.5 ? 0.35 : 0.2;  // blessé
+    const facing = e.stun <= 0 && this.canSee(e, p);
+    if (!facing) c += 0.25;                                      // pris de dos ou à l'aveugle
+    else if (e.target) c -= 0.2;                                 // en plein échange de tirs
+    c += 0.1 * this.ops.filter(o => o !== p && o.alive && this.canSee(o, e)).length; // tenu en joue par l'équipe
+    c -= 0.2 * this.enemies.filter(o => o !== e && o.alive && !o.surrender
+      && dist(o.x, o.y, e.x, e.y) < 4 * U && this.map.hasLOS(o.x, o.y, e.x, e.y)).length; // un complice à côté
+    return clamp(c, 0.05, 0.95);
+  }
+
+  surrenderTo(e) {
+    e.surrender = { t: 0, lapse: 0 };
+    Object.assign(e, { target: null, blind: null, path: [], act: null, waitDoor: null, alertAngle: null, lookAt: null,
+      moving: false, engaged: false, stun: 0, reloadT: 0, state: 'idle' });
+  }
+
+  // Un suspect rendu reste à genoux tant qu'on le surveille. Laissé seul trop longtemps (personne de l'équipe
+  // ne le voit), il ramasse son arme et reprend le combat. Menotté, il ne bouge plus.
+  updateSurrendered(e, dt) {
+    const s = e.surrender;
+    s.t += dt;
+    e.moving = false;
+    if (e.cuffed) return;
+    const watched = this.ops.some(o => o.alive && (this.canSee(o, e) || (dist(o.x, o.y, e.x, e.y) < 2.5 * U && this.map.hasLOS(o.x, o.y, e.x, e.y))));
+    s.lapse = watched ? 0 : s.lapse + dt;
+    if (s.lapse < SURRENDER_LAPSE) return;
+    e.surrender = null;
+    const near = this.ops.filter(o => o.alive).sort((a, b) => dist(a.x, a.y, e.x, e.y) - dist(b.x, b.y, e.x, e.y))[0];
+    Object.assign(e, { state: 'engage', lostT: 0, suspicion: 2, reactT: e.reaction, lastKnown: near ? { x: near.x, y: near.y } : null });
+    this.startAction(e, 'pickup', 0.8, null);
+    if (this.playerSees(e)) this.say('Un suspect laissé sans surveillance reprend son arme !', 2.2);
+  }
+
+  // Suspect rendu, pas encore menotté, le plus proche à vue.
+  nearestSurrendered(a, R) {
+    let best = null, bd = R;
+    for (const e of this.enemies) {
+      if (!e.alive || !e.surrender || e.cuffed) continue;
+      const d = dist(a.x, a.y, e.x, e.y);
+      if (d < bd && this.map.hasLOS(a.x, a.y, e.x, e.y)) { bd = d; best = e; }
+    }
+    return best;
+  }
+
+  // H : menotter le suspect rendu à portée, sinon s'occuper de l'otage (voir toggleEscort).
+  interact(p) {
+    const e = p.team === this.rescueTeam ? this.nearestSurrendered(p, HOSTAGE_REACH) : null;
+    const h = e ? this.nearestHostage(p, HOSTAGE_REACH) : null;
+    if (e && (!h || dist(p.x, p.y, e.x, e.y) <= dist(p.x, p.y, h.x, h.y))) this.cuff(p, e);
+    else this.toggleEscort(p);
+  }
+
+  cuff(p, e) {
+    if (p.act) return;
+    this.startAction(p, 'cuff', CUFF_TIME, () => {
+      if (!e.alive || !e.surrender || e.cuffed || !p.alive || dist(p.x, p.y, e.x, e.y) > 2 * U) return;
+      e.cuffed = true;
+      this.stats.arrests++;
+      this.hostHint = e;
+      Sound.tick(0.15);
+      this.say(`Suspect menotté (${this.enemies.filter(o => o.cuffed).length} arrêté${this.stats.arrests > 1 ? 's' : ''})`, 1.8);
+    });
   }
 
   takeCharge(h, escort) {
@@ -1283,9 +1514,25 @@ class Game {
       const blocker = this.doorBlocker(door);
       if (blocker) { say(this.doorBlockedMsg(agent, blocker)); return false; }
     }
+    // Porte fermée à clé : les suspects ont la clé (un tour de plus) ; l'équipe crochète la serrure, lentement
+    // et presque sans bruit. Le joueur s'arrête une fois la porte déverrouillée (à lui de choisir comment
+    // l'ouvrir) ; un coéquipier en route l'ouvre dans la foulée.
+    if (door.locked && opening && agent.team === 'ops') {
+      door.lockKnown = true;
+      say('Porte verrouillée : crochetage… (B : charge, ou fusil à pompe dans la serrure)');
+      Sound.tick(0.06);
+      this.noise(door.cx, door.cy, 1.2 * U, agent, 'door');
+      return this.startAction(agent, 'lockpick', LOCKPICK_TIME, () => {
+        if (!door.locked || dist(agent.x, agent.y, door.cx, door.cy) > 2.2 * U) return;
+        door.locked = false;
+        Sound.tick(0.1);
+        if (agent === this.player) this.say('Serrure crochetée : la porte est déverrouillée', 1.6);
+        else this.openDoor(agent, door, target);
+      });
+    }
     // Poignée à manœuvrer, puis course du battant : entrouvrir demande moins d'effort qu'ouvrir en grand.
     let dur = 0.25 + 0.3 * Math.abs(target - door.progress);
-    if (agent.team === 'enemy') dur *= 1.3;
+    if (agent.team === 'enemy') { dur *= 1.3; if (door.locked && opening) { dur += 0.4; door.locked = false; } }
     Sound.tick(0.08); // poignée
     return this.startAction(agent, 'door', dur, () => {
       if (dist(agent.x, agent.y, door.cx, door.cy) > 2.2 * U) return; // on s'est éloigné entre-temps
@@ -1316,6 +1563,7 @@ class Game {
     door.hits = (door.hits || 0) + 1;
     if (door.hits < BREACH_PELLETS) return;
     door.broken = true;
+    door.locked = false;
     door.opening = true;
     door.target = 1;
     door.duration = 0.25;
@@ -1323,6 +1571,78 @@ class Game {
     Sound.door();
     this.noise(door.cx, door.cy, 10 * U, shooter, 'breach');
     if (shooter === this.player) this.say('Serrure arrachée : la porte ne ferme plus', 2);
+  }
+
+  // ---- Charge de brèche (assaut) ----
+  // B devant une porte fermée : on pose une charge sur le battant, de son côté. B à nouveau, où qu'on soit : mise
+  // à feu. La porte vole en éclats, la serrure avec ; derrière, tout ce qui se tient près de l'embrasure est
+  // sonné, et blessé tout contre. De votre côté, mieux vaut s'être écarté. Une seule charge posée à la fois.
+  chargeKey(p) {
+    if (this.siege) { this.say('Pas de charge de brèche dans ce camp', 1.2); return; }
+    if (!p.alive) return;
+    const placed = this.charges[0];
+    if (placed) { this.detonateCharge(placed); return; }
+    if (p.act || p.fiber || p.cooking) return;
+    if (p.charges <= 0) { this.say('Plus de charge de brèche', 1.2); return; }
+    const d = this.nearestDoor(p, 1.6 * U);
+    if (!d) { this.say('Aucune porte à portée', 1); return; }
+    if (d.progress > 0 || d.broken) { this.say('Une charge se pose sur une porte fermée', 1.2); return; }
+    const side = Math.sign(d.horizontal ? p.y - d.cy : p.x - d.cx) || 1;
+    Sound.tick(0.08);
+    this.startAction(p, 'charge', CHARGE_PLACE, () => {
+      if (!p.alive || d.progress > 0 || d.broken || dist(p.x, p.y, d.cx, d.cy) > 2.2 * U) return;
+      p.charges--;
+      const off = TILE / 2 + 2;
+      this.charges.push({ door: d, side, x: d.cx + (d.horizontal ? 0 : side * off), y: d.cy + (d.horizontal ? side * off : 0), t: 0 });
+      this.noise(d.cx, d.cy, 1 * U, p, 'door');
+      Sound.tick(0.12);
+      this.say('Charge posée — écartez-vous, B : mise à feu', 2.2);
+      this.emit('weapon');
+    });
+  }
+
+  // Une charge tient tant que la porte reste fermée : si quelqu'un l'ouvre, elle tombe.
+  updateCharges(dt) {
+    for (const c of this.charges) c.t += dt;
+    const fallen = this.charges.filter(c => c.door.progress > 0 && !c.door.broken);
+    if (!fallen.length) return;
+    this.charges = this.charges.filter(c => !fallen.includes(c));
+    this.say("La porte s'est ouverte : la charge est tombée", 2);
+  }
+
+  detonateCharge(c) {
+    this.charges = this.charges.filter(o => o !== c);
+    const d = c.door;
+    Object.assign(d, { broken: true, locked: false, opening: false, progress: 1, target: 1, open: true, ajar: false });
+    this.effects.push({ type: 'frag', x: c.x, y: c.y, t: 0, life: 0.6, small: true });
+    for (let i = 0; i < 4; i++) {
+      const a = (d.horizontal ? -c.side * Math.PI / 2 : (c.side > 0 ? Math.PI : 0)) + rand(-0.7, 0.7);
+      this.effects.push({ type: 'splinter', x: d.cx, y: d.cy, angle: a, t: 0, life: 0.35 });
+    }
+    this.addDecal({ type: 'scorch', x: c.x, y: c.y });
+    Sound.frag();
+    const across = a => (d.horizontal ? a.y - d.cy : a.x - d.cx);
+    for (const a of [...this.enemies, ...this.ops, ...this.hostages]) {
+      if (!a.alive || a.evacuated) continue;
+      const dd = dist(d.cx, d.cy, a.x, a.y);
+      if (dd > CHARGE_RADIUS || !this.map.hasLOS(d.cx, d.cy, a.x, a.y)) continue;
+      const ang = Math.atan2(a.y - d.cy, a.x - d.cx);
+      if (Math.sign(across(a)) !== c.side) {
+        // derrière la porte : le souffle sonne tout le monde, blesse qui se tenait contre le battant
+        if (dd < 1.2 * U) this.damage(a, 55 * (1 - dd / (1.2 * U)) + 5, this.player, ang);
+        if (!a.alive || a.team === 'civ') continue;
+        a.stun = Math.max(a.stun || 0, 1.5 + 2.5 * (1 - dd / CHARGE_RADIUS));
+        a.target = null; a.path = [];
+        if (a === this.player) a.flashT = Math.max(a.flashT, 1);
+      } else if (dd < 1.4 * U) {
+        // de votre côté, tout près : on encaisse aussi
+        this.damage(a, 35 * (1 - dd / (1.4 * U)) + 5, this.player, ang);
+        if (a.alive && a.team !== 'civ') a.stun = Math.max(a.stun || 0, 0.8);
+      }
+    }
+    this.camShake = Math.max(this.camShake, 9);
+    this.noise(d.cx, d.cy, 16 * U, this.player, 'boom');
+    this.say('Brèche !', 1.2);
   }
 
   // Qui se trouve dans l'embrasure (et empêche donc de refermer) : agent, 'grenade', ou null.
@@ -1388,6 +1708,7 @@ class Game {
     s.mag--;
     shooter.fireT = Math.max(shooter.fireT, -0.02) + 1 / w.rof; // report du reste : cadence réelle malgré le pas de 1/60 s
     shooter.muzzleT = 0.06;
+    if (!w.suppressed) shooter.glowT = SHOT_GLOW; // la flamme de bouche éclaire le tireur (courant coupé)
     if (shooter === this.player) {
       const r = w.recoil || 4;
       this.camKick.x -= Math.cos(shooter.angle) * r; this.camKick.y -= Math.sin(shooter.angle) * r;
@@ -1511,7 +1832,9 @@ class Game {
       return;
     }
     target.hp -= dmg;
-    if (target !== this.player && !target.target && shooter) target.alertAngle = Math.atan2(shooter.y - target.y, shooter.x - target.x);
+    // balle (ou éclat) de l'équipe dans l'un des siens : comptée dans la note de fin
+    if (target.team === 'ops' && shooter && shooter.team === 'ops' && shooter !== target && !this.siege) this.stats.friendly++;
+    if (target !== this.player && !target.target && shooter && !target.surrender) target.alertAngle = Math.atan2(shooter.y - target.y, shooter.x - target.x);
     if (target === this.player) this.camShake = Math.max(this.camShake, 5);
     if (target.hp <= 0) {
       target.hp = 0;
@@ -1523,7 +1846,10 @@ class Game {
       target.dying = { t: 0, dur: 0.7, dir: ang, spin: Math.random() < 0.5 ? -1 : 1 };
       // un corps qui tombe s'entend un peu : un suspect abattu sans bruit peut encore alerter ses voisins
       this.noise(target.x, target.y, 2 * U, target, 'body');
-      if (target.team === 'enemy') this.stats.kills++;
+      if (target.team === 'enemy') {
+        this.stats.kills++;
+        if (target.surrender) this.stats.badKills++; // abattu à genoux, les mains sur la tête
+      }
       else if (target !== this.player) { this.stats.losses++; this.say(`${target.name} est à terre !`, 2.5); }
       else if (this.mates.some(m => m.alive)) { this.stats.losses++; this.say('Vous êtes à terre — un coéquipier reprend la main', RELAY_DELAY + 0.3); }
     }
@@ -1645,7 +1971,7 @@ class Game {
     // suspects (ou opérateurs) : ils se tournent, s'inquiètent, et les plus proches vont voir
     const goers = [];
     for (const e of this.enemies) {
-      if (!e.alive || e === source || e.stun > 0 || e.target) continue;
+      if (!e.alive || e.surrender || e === source || e.stun > 0 || e.target) continue;
       const I = level(e);
       if (I <= 0) continue;
       const ally = !!source && source.team === e.team;
@@ -1789,7 +2115,7 @@ class Game {
 
   canSee(agent, other) {
     const d = dist(agent.x, agent.y, other.x, other.y);
-    if (d > agent.viewRange) return false;
+    if (d > agent.viewRange || (this.dark && d > DARK_SIGHT && d > this.sightOf(agent, other))) return false;
     const a = Math.atan2(other.y - agent.y, other.x - agent.x);
     if (Math.abs(angleDiff(agent.angle, a)) > agent.fov / 2) return false;
     return this.map.hasLOS(agent.x, agent.y, other.x, other.y);
@@ -1799,7 +2125,7 @@ class Game {
   acquireFor(agent, cands) {
     let best = null, bd = Infinity;
     for (const c of cands) {
-      if (!c.alive) continue;
+      if (!c.alive || c.surrender) continue; // on ne tire pas sur un suspect rendu
       const d = dist(agent.x, agent.y, c.x, c.y);
       if (d < bd && this.canSee(agent, c)) { bd = d; best = c; }
     }
@@ -1818,7 +2144,7 @@ class Game {
       t = this.acquireFor(e, this.ops);
       if (t) {
         e.blind = null;
-        e.reactT = e.reaction;
+        e.reactT = e.reaction + (this.dazzles(t, e) ? LAMP_DAZZLE : 0);
         // un suspect qui vous repère crie l'alerte : ses voisins accourent
         if (!(e instanceof Operator) && this.time - e.shoutT > 5) { e.shoutT = this.time; this.noise(e.x, e.y, 6 * U, e, 'voice'); }
       }
@@ -1890,7 +2216,7 @@ class Game {
     const ox = b.ox !== undefined ? b.ox : b.shooter && b.shooter.x, oy = b.oy !== undefined ? b.oy : b.shooter && b.shooter.y;
     if (ox == null) return;
     for (const e of this.enemies) {
-      if (!e.alive || e.team === b.team || e.target || e.stun > 0) continue;
+      if (!e.alive || e.surrender || e.team === b.team || e.target || e.stun > 0) continue;
       const t = clamp((e.x - b.x) * cs + (e.y - b.y) * sn, 0, len);
       if (dist(b.x + cs * t, b.y + sn * t, e.x, e.y) > BLIND_NEAR) continue;
       const was = !!e.blind, a = rand(0, TAU), r = rand(0, 0.5 * U);
@@ -2092,6 +2418,7 @@ class Game {
 
   updateEnemy(e, dt) {
     if (!e.alive) return;
+    if (e.surrender) { this.updateSurrendered(e, dt); return; }
     e.noiseT -= dt;
     e.suspicion = Math.max(0, e.suspicion - SUSPICION_DECAY * dt);
     this.enemyCombat(e, dt);
@@ -2210,7 +2537,112 @@ class Game {
       m.holdAngle = m === cover ? coverAngle : dir;
     });
     this.orderMarker = { x: wx, y: wy, t: 0, angle: coverAngle === undefined ? null : coverAngle, mate: cover };
+    this.stack = null;
     this.say(cover ? `${cover.name} : couvrez cette direction` : 'Équipe : allez-y', 1.4);
+  }
+
+  // ---- Entrée coordonnée ----
+  // Porte dont l'embrasure contient le point (clic droit), à une demi-case près.
+  doorAtPoint(x, y) {
+    for (const d of this.map.doors) {
+      const half = (d.len * TILE) / 2, along = Math.abs(d.horizontal ? x - d.cx : y - d.cy), across = Math.abs(d.horizontal ? y - d.cy : x - d.cx);
+      if (along <= half + 4 && across <= TILE) return d;
+    }
+    return null;
+  }
+
+  // Case libre la plus proche de (x, y), du côté side de la porte (signe de la coordonnée perpendiculaire), d'où
+  // l'on voit le pied du battant.
+  stackSpot(d, side, x, y, r, taken) {
+    let best = null, bd = Infinity;
+    const cx = Math.floor(x / TILE), cy = Math.floor(y / TILE);
+    const foot = { x: d.cx + (d.horizontal ? 0 : side * (TILE / 2 + 3)), y: d.cy + (d.horizontal ? side * (TILE / 2 + 3) : 0) };
+    for (let dy = -3; dy <= 3; dy++) for (let dx = -3; dx <= 3; dx++) {
+      const tx = cx + dx, ty = cy + dy;
+      if (!this.map.inBounds(tx, ty) || this.map.blocksMove(tx, ty) || this.map.door(tx, ty)) continue;
+      const px = (tx + 0.5) * TILE, py = (ty + 0.5) * TILE;
+      if (Math.sign(d.horizontal ? py - d.cy : px - d.cx) !== side) continue;
+      if (!this.map.circleFree(px, py, r + 1, true) || !this.map.hasLOS(px, py, foot.x, foot.y)) continue;
+      if (taken.some(o => dist(o.x, o.y, px, py) < 22)) continue;
+      const dd = dist(px, py, x, y);
+      if (dd < bd) { bd = dd; best = { x: px, y: py }; }
+    }
+    return best;
+  }
+
+  // Clic droit sur une porte fermée : les coéquipiers se placent en colonne de part et d'autre de l'embrasure,
+  // de votre côté, et attendent. Dès que la porte s'ouvre (vous l'ouvrez, la charge la souffle, la chevrotine
+  // fait sauter la serrure), ils entrent chacun vers son angle de la pièce ; une flash en préparation ou en
+  // vol, ils attendent qu'elle éclate.
+  orderStack(d) {
+    if (!this.canCommand(true)) return;
+    const alive = this.mates.filter(m => m.alive);
+    if (!alive.length) return;
+    const p = this.player;
+    const side = Math.sign(d.horizontal ? p.y - d.cy : p.x - d.cx) || 1;
+    const half = (d.len * TILE) / 2, off = TILE / 2 + 14, lat = half + 12;
+    const want = [-1, 1].map(k => ({
+      k, x: d.cx + (d.horizontal ? k * lat : side * off), y: d.cy + (d.horizontal ? side * off : k * lat),
+    }));
+    const taken = [], spots = [];
+    for (const w of want) {
+      const sp = this.stackSpot(d, side, w.x, w.y, 11, taken);
+      if (sp) { taken.push(sp); spots.push({ ...sp, k: w.k }); }
+    }
+    if (!spots.length) { this.say('Pas la place de se mettre en colonne ici', 1.4); return; }
+    // chacun prend le côté le plus proche de lui (le second prend l'autre)
+    const order = alive.length > 1 && spots.length > 1
+      && dist(alive[0].x, alive[0].y, spots[1].x, spots[1].y) + dist(alive[1].x, alive[1].y, spots[0].x, spots[0].y)
+       < dist(alive[0].x, alive[0].y, spots[0].x, spots[0].y) + dist(alive[1].x, alive[1].y, spots[1].x, spots[1].y)
+      ? [spots[1], spots[0]] : spots;
+    alive.forEach((m, i) => {
+      const sp = order[i % order.length];
+      const look = Math.atan2(d.cy - sp.y, d.cx - sp.x);
+      Object.assign(m, { order: 'stack', orderPos: { x: sp.x, y: sp.y }, stackSide: sp.k, repathT: 0, destTile: null, watchSpot: null, coverAngle: look, holdAngle: look });
+    });
+    this.stack = { door: d, side, ready: false, wait: null };
+    this.orderMarker = { x: d.cx + (d.horizontal ? 0 : side * 8), y: d.cy + (d.horizontal ? side * 8 : 0), t: 0, angle: null, mate: null };
+    this.say("Équipe : en colonne sur la porte — ouvrez-la, ils entrent", 1.8);
+  }
+
+  updateStack(dt) {
+    const s = this.stack;
+    if (!s) return;
+    const team = this.mates.filter(m => m.alive && m.order === 'stack');
+    if (!team.length) { this.stack = null; return; }
+    const d = s.door;
+    if (!s.ready && team.every(m => dist(m.x, m.y, m.orderPos.x, m.orderPos.y) < 8)) {
+      s.ready = true;
+      this.say('Équipe en position — à votre signal : ouvrez la porte', 2);
+    }
+    if (!d.broken && !this.map.doorPassable(d)) { s.wait = null; return; }
+    if (s.wait === null) s.wait = d.broken ? 0.15 : ENTRY_DELAY;
+    // une flash dégoupillée ou en vol : on attend qu'elle éclate
+    const p = this.player;
+    const flash = (p.act && p.act.type === 'grenade') || p.cooking || this.grenades.some(g => g.team === 'ops' && g.kind === 'flash');
+    if (flash) { s.wait = Math.max(s.wait, 0.15); return; }
+    s.wait -= dt;
+    if (s.wait > 0) return;
+    this.stack = null;
+    this.launchEntry(d, s.side, team);
+  }
+
+  // Chacun franchit l'embrasure et file vers l'angle de la pièce de son côté, en surveillant le fond.
+  launchEntry(d, side, team) {
+    const inX = d.horizontal ? 0 : -side, inY = d.horizontal ? -side : 0; // vers l'intérieur de la pièce
+    const ax = d.horizontal ? 1 : 0, ay = d.horizontal ? 0 : 1;
+    const taken = [];
+    for (const m of team) {
+      const k = m.stackSide || 1;
+      const x = d.cx + inX * 1.6 * U + ax * k * 1.5 * U, y = d.cy + inY * 1.6 * U + ay * k * 1.5 * U;
+      const sp = this.stackSpot(d, -side, x, y, m.radius, taken) || { x: d.cx + inX * 1.2 * U, y: d.cy + inY * 1.2 * U };
+      taken.push(sp);
+      const fx = d.cx + inX * 4 * U - ax * k * U, fy = d.cy + inY * 4 * U - ay * k * U;
+      const look = Math.atan2(fy - sp.y, fx - sp.x);
+      Object.assign(m, { order: 'move', orderPos: sp, repathT: 0, destTile: null, watchSpot: null, coverAngle: look, holdAngle: look, path: [] });
+    }
+    this.orderMarker = null;
+    this.say('Entrée !', 1.2);
   }
 
   orderFollow() {
@@ -2219,6 +2651,7 @@ class Game {
     if (!alive.length) return;
     for (const m of alive) { m.order = 'follow'; m.holdAngle = null; m.coverAngle = null; m.watchSpot = null; m.path = []; m.destTile = null; m.repathT = 0; }
     this.orderMarker = null;
+    this.stack = null;
     this.say('Équipe : suivez-moi', 1.2);
   }
 
@@ -2235,6 +2668,7 @@ class Game {
       m.path = []; m.destTile = null; m.repathT = 0;
     }
     this.orderMarker = null;
+    this.stack = null;
     this.say(hold ? 'Équipe : tenez la position' : 'Équipe : suivez-moi', 1.2);
   }
 
@@ -2471,7 +2905,7 @@ class Game {
 
   mateCombat(m, dt) {
     let t = m.target;
-    if (t && (!t.alive || dist(m.x, m.y, t.x, t.y) > m.viewRange || !this.map.hasLOS(m.x, m.y, t.x, t.y))) t = null;
+    if (t && (!t.alive || t.surrender || dist(m.x, m.y, t.x, t.y) > m.viewRange || !this.map.hasLOS(m.x, m.y, t.x, t.y))) t = null;
     if (!t) { t = this.acquireFor(m, this.enemies); if (t) m.reactT = m.reaction; }
     m.target = t;
     if (!t) {
@@ -2530,12 +2964,12 @@ class Game {
     let dest = null;
     if (m.watchSpot) {
       // position d'observation : abandonnée si le joueur s'éloigne ou vise dessus, ou pendant un ordre de déplacement
-      const invalid = m.order === 'move' || m.target
+      const invalid = m.order === 'move' || m.order === 'stack' || m.target
         || (m.order === 'follow' && (this.player.moving || dist(m.watchSpot.x, m.watchSpot.y, this.player.x, this.player.y) > 3.5 * U))
         || this.inAimCone(m.watchSpot.x, m.watchSpot.y, 25 * DEG);
       if (invalid) m.watchSpot = null;
     }
-    if (m.order === 'move') dest = m.orderPos;
+    if (m.order === 'move' || m.order === 'stack') dest = m.orderPos;
     else if (m.blockedLine && m.target) dest = this.firingSpot(m, m.target);
     else if (m.watchSpot) dest = m.watchSpot;
     else if (m.order === 'follow') dest = this.formationPos(m);
@@ -2553,13 +2987,14 @@ class Game {
     if (m.engaged && !m.blockedLine && m.order !== 'move') { m.path = []; m.moving = false; }
     else if (dest) {
       const d = dist(m.x, m.y, dest.x, dest.y);
-      const arrive = m.order === 'move' || dest === m.watchSpot || dest === m.fireSpot ? 4 : 12;
+      const arrive = m.order === 'move' || m.order === 'stack' || dest === m.watchSpot || dest === m.fireSpot ? 4 : 12;
       if (d > arrive) {
         const tile = { x: Math.floor(dest.x / TILE), y: Math.floor(dest.y / TILE) };
         const changed = !m.destTile || m.destTile.x !== tile.x || m.destTile.y !== tile.y;
         if (changed || m.repathT <= 0 || !m.path.length) {
           const avoid = this.ops.filter(o => o !== m && o.alive).map(o => ({ x: o.x, y: o.y, r: (m.stuckCount ? 30 : 22) }));
-          const path = this.map.routeTo(m.x, m.y, tile.x, tile.y, m.radius, { noClosedDoors: m.order === 'follow', avoid });
+          // en suivi ou en colonne, on n'ouvre pas de porte (la colonne attend justement devant la sienne)
+          const path = this.map.routeTo(m.x, m.y, tile.x, tile.y, m.radius, { noClosedDoors: m.order === 'follow' || m.order === 'stack', avoid });
           m.path = path || [];
           if (m.path.length) m.path[m.path.length - 1] = { x: dest.x, y: dest.y };
           m.destTile = tile;
@@ -2641,11 +3076,13 @@ class Game {
       this.map.markExplored(p.tx, p.ty);
       const cone = [];
       const n = Math.ceil(p.fov / (1 * DEG));
+      const range = this.dark ? DARK_SIGHT : p.viewRange;
       for (let i = 0; i <= n; i++) {
         const a = p.angle - p.fov / 2 + p.fov * i / n;
-        cone.push(this.map.castRay(p.x, p.y, a, p.viewRange, true));
+        cone.push(this.map.castRay(p.x, p.y, a, range, true));
       }
       polys.push({ x: p.x, y: p.y, pts: cone });
+      this.lampPoly(p, polys);
       const near = [];
       const NR = 2.6 * U, nn = 72;
       for (let i = 0; i <= nn; i++) near.push(this.map.castRay(p.x, p.y, TAU * i / nn, NR, true));
@@ -2665,8 +3102,10 @@ class Game {
       this.map.markExplored(m.tx, m.ty);
       const cone = [];
       const n = Math.ceil(m.fov / (1.5 * DEG));
-      for (let i = 0; i <= n; i++) cone.push(this.map.castRay(m.x, m.y, m.angle - m.fov / 2 + m.fov * i / n, m.viewRange, true));
+      const range = this.dark ? DARK_SIGHT : m.viewRange;
+      for (let i = 0; i <= n; i++) cone.push(this.map.castRay(m.x, m.y, m.angle - m.fov / 2 + m.fov * i / n, range, true));
       polys.push({ x: m.x, y: m.y, pts: cone });
+      this.lampPoly(m, polys);
     }
     this.visionPolys = polys;
     const mates = (this.mates || []).filter(m => m.alive);
@@ -2687,6 +3126,14 @@ class Game {
       for (const d of this.hiddenDecals) (this.seesPoint(d.x, d.y) ? this.decals : still).push(d);
       this.hiddenDecals = still;
     }
+  }
+
+  // Cône éclairé par la lampe d'un agent : il ne compte que courant coupé (sinon on voit déjà plus loin).
+  lampPoly(a, polys) {
+    if (!this.dark || !this.lampLit(a)) return;
+    const pts = [], n = Math.ceil(2 * LAMP_HALF / (1 * DEG));
+    for (let i = 0; i <= n; i++) pts.push(this.map.castRay(a.x, a.y, a.angle - LAMP_HALF + 2 * LAMP_HALF * i / n, LAMP_RANGE, true));
+    polys.push({ x: a.x, y: a.y, pts, lamp: true });
   }
 
   // Un décalque n'apparaît que si le groupe voit l'endroit (sinon il attend qu'on y regarde).

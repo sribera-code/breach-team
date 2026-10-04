@@ -673,6 +673,11 @@ const Sprites = {
       shine(M - t.sup + 0.6, M - 0.6, -h / 2 + 0.35, 0.13);
       dark(M - t.sup + 0.8, -0.15, 0.3, 0.3, 0.35);
     }
+    // lampe sur le rail, du côté opposé au laser (le fusil moderne en porte déjà une, dessinée plus haut)
+    if (t.light && LASER_MOUNT[kind]) {
+      const [x0, x1, dy] = LASER_MOUNT[kind];
+      light(x0 - 0.4, x1 + 0.4, -dy);
+    }
     // module laser sur le rail : un petit boîtier, lentille rouge vers l'avant
     if (t.laser) {
       const [x0, x1, dy] = LASER_MOUNT[kind] || LASER_MOUNT.rifle;
@@ -725,13 +730,19 @@ const Sprites = {
       pose.arms[0] = [[-2, -9.5], [9, -7.5], [h[0][0] + k * 10, h[0][1] - k * 2]];
       return { ...st, gunRot: 0.55 * k };
     }
-    if (st.act.type === 'door') {
+    if (st.act.type === 'lockpick') {
+      // la main avant travaille la serrure : bras tendu, petits à-coups
+      const e = clamp(k * 6, 0, 1), j = Math.sin(k * 60) * 0.8 * e;
+      pose.arms[0] = [[-2, -9.5], [9, -8], [h[0][0] + e * 6 + j, h[0][1] - e * 3]];
+      return { ...st, gunRot: 0.6 * e };
+    }
+    if (st.act.type === 'door' || st.act.type === 'charge') {
       // la main avant lâche le garde-main, va sur la poignée et revient
       const e = Math.sin(k * Math.PI);
       pose.arms[0] = [[-2, -9.5], [9 + e * 2, -8.2], [h[0][0] + e * 8, h[0][1] - e * 4]];
       return { ...st, gunRot: 0.5 * e };
     }
-    if (st.act.type === 'pickup' || st.act.type === 'hostage') {
+    if (st.act.type === 'pickup' || st.act.type === 'hostage' || st.act.type === 'cuff') {
       // arme basse, la main avant descend saisir l'arme au sol (ou relever l'otage) puis revient
       const e = Math.sin(k * Math.PI);
       pose.arms[0] = [[-2, -9.5], [8, -10 - e * 3], [h[0][0] + e * 5, h[0][1] - e * 9]];
@@ -1008,6 +1019,42 @@ const Sprites = {
       ctx.restore();
     }
     this.figure(ctx, a.x, a.y, rot, st, pose, held, 0, false);
+  },
+
+  // Suspect rendu : à genoux, mains sur la tête, son arme posée devant lui. Menotté, les mains dans le dos.
+  kneeling(ctx, e, st) {
+    if (st.gun) {
+      ctx.save(); ctx.translate(e.x, e.y); ctx.rotate(e.angle); ctx.translate(17, 9); ctx.rotate(0.5);
+      this.droppedGun(ctx, st.gun, st.gunLen || 18, st.gunTint);
+      ctx.restore();
+    }
+    ctx.save();
+    ctx.translate(e.x, e.y);
+    ctx.fillStyle = 'rgba(0,0,0,0.32)'; ctx.beginPath(); ctx.ellipse(2, 3, 11, 10, 0, 0, TAU); ctx.fill();
+    ctx.rotate(e.angle);
+    ctx.lineCap = 'round';
+    ctx.lineWidth = 5.5; ctx.strokeStyle = st.pants || '#2a2d33';
+    ctx.beginPath(); ctx.moveTo(-4, -4.5); ctx.lineTo(-14, -5.5); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(-4, 4.5); ctx.lineTo(-14, 5.5); ctx.stroke();
+    ctx.fillStyle = st.boots || '#17181b'; circle(ctx, -15, -6, 2.8); ctx.fill(); circle(ctx, -15, 6, 2.8); ctx.fill();
+    ctx.fillStyle = st.body;
+    ctx.beginPath(); ctx.ellipse(-1, 0, 7.5, 10, 0, 0, TAU); ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,0.5)'; ctx.lineWidth = 1.2; ctx.stroke();
+    ctx.lineWidth = 4.6; ctx.strokeStyle = st.sleeve || st.body;
+    const skin = st.gloves || st.skin || '#d2a583';
+    if (e.cuffed) {
+      // bras ramenés dans le dos, poignets liés
+      ctx.beginPath(); ctx.moveTo(-2, -8); ctx.lineTo(-8, -6); ctx.lineTo(-10, -1.5); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(-2, 8); ctx.lineTo(-8, 6); ctx.lineTo(-10, 1.5); ctx.stroke();
+      ctx.fillStyle = skin; circle(ctx, -10.5, -1.6, 2.2); ctx.fill(); circle(ctx, -10.5, 1.6, 2.2); ctx.fill();
+      ctx.strokeStyle = '#c9d0d6'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(-10.5, -1.6); ctx.lineTo(-10.5, 1.6); ctx.stroke();
+    } else {
+      ctx.beginPath(); ctx.moveTo(-2, -8); ctx.lineTo(5, -9); ctx.lineTo(4, -5.5); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(-2, 8); ctx.lineTo(5, 9); ctx.lineTo(4, 5.5); ctx.stroke();
+    }
+    ctx.save(); ctx.translate(0, 0); ctx.scale(0.88, 0.88); this.head(ctx, st); ctx.restore();
+    if (!e.cuffed) { ctx.fillStyle = skin; circle(ctx, 4, -5.5, 2.7); ctx.fill(); circle(ctx, 4, 5.5, 2.7); ctx.fill(); }
+    ctx.restore();
   },
 
   // Otage à genoux, mains sur la tête

@@ -25,6 +25,8 @@ function mkGame(opts) {
   game.loadout = opts.loadout ? Game.normLoadout(opts.loadout, MODES[game.mode]) : Game.loadSavedLoadout(game.mode);
   game.entryRandom = false;          // les tests choisissent, sinon l'entrée est tirée au sort
   game.entryIndex = opts.entry || 0;
+  game.lockDoors = !!opts.locks;     // pas de serrure au hasard, sauf demande
+  game.saveRecords = false;          // pas de record écrit dans le navigateur
   game.loadLevel(opts.level || 0);
   game.paused = false;
   if (opts.noEnd !== false) game.checkEnd = () => {}; // la fin de mission fige tout : on l'écarte
@@ -613,14 +615,17 @@ test('à la mort du joueur, la partie reprend dans un coéquipier', () => {
   for (const mode of ['assault', 'siege']) {
     const g = mkGame({ mode, noEnd: false, noEnemyAI: true });
     const game = g.game, old = game.player;
-    // le relais revient au plus proche : avec des postes tirés au sort, ce n'est pas toujours le premier
-    const heir = game.mates.slice().sort((a, b) => dist(a.x, a.y, old.x, old.y) - dist(b.x, b.y, old.x, old.y))[0];
-    const name = heir.name;
     game.damage(old, 1000, null, 0);
     g.step(10);
     ok(!game.over, mode + ' : pas de défaite tant qu’un coéquipier est debout');
     eq(game.player, old, mode + ' : un court instant sur le corps avant le relais');
-    g.step(Math.ceil(RELAY_DELAY * 60) + 2);
+    // le relais revient au plus proche au moment du relais (les postes sont tirés au sort, et un complice
+    // peut encore bouger pendant ce temps) : on le désigne juste avant
+    g.step(Math.floor(RELAY_DELAY * 60) - 14);
+    eq(game.player, old, mode + ' : toujours pas de relais');
+    const heir = game.mates.filter(m => m.alive).sort((a, b) => dist(a.x, a.y, old.x, old.y) - dist(b.x, b.y, old.x, old.y))[0];
+    const name = heir.name;
+    g.step(8);
     eq(game.player, heir, mode + ' : le coéquipier le plus proche prend la main');
     ok(heir instanceof Player && heir.slot && Number.isFinite(heir.slot.reserve), mode + ' : munitions réelles, finies');
     eq(game.player.name, name, mode + ' : il garde son nom');
@@ -2108,11 +2113,292 @@ test('le laser resserre le tir en mouvement, mais son point se voit', () => {
 
 
 
+// ---------------------------------------------------------------- sommation, arrestation, note
+// Le joueur seul, un suspect en vue à distance donnée (cases), de dos ou de face ; Math.random fixé pendant fn.
+function surrenderScene(dMin, dMax, facing) {
+  const g = mkGame({ alone: true });
+  const game = g.game, p = game.player;
+  const spot = freeSpotsAround(game, p, 40).find(s => { const d = dist(s.x, s.y, p.x, p.y); return d >= dMin * U && d <= dMax * U; });
+  if (!spot) return null;
+  const toYou = Math.atan2(p.y - spot.y, p.x - spot.x);
+  const e = new Enemy(spot.x, spot.y, facing ? toYou : toYou + Math.PI, 'ak');
+  e.homeAngle = e.angle;
+  game.enemies = [e];
+  game.input.mouse.x = e.x; game.input.mouse.y = e.y;
+  g.step(1);
+  return { g, game, p, e };
+}
+function withRandom(v, fn) {
+  const r = Math.random;
+  Math.random = () => v;
+  try { return fn(); } finally { Math.random = r; }
+}
+
+test('sommation : un suspect pris de dos se rend, lâche son arme, et plus personne ne tire', () => {
+  const sc = surrenderScene(1.5, 3, false);
+  ok(sc, 'une scène de test');
+  const { g, game, p, e } = sc;
+  const back = game.surrenderChance(e);
+  e.stun = 2; e.hp = 20;
+  ok(game.surrenderChance(e) > back && game.surrenderChance(e) >= 0.9, 'aveuglé et blessé, il cède presque à coup sûr');
+  e.stun = 0; e.hp = e.maxHp;
+  e.angle = Math.atan2(p.y - e.y, p.x - e.x); e.target = p;
+  const buddy = new Enemy(e.x + 12, e.y, e.angle, 'ak');
+  game.enemies.push(buddy);
+  ok(game.surrenderChance(e) < back, 'de face, en plein échange et avec un complice à côté, beaucoup moins');
+  game.enemies = [e]; e.target = null; e.angle += Math.PI;
+  withRandom(0.999, () => g.press('KeyC'));
+  ok(!e.surrender && /refuse/.test(game.message.text), 'un refus se dit');
+  game.shoutT = -9;
+  withRandom(0, () => g.press('KeyC'));
+  ok(e.surrender && /se rend/.test(game.message.text), 'il se rend');
+  let shots = 0;
+  const fire = game.fireWeapon.bind(game);
+  game.fireWeapon = a => { if (a === e) shots++; fire(a); };
+  e.angle = Math.atan2(p.y - e.y, p.x - e.x);
+  g.step(120);
+  eq(shots, 0, 'à genoux, il ne tire pas, même face à vous');
+  eq(game.acquireFor(p, game.enemies), null, 'personne de l’équipe ne le prend pour cible');
+  game.noise(e.x + 2 * U, e.y, 8 * U, null, 'shot');
+  ok(!e.path.length && e.surrender, 'un coup de feu ne le fait pas bouger');
+  ok(game.enemies.filter(Game.active).length === 1, 'rendu mais pas menotté : il compte encore');
+});
+
+test('H menotte un suspect rendu : menottés ou abattus, tous neutralisés, la mission est accomplie', () => {
+  const sc = surrenderScene(0.75, 1.45, false);
+  ok(sc, 'une scène de test');
+  const { g, game, p, e } = sc;
+  game.checkEnd = Game.prototype.checkEnd.bind(game);
+  game.surrenderTo(e);
+  ok(dist(p.x, p.y, e.x, e.y) < HOSTAGE_REACH, 'à portée de main');
+  game.message.t = 0; // le rappel ne recouvre pas un message en cours
+  g.step(10);
+  ok(/menott/.test(game.message.text), 'on vous rappelle de le menotter : ' + game.message.text);
+  g.press('KeyH');
+  eq(p.act && p.act.type, 'cuff', 'il faut un geste pour menotter');
+  g.step(Math.ceil(CUFF_TIME * 60) + 2);
+  ok(e.cuffed && game.stats.arrests === 1, 'suspect menotté');
+  eq(game.over, 'win', 'plus aucun suspect actif : mission accomplie');
+  const line = game.score.lines.find(l => l.label === 'Suspects arrêtés');
+  ok(line && line.detail === '1 / 1' && line.pts === 20, 'l’arrestation compte dans la note');
+});
+
+test('un suspect rendu laissé sans surveillance reprend son arme', () => {
+  const sc = surrenderScene(2.6, 3, false);
+  ok(sc, 'une scène de test');
+  const { g, game, p, e } = sc;
+  game.surrenderTo(e);
+  g.step(Math.ceil(SURRENDER_LAPSE * 60) + 10);
+  ok(e.surrender, 'tant que vous le tenez en vue, il reste à genoux');
+  game.input.mouse.x = p.x - (e.x - p.x); game.input.mouse.y = p.y - (e.y - p.y); // on lui tourne le dos
+  g.step(Math.ceil(SURRENDER_LAPSE * 60) + 10);
+  ok(!e.surrender && !e.cuffed, 'seul trop longtemps, il se relève');
+  eq(e.state, 'engage', 'et reprend le combat');
+});
+
+test('la note de fin récompense les arrestations et punit un suspect abattu après sa reddition', () => {
+  const g = mkGame({ noEnd: false });
+  const game = g.game;
+  const n = game.enemies.length, H = game.hostages.length;
+  game.enemies.forEach(e => { e.alive = false; });
+  game.stats.kills = n;
+  const killed = game.scoreReport('win');
+  eq(killed.total, 70, 'tous abattus, otages en vie mais pas dehors, équipe indemne');
+  game.enemies.forEach(e => { e.alive = true; e.surrender = { t: 0, lapse: 0 }; e.cuffed = true; });
+  game.stats.kills = 0; game.stats.arrests = n;
+  game.hostages.forEach(h => { h.evacuated = true; });
+  const perfect = game.scoreReport('win');
+  ok(perfect.total === 100 && perfect.grade === 'S', 'tout le monde arrêté, otages dehors : 100, note S');
+  game.stats.badKills = 1;
+  ok(game.scoreReport('win').total === 85, 'un suspect abattu à genoux : −15');
+  game.hostages[0].alive = false;
+  const lost = game.scoreReport('lose');
+  ok(lost.total <= 49 && lost.grade === 'D', 'une mission échouée plafonne à D');
+  game.over = 'win'; game.score = perfect; game.record = { prev: 70, beaten: true };
+  g.ui.showEnd('win');
+  eq(document.getElementById('endGrade').textContent, 'S', 'la lettre s’affiche en fin de mission');
+  ok(/Nouveau record/.test(g.ui.panel.textContent), 'et le record battu');
+  ok(H > 0, 'des otages sur la carte');
+});
+
+// ---------------------------------------------------------------- lampe et courant coupé
+// Un suspect à distance (cases) dans l'axe d'une ligne dégagée, face au joueur.
+function darkScene(cut, d, lamp) {
+  const g = mkGame({ alone: true, loadout: { primary: 'hk416', sidearm: 'glock17', cutPower: cut, acc: { hk416: { light: lamp } } } });
+  const game = g.game, p = game.player, map = game.map;
+  for (let k = 0; k < 48; k++) {
+    const a = k * TAU / 48, r = map.castRay(p.x, p.y, a, 14 * U, false);
+    if (r.dist < (d + 1) * U) continue;
+    const ex = p.x + Math.cos(a) * d * U, ey = p.y + Math.sin(a) * d * U;
+    if (!map.circleFree(ex, ey, 12, true)) continue;
+    const e = new Enemy(ex, ey, a + Math.PI, 'ak');
+    game.enemies = [e];
+    game.input.mouse.x = ex; game.input.mouse.y = ey;
+    g.step(1);
+    return { g, game, p, e };
+  }
+  return null;
+}
+
+test('courant coupé : on ne voit qu’à quelques pas, sauf ce qu’éclaire une lampe, ou qui tire', () => {
+  const sc = darkScene(true, 7, true);
+  ok(sc, 'une scène de test');
+  const { g, game, p, e } = sc;
+  ok(game.dark && p.weapon.light, 'noir, et une lampe sur le HK416');
+  p.lampOn = false;
+  ok(!game.canSee(p, e) && !game.canSee(e, p), 'lampe éteinte : personne ne voit personne à 7 cases');
+  game.computeVision();
+  ok(!game.visionPolys.some(q => q.lamp), 'pas de faisceau');
+  p.lampOn = true;
+  ok(game.canSee(p, e), 'la lampe allumée le fait voir');
+  ok(game.canSee(e, p), 'mais elle se voit de loin');
+  game.computeVision();
+  ok(game.visionPolys.some(q => q.lamp), 'le faisceau compte dans la vision');
+  p.lampOn = false;
+  game.fireWeapon(e);
+  ok(game.canSee(p, e), 'un coup de feu sans silencieux trahit le tireur');
+  g.step(Math.ceil(SHOT_GLOW * 60) + 2);
+  ok(!game.canSee(p, e), 'un instant seulement');
+  game.dark = false;
+  ok(game.canSee(p, e), 'bâtiment éclairé : on le voit sans lampe');
+  // les coéquipiers ont une lampe dans le noir, et suivent la vôtre
+  const g2 = mkGame({ loadout: { primary: 'hk416', sidearm: 'glock17', cutPower: true } });
+  ok(g2.game.mates.every(m => m.weapon.light), 'courant coupé : une lampe pour chaque coéquipier');
+  ok(g2.game.enemies.every(x => x.suspicion > 0.5), 'le courant tombe : les suspects s’inquiètent');
+  g2.press('KeyX');
+  ok(g2.game.mates.every(m => !m.lampOn) && /éteintes/.test(g2.game.message.text), 'X éteint aussi les leurs');
+  const g3 = mkGame({ loadout: { primary: 'hk416', sidearm: 'glock17' } });
+  ok(!g3.game.dark && g3.game.mates.every(m => !m.weapon.light), 'courant laissé : rien de tout ça');
+});
+
+test('la lampe éblouit le suspect qui la reçoit en face, de près', () => {
+  const sc = darkScene(false, 3, true);
+  ok(sc, 'une scène de test');
+  const { game, p, e } = sc;
+  e.target = null;
+  game.enemyCombat(e, 0);
+  ok(e.target === p, 'il vous voit');
+  near(e.reactT, e.reaction + LAMP_DAZZLE, 1e-6, 'ébloui : il met plus de temps à viser');
+  p.lampOn = false; e.target = null;
+  game.enemyCombat(e, 0);
+  near(e.reactT, e.reaction, 1e-6, 'sans lampe, son temps de réaction ordinaire');
+});
+
+// ---------------------------------------------------------------- serrures et charges
+test('une porte verrouillée se crochète lentement ; les suspects ont la clé, la chevrotine la fait sauter', () => {
+  let some = false;
+  for (let i = 0; i < LEVELS.length && !some; i++) some = mkGame({ alone: true, level: i, locks: true }).game.map.doors.some(d => d.locked);
+  ok(some, 'des portes fermées à clé en assaut');
+  ok(!mkGame({ alone: true }).game.map.doors.some(d => d.locked), 'pas dans les tests, sauf demande');
+  const g = mkGame({ alone: true });
+  const game = g.game, p = game.player;
+  const w = doorWithRoom(game);
+  ok(w, 'une porte de test');
+  w.d.locked = true;
+  p.x = w.a.x; p.y = w.a.y;
+  g.press('KeyE');
+  ok(p.act && p.act.type === 'lockpick' && p.act.dur === LOCKPICK_TIME, 'E sur une porte verrouillée : crochetage');
+  ok(w.d.lockKnown, 'on sait désormais qu’elle est fermée à clé');
+  g.step(Math.ceil(LOCKPICK_TIME * 60) + 2);
+  ok(!w.d.locked && w.d.progress === 0, 'déverrouillée, mais toujours fermée');
+  w.d.locked = true;
+  const e = new Enemy(w.b.x, w.b.y, 0, 'ak');
+  game.enemies = [e];
+  game.doorAction(e, w.d, 1);
+  eq(e.act && e.act.type, 'door', 'un suspect l’ouvre normalement');
+  g.step(80);
+  ok(!w.d.locked && w.d.progress > 0, 'avec sa clé');
+  setDoor(w.d, 0); w.d.locked = true;
+  for (let i = 0; i < BREACH_PELLETS; i++) game.breachDoor(w.d, p);
+  ok(w.d.broken && !w.d.locked, 'la chevrotine arrache la serrure');
+});
+
+test('une charge de brèche souffle la porte et sonne ceux qui se tiennent derrière', () => {
+  const g = mkGame({ alone: true });
+  const game = g.game, p = game.player;
+  const w = doorWithRoom(game);
+  ok(w, 'une porte de test');
+  w.d.locked = true;
+  p.x = w.a.x; p.y = w.a.y;
+  const e = new Enemy(w.d.cx + w.nx * 0.9 * U, w.d.cy + w.ny * 0.9 * U, 0, 'ak');
+  e.hp = e.maxHp = 1e6;
+  game.enemies = [e];
+  game.updateEnemy = () => {};
+  const n = p.charges;
+  g.press('KeyB');
+  eq(p.act && p.act.type, 'charge', 'la pose demande un geste');
+  g.step(Math.ceil(CHARGE_PLACE * 60) + 2);
+  ok(game.charges.length === 1 && p.charges === n - 1, 'charge posée');
+  ok(Math.sign(game.charges[0].x - w.d.cx || game.charges[0].y - w.d.cy) === Math.sign(-(w.nx + w.ny)), 'de votre côté du battant');
+  const hp = p.hp;
+  g.press('KeyB');
+  ok(w.d.broken && w.d.open && !w.d.locked, 'la porte vole en éclats, serrure comprise');
+  ok(e.stun > 1.5 && e.hp < e.maxHp, 'le suspect contre la porte est blessé et sonné');
+  eq(p.hp, hp, 'à une case et demie, de l’autre côté, vous n’avez rien');
+  eq(game.charges.length, 0, 'la charge est partie');
+  // une charge tombe si quelqu'un ouvre la porte avant la mise à feu
+  const g2 = mkGame({ alone: true });
+  const w2 = doorWithRoom(g2.game), p2 = g2.game.player;
+  p2.x = w2.a.x; p2.y = w2.a.y;
+  g2.press('KeyB'); g2.step(Math.ceil(CHARGE_PLACE * 60) + 2);
+  eq(g2.game.charges.length, 1, 'posée');
+  g2.game.openDoor(p2, w2.d, 1); g2.step(2);
+  ok(!g2.game.charges.length && /tombée/.test(g2.game.message.text), 'porte ouverte : la charge tombe');
+});
+
+// ---------------------------------------------------------------- entrée coordonnée
+test('clic droit sur une porte fermée : l’équipe se met en colonne, puis entre quand elle s’ouvre', () => {
+  const g = mkGame({ noEnemyAI: true });
+  const game = g.game, p = game.player, inp = game.input;
+  game.enemies = []; game.hostages = [];
+  const w = doorWithRoom(game);
+  ok(w, 'une porte de test');
+  p.x = w.a.x; p.y = w.a.y;
+  const spots = freeSpotsAround(game, p, 2);
+  game.mates.forEach((m, i) => { m.x = spots[i].x; m.y = spots[i].y; });
+  inp.mouse.x = w.d.cx; inp.mouse.y = w.d.cy;
+  inp.pressed.Mouse2 = true; inp.mouse.rdown = true; g.step(1);
+  inp.mouse.rdown = false; inp.pressed.Mouse2Up = true; g.step(1);
+  ok(game.stack && game.mates.every(m => m.order === 'stack'), 'ordre de colonne');
+  const across = m => (w.d.horizontal ? m.y - w.d.cy : m.x - w.d.cx);
+  const mine = Math.sign(w.d.horizontal ? p.y - w.d.cy : p.x - w.d.cx);
+  for (let i = 0; i < 400 && !game.stack.ready; i++) g.step(1);
+  ok(game.stack.ready, 'les deux en place');
+  ok(game.mates.every(m => Math.sign(across(m)) === mine), 'de votre côté de la porte');
+  ok(game.mates[0].stackSide !== game.mates[1].stackSide, 'un de chaque côté de l’embrasure');
+  // une flash en vol : ils attendent qu'elle éclate
+  game.grenades = [{ x: p.x, y: p.y, vx: 0, vy: 0, t: 1, flight: 0.35, friction: 4, fuse: 99, cooked: 0, h: 0, spin: 0, bounces: 0, post: null, kind: 'flash', team: 'ops', thrower: p }];
+  setDoor(w.d, 1);
+  g.step(60);
+  ok(game.mates.every(m => m.order === 'stack'), 'porte ouverte, flash en l’air : ils attendent');
+  game.grenades = [];
+  g.step(Math.ceil(ENTRY_DELAY * 60) + 2);
+  ok(game.mates.every(m => m.order === 'move') && !game.stack, 'la flash partie : ils entrent');
+  for (let i = 0; i < 360 && !game.mates.every(m => Math.sign(across(m)) === -mine); i++) g.step(1);
+  ok(game.mates.every(m => Math.sign(across(m)) === -mine), 'les deux sont dans la pièce');
+  ok(game.mates.every(m => m.coverAngle !== null), 'chacun couvre le fond de la pièce');
+});
+
+test('un clic droit sur une porte ouverte reste un ordre de déplacement', () => {
+  const g = mkGame({ noEnemyAI: true });
+  const game = g.game, p = game.player, inp = game.input;
+  game.enemies = [];
+  const w = doorWithRoom(game);
+  setDoor(w.d, 1);
+  p.x = w.a.x; p.y = w.a.y;
+  inp.mouse.x = w.d.cx; inp.mouse.y = w.d.cy;
+  inp.pressed.Mouse2 = true; inp.mouse.rdown = true; g.step(1);
+  inp.mouse.rdown = false; inp.pressed.Mouse2Up = true; g.step(1);
+  ok(!game.stack && game.mates.every(m => m.order === 'move'), 'déplacement ordinaire');
+});
+
 // ---------------------------------------------------------------- rendu
 test('chaque mission se joue sans exception, dans les deux modes', () => {
   for (const mode of ['assault', 'siege']) {
     for (let lvl = 0; lvl < LEVELS.length; lvl++) {
-      const g = mkGame({ mode, level: lvl });
+      // en assaut, une mission sur deux dans le noir, portes verrouillées et lampe en main
+      const dark = mode === 'assault' && lvl % 2 === 1;
+      const g = mkGame({ mode, level: lvl, locks: mode === 'assault', loadout: dark ? { primary: 'mp5', sidearm: 'glock17', cutPower: true, acc: { mp5: { light: true } } } : undefined });
       const p = g.game.player;
       if (g.game.siege) g.game.siege.prep = 0.5;
       for (let i = 0; i < 420; i++) {
@@ -2122,6 +2408,9 @@ test('chaque mission se joue sans exception, dans les deux modes', () => {
         if (i % 150 === 40) inp.pressed.KeyE = true;
         if (i % 150 === 90) inp.pressed.Space = true;
         if (i % 150 === 120) inp.pressed.KeyH = true;
+        if (i % 150 === 60) inp.pressed.KeyC = true;
+        if (i % 210 === 100) inp.pressed.KeyB = true;
+        if (i % 210 === 150) inp.pressed.KeyX = true;
         g.step(1);
       }
       ok(true, mode + ' / mission ' + (lvl + 1));
