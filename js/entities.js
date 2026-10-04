@@ -135,17 +135,21 @@ for (const w of Object.values(WEAPONS)) {
 }
 
 // Accessoires, choisis arme par arme au briefing. Silencieux : portée du coup de feu (cases), masse (kg)
-// et longueur (px) ajoutées. Le 5,56, le 7,62 et le 4,6 restent supersoniques : le claquement de la balle
-// s'entend encore à quelques cases. Le 9 mm et le .45 tirés en subsonique ne font presque plus de bruit, mais
-// la balle, plus lente, porte moins loin et frappe un peu moins fort. Pas de silencieux sur un fusil à pompe.
+// et longueur (px) ajoutées. Il freine les gaz, pas la balle : sa vitesse ne bouge pas. Le 5,56, le 7,62 et
+// le 4,6 restent donc supersoniques, sans rien perdre, mais le claquement de la balle s'entend encore à quelques
+// cases. Pour qu'un 9 mm se taise, il faut une munition subsonique (subsonic: 'load', 147 gr à 300 m/s au lieu
+// de 124 gr à 360 m/s) : plus lente, elle frappe un peu moins fort et porte moins loin (SUBSONIC). Le .45 ACP
+// est subsonique d'origine (subsonic: 'native') : il se tait sans rien perdre. Pas de silencieux sur un fusil à pompe.
 const SUPPRESSORS = {
   hk416:   { noise: 4,   weight: 0.5,  len: 6 },
   scarh:   { noise: 5,   weight: 0.6,  len: 6 },
-  mp5:     { noise: 2.5, weight: 0.45, len: 6, subsonic: true },
+  mp5:     { noise: 2.5, weight: 0.45, len: 6, subsonic: 'load' },
   mp7:     { noise: 3,   weight: 0.35, len: 5 },
-  glock17: { noise: 2.5, weight: 0.2,  len: 5, subsonic: true },
-  usp45:   { noise: 2,   weight: 0.25, len: 5, subsonic: true },
+  glock17: { noise: 2.5, weight: 0.2,  len: 5, subsonic: 'load' },
+  usp45:   { noise: 2,   weight: 0.25, len: 5, subsonic: 'native' },
 };
+// Munition subsonique : multiplicateurs des dégâts, de la portée efficace, de la portée et de la vitesse de la balle.
+const SUBSONIC = { damage: 0.9, effRange: 0.85, range: 0.9, speed: 0.85 };
 // Module laser (masse en kg) : il lui faut un rail, que n'ont ni l'AKM, ni l'Uzi, ni le Škorpion, ni le
 // Makarov, ni le Tokarev. Le point montre où part la balle sans épauler : la dispersion due au déplacement
 // est multipliée par LASER_MOVE, et la gêne de la tenue d'une main derrière un bouclier réduite de moitié.
@@ -165,11 +169,14 @@ function fittedDef(key, acc) {
   if (sup) {
     Object.assign(d, {
       suppressed: true, noise: s.noise, weight: d.weight + s.weight, gunLen: w.gunLen + s.len,
-      damage: s.subsonic ? Math.round(w.damage * 0.9) : w.damage,
-      effRange: s.subsonic ? w.effRange * 0.85 : w.effRange,
-      speed: s.subsonic ? w.speed * 0.85 : w.speed,
       snd: [w.snd[0] * 0.6, Math.min(900, w.snd[1] * 0.45)],
     });
+    if (s.subsonic === 'load') {
+      Object.assign(d, {
+        damage: Math.round(w.damage * SUBSONIC.damage), effRange: w.effRange * SUBSONIC.effRange,
+        range: w.range * SUBSONIC.range, speed: w.speed * SUBSONIC.speed,
+      });
+    }
     d.tint.sup = s.len;
   }
   if (laser) { d.laser = true; d.weight += LASERS[key]; d.tint.laser = true; }
@@ -377,6 +384,7 @@ class Enemy extends Agent {
     this.burstLeft = def.burst;
     this.pauseT = 0;
     this.lastKnown = null;
+    this.blind = null;    // tir dans une porte : { x, y, t, off } (voir Game.startBlindFire)
     this.visible = false;
     this.engaged = false;
     const pick = arr => arr[Math.floor(Math.random() * arr.length)];

@@ -99,6 +99,8 @@ button.primary:hover { background: #38945d; }
 .accbtn.sel { border-color: #ffb347; background: #262017; color: #ffd27a; }
 .accbtn:disabled { opacity: 0.4; cursor: default; }
 .accbtn:disabled:hover { background: #1d232b; }
+.wd p.wd-acc { margin: -2px 0 8px; font-size: 11px; color: #9aa4b1; }
+.wd-acc b { color: #ffd27a; font-weight: 600; }
 .panel p.accnote { margin: 8px 0 0; }
 .accnote small { color: #8e99a6; font-size: 11px; line-height: 1.4; }
 #wdetail { display: grid; grid-template-columns: 3fr 2fr; gap: 14px; margin-top: 12px; }

@@ -347,6 +347,21 @@ class GameMap {
     return r.dist >= d - 0.01;
   }
 
+  // Ce qui sépare deux points pour une balle : 0 si la vue est libre, le nombre de portes à traverser si
+  // seules des portes s'interposent (au plus deux, comme une balle), -1 si un mur ou une troisième porte arrête tout.
+  doorsOnLine(x0, y0, x1, y1) {
+    const ang = Math.atan2(y1 - y0, x1 - x0), cs = Math.cos(ang), sn = Math.sin(ang);
+    let x = x0, y = y0, left = dist(x0, y0, x1, y1), n = 0;
+    while (left > 0.01) {
+      const r = this.castRay(x, y, ang, left, false);
+      if (r.dist >= left - 0.01) return n;
+      if (!r.door || ++n > 2) return -1;
+      // de l'autre côté du battant, comme la balle (voir Game.updateBullets)
+      x = r.x + cs * 3; y = r.y + sn * 3; left -= r.dist + 3;
+    }
+    return n;
+  }
+
   // A* sur la grille (8 directions, pas de coupe de coin, portes traversées en ligne droite).
   // opts.noClosedDoors : les portes non ouvertes sont infranchissables (coéquipiers en suivi).
   // opts.passableDoors : seules les portes où l'on se glisse (doorPassable) sont franchissables (otages).

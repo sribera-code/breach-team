@@ -932,7 +932,14 @@ test('silencieux : le tir ne s’entend plus qu’à quelques cases ; il se choi
   ok(s.suppressed && s.noise < w.noise / 2, 'HK416 : ' + w.noise + ' cases, ' + s.noise + ' au silencieux');
   ok(s.gunLen > w.gunLen && s.mobility < w.mobility && s.weight > w.weight, 'plus long, plus lourd, un peu moins mobile');
   eq(suppressedDef('m870'), WEAPONS.m870, 'pas de silencieux sur un fusil à pompe');
-  ok(suppressedDef('mp5').damage < WEAPONS.mp5.damage, '9 mm subsonique : un peu moins de dégâts');
+  // le silencieux ne freine pas la balle : seule une munition subsonique de remplacement l'affaiblit
+  const same = (k, msg) => { const a = suppressedDef(k), b = WEAPONS[k]; ok(a.damage === b.damage && a.range === b.range && a.effRange === b.effRange && a.speed === b.speed, msg); };
+  same('hk416', '5,56 supersonique : ni puissance ni portée perdues');
+  same('mp7', '4,6 supersonique : rien de perdu');
+  same('usp45', '.45 ACP subsonique d’origine : rien de perdu');
+  const m5 = suppressedDef('mp5'), w5 = WEAPONS.mp5;
+  ok(m5.damage < w5.damage && m5.range < w5.range && m5.effRange < w5.effRange && m5.speed < w5.speed, '9 mm subsonique : moins de dégâts, de portée et de vitesse');
+  ok(suppressedDef('glock17').damage < WEAPONS.glock17.damage, 'Glock 17 aussi');
   eq(suppressedDef('hk416'), s, 'chaque combinaison n’est calculée qu’une fois');
   // sur l'arme principale seulement, puis sur l'arme de poing seulement
   const { game: g1 } = mkGame({ loadout: { primary: 'hk416', sidearm: 'glock17', acc: { hk416: { sup: true } } } });
@@ -1562,6 +1569,92 @@ test('traçantes et gerbes de sang ne se voient pas derrière une porte fermée'
   ok(withFx() !== shot(), 'porte ouverte : la traçante et le sang se voient');
 });
 
+// Tir dans une porte : le joueur d'un côté (w.a), un suspect de l'autre (w.b), ses tirs comptés.
+function blindScene(doorOpen, faceAway, weapon) {
+  const g = mkGame({ alone: true });
+  const game = g.game, p = game.player;
+  const w = doorWithRoom(game);
+  setDoor(w.d, doorOpen ? 1 : 0);
+  p.x = w.a.x; p.y = w.a.y; p.hp = p.maxHp = 1e6;
+  const toYou = Math.atan2(w.a.y - w.b.y, w.a.x - w.b.x);
+  const foe = new Enemy(w.b.x, w.b.y, faceAway ? toYou + Math.PI : toYou, weapon || 'ak');
+  foe.hp = foe.maxHp = 1e6;
+  game.enemies = [foe];
+  const sc = { g, game, p, w, foe, shots: 0, through: false };
+  const fire = game.fireWeapon.bind(game);
+  game.fireWeapon = s => { if (s === foe) sc.shots++; fire(s); };
+  sc.run = n => { for (let i = 0; i < n; i++) { g.step(1); sc.through = sc.through || game.bullets.some(b => b.shooter === foe && b.pierced > 0); } };
+  return sc;
+}
+
+test('un suspect qui vous a vu disparaître derrière une porte tire dedans, puis vient voir', () => {
+  const sc = blindScene(true, false), { game, p, w, foe } = sc;
+  for (let i = 0; i < 60 && foe.target !== p; i++) sc.run(1);
+  eq(foe.target, p, 'il vous voit par la porte ouverte');
+  setDoor(w.d, 0); // on referme aussitôt, avant qu'il ait tiré
+  sc.run(1);
+  ok(foe.blind && !foe.target, 'porte refermée : il ne vous voit plus, mais il sait où vous êtes');
+  sc.shots = 0;
+  sc.run(120);
+  ok(sc.shots >= 3, 'il tire dans la porte (' + sc.shots + ' coups)');
+  ok(sc.through, 'ses balles la traversent');
+  sc.run(60);
+  ok(!foe.blind, 'il cesse au bout de quelques secondes');
+  sc.run(150);
+  ok(foe.state === 'investigate' || w.d.progress > 0, 'puis il vient voir (état ' + foe.state + ')');
+  // la porte rouverte sur une pièce vide : il ne tire plus dans le vide
+  const sc2 = blindScene(true, false);
+  for (let i = 0; i < 60 && sc2.foe.target !== sc2.p; i++) sc2.run(1);
+  setDoor(sc2.w.d, 0); sc2.run(1);
+  sc2.p.x = sc2.w.a.x + 40 * U; // parti (hors de la carte : plus personne derrière la porte)
+  setDoor(sc2.w.d, 1); sc2.run(1);
+  ok(!sc2.foe.blind, 'porte rouverte : il voit qu’il n’y a plus personne');
+  ok(game.map.doorsOnLine(foe.x, foe.y, foe.x, foe.y) === 0, 'un point sur lui-même : rien entre eux');
+});
+
+test('une balle venue à travers une porte fait riposter le suspect dans la porte', () => {
+  const sc = blindScene(false, true), { game, p, w, foe } = sc;
+  sc.run(30);
+  ok(!foe.blind && !foe.target && sc.shots === 0, 'au départ, il ne se doute de rien');
+  // une balle tirée de votre place, qui le frôle après avoir traversé la porte
+  const lat = 0.7 * U, tx = foe.x + (w.d.horizontal ? lat : 0), ty = foe.y + (w.d.horizontal ? 0 : lat);
+  const ang = Math.atan2(ty - p.y, tx - p.x);
+  game.bullets.push({ x: p.x, y: p.y, vx: Math.cos(ang) * 1150, vy: Math.sin(ang) * 1150, team: 'ops', damage: 30, life: 1,
+    shooter: p, ox: p.x, oy: p.y, trail: 18, pierce: 0.55, pierced: 0 });
+  sc.run(10);
+  ok(foe.blind, 'la balle sortie de la porte l’a frôlé : il sait qu’on tire de derrière');
+  ok(dist(foe.blind.x, foe.blind.y, p.x, p.y) <= 0.5 * U + 1, 'il vise d’où le coup est parti, à une demi-case près');
+  sc.shots = 0;
+  sc.run(120);
+  ok(sc.shots >= 3 && sc.through, 'il riposte à travers la porte (' + sc.shots + ' coups)');
+});
+
+test('au fusil à pompe scié, il tire dans la porte sans en faire sauter la serrure', () => {
+  const sc = blindScene(false, false, 'sgE'), { w, foe } = sc;
+  ok(foe.weapon.kind === 'shotgun', 'un fusil à pompe');
+  ok(sc.game.startBlindFire(foe, w.a.x, w.a.y), 'il vous sait derrière la porte');
+  sc.run(150);
+  ok(sc.shots >= 1 && sc.through, 'la chevrotine traverse la porte (' + sc.shots + ' coups)');
+  ok(!w.d.broken && w.d.progress === 0, 'tirée au jugé, elle ne vise pas la serrure : la porte tient');
+});
+
+test('à travers un mur, pas de tir à l’aveugle ; l’intervention ne tire jamais ainsi', () => {
+  const sc = blindScene(false, false), { game, w, foe } = sc, map = game.map;
+  eq(map.doorsOnLine(w.a.x, w.a.y, w.b.x, w.b.y), 1, 'porte fermée : une porte à traverser');
+  setDoor(w.d, 1);
+  eq(map.doorsOnLine(w.a.x, w.a.y, w.b.x, w.b.y), 0, 'porte ouverte : la vue est libre');
+  setDoor(w.d, 0);
+  // décalé le long du mur, au-delà de l'embrasure
+  const off = w.d.len * TILE, ox = w.d.horizontal ? off : 0, oy = w.d.horizontal ? 0 : off;
+  eq(map.doorsOnLine(w.a.x + ox, w.a.y + oy, w.b.x + ox, w.b.y + oy), -1, 'à travers le mur : rien ne passe');
+  foe.x += ox; foe.y += oy;
+  ok(!game.startBlindFire(foe, w.a.x + ox, w.a.y + oy) && !foe.blind, 'un mur entre eux : il ne tire pas');
+  foe.x -= ox; foe.y -= oy;
+  ok(game.startBlindFire(foe, w.a.x, w.a.y), 'une porte : il tire');
+  const op = new Operator(w.b.x, w.b.y, 0, 'hk416op');
+  ok(!game.startBlindFire(op, w.a.x, w.a.y) && !op.blind, 'un opérateur ne tire pas à l’aveugle (des otages peuvent être derrière)');
+});
+
 test('l’assaut dégoupille avant d’entrer, mais jamais contre une porte fermée', () => {
   const g = mkGame({ mode: 'siege' });
   const game = g.game;
@@ -1815,6 +1908,19 @@ function briefingGearTest() {
   ok(game.player.slots[0].def.suppressed && !game.player.slots[0].def.laser, 'MP5 au silencieux');
   ok(game.player.slots[1].def.laser && !game.player.slots[1].def.suppressed, 'Glock au laser');
   ok(acc('mp5', 'sup').classList.contains('sel') && !acc('mp5', 'laser').classList.contains('sel'), 'les boutons le montrent');
+  // la fiche dit ce que chaque accessoire change à cette arme
+  const fiches = ui.$('wdetail').querySelectorAll('.wd');
+  ok(/subsonique/.test(fiches[0].querySelector('.wd-acc').textContent), 'MP5 : la munition subsonique est annoncée');
+  ok(/faisceau se voit/.test(fiches[1].querySelector('.wd-acc').textContent), 'Glock : le laser se voit');
+  ok(/supersonique/.test(UI.accEffect('hk416', 'sup')), 'HK416 : la balle reste supersonique');
+  const enMouvement = fiche => {
+    const i = [...fiche.querySelectorAll('.wd-bars span')].findIndex(sp => sp.textContent === 'En mouvement');
+    return parseFloat(fiche.querySelectorAll('.wd-bars .bar div')[i].style.width);
+  };
+  const avant = enMouvement(fiches[1]);
+  acc('glock17', 'laser').click();
+  ok(enMouvement(ui.$('wdetail').querySelectorAll('.wd')[1]) < avant, 'Glock : le laser améliore le tir en mouvement');
+  acc('glock17', 'laser').click();
   card('hk416').click();
   ok(!game.player.slots[0].def.suppressed, 'le HK416 n’hérite pas du silencieux du MP5');
   card('mp5').click();

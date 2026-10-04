@@ -50,6 +50,9 @@ de chaque section.
   (`SOUND_WALL`, `SOUND_DOOR`) et seuils d'attention (`HEAR_*`, `SUSPICION_*`, `RESPONDERS`) sortent de parties
   simulées : depuis l'entrée, une rafale sans silencieux fait venir un ou deux suspects, la même au silencieux
   personne. À rejouer à la main, surtout en siège où les opérateurs convergent sur ce qu'ils entendent.
+- **Le tir dans une porte n'est réglé qu'à l'estime** : 2,5 s de rafales, ±0,6 case autour du point visé, riposte quand une
+  balle sortie d'une porte passe à moins de 1,2 case (`BLIND_*` en tête de `js/game.js`). Seuls les suspects de l'assaut le font :
+  ni les complices du siège, ni les coéquipiers, ni l'intervention (qui ne tire pas à l'aveugle avec des otages possibles derrière).
 - **Les opérateurs du siège n'ont pas de silencieux**, et les suspects ne se replient ni ne se barricadent :
   ils viennent voir, puis rentrent.
 
@@ -77,7 +80,7 @@ de chaque section.
 
 ## Fait depuis la dernière version
 
-Neutraliser tous les suspects suffit pour gagner en assaut · boucliers balistiques léger et lourd, avec l'arme
+Les suspects tirent dans la porte derrière laquelle ils vous ont vu disparaître, ou d'où l'on vient de leur tirer dessus · silencieux sans perte sur les balles supersoniques et le .45, munition subsonique plus faible pour le 9 mm, effets des accessoires détaillés au briefing · Neutraliser tous les suspects suffit pour gagner en assaut · boucliers balistiques léger et lourd, avec l'arme
 de poing seule · accessoires choisis arme par arme au briefing : silencieux et laser (`L`), et un silencieux pour
 les coéquipiers à part ·
 Otages à escorter jusqu'à une sortie pour les mettre à l'abri (H en assaut, les opérateurs en siège) ·

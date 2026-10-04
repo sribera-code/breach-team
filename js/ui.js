@@ -117,7 +117,7 @@ class UI {
         ${this.weaponGroup('hg', MODES[g.mode].sidearms, 'sidearm')}
       </div>
       <div id="wdetail"></div>
-      <p class="accnote"><small>Accessoires, arme par arme. <b>Silencieux</b> : un coup de feu ne s'entend plus qu'à 2 à 5 cases au lieu de 13 à 18 ; l'arme s'alourdit et s'allonge, et en 9 mm ou en .45 (subsonique) la balle porte un peu moins loin. <b>Laser</b> : en mouvement, la dispersion est divisée par deux (la gêne du bouclier aussi), mais le faisceau se voit — un adversaire qui l'aperçoit se tourne vers vous, puis vient voir. <kbd>L</kbd> l'éteint en jeu.</small></p>
+      <p class="accnote"><small>Accessoires, arme par arme. <b>Silencieux</b> : un coup de feu ne s'entend plus qu'à 2 à 5 cases au lieu de 13 à 18 ; l'arme s'alourdit et s'allonge. Il ne freine pas la balle : une balle de fusil ne perd rien mais claque encore, et le 9 mm ne se tait qu'avec une munition subsonique, plus faible (le .45 l'est d'origine). <b>Laser</b> : en mouvement, la dispersion est divisée par deux (la gêne du bouclier aussi), mais le faisceau se voit — un adversaire qui l'aperçoit se tourne vers vous, puis vient voir. <kbd>L</kbd> l'éteint en jeu.</small></p>
       ${siege ? '' : `<div class="suprow"><button class="supbtn${g.loadout.teamSup ? ' sel' : ''}" id="ovSup">${g.loadout.teamSup ? '🔇 Coéquipiers au silencieux' : '🔊 Coéquipiers sans silencieux'}</button>
         <small>Bravo et Charlie montent un silencieux : chacun reçoit alors une arme qui en accepte un (pas de fusil à pompe).</small></div>`}
       <div class="row"><button class="primary" id="ovGo">${siege ? 'Prendre position' : "Lancer l'assaut"}</button><button id="ovLevels">Missions</button></div>`);
@@ -197,11 +197,29 @@ class UI {
     });
   }
 
-  // Accessoires d'une arme : un bouton par accessoire, grisé si l'arme n'en accepte pas.
+  // Accessoires d'une arme : un bouton par accessoire, grisé si l'arme n'en accepte pas ; son effet sur
+  // cette arme en bulle d'aide, et en clair sous les boutons une fois monté.
   accRow(key) {
     const a = accOf(this.game.loadout, key), w = WEAPONS[key];
-    const btn = (name, label, fits, why) => `<button class="accbtn${fits && a[name] ? ' sel' : ''}" data-key="${key}" data-acc="${name}"${fits ? '' : ` disabled title="${why}"`}>${fits && a[name] ? '✓' : '+'} ${label}</button>`;
-    return `<div class="accrow">${btn('sup', 'Silencieux', !!SUPPRESSORS[key], w.kind === 'shotgun' ? 'Pas de silencieux sur un fusil à pompe' : 'Pas de silencieux pour cette arme')}${btn('laser', 'Laser', !!LASERS[key], 'Pas de rail pour fixer un laser')}</div>`;
+    const tip = name => { const t = UI.accEffect(key, name); return t[0].toUpperCase() + t.slice(1); };
+    const btn = (name, label, fits, why) => `<button class="accbtn${fits && a[name] ? ' sel' : ''}" data-key="${key}" data-acc="${name}" title="${fits ? tip(name) : why}"${fits ? '' : ' disabled'}>${fits && a[name] ? '✓' : '+'} ${label}</button>`;
+    const fitted = [['sup', 'Silencieux', SUPPRESSORS[key]], ['laser', 'Laser', LASERS[key]]].filter(([name, , fits]) => fits && a[name]);
+    const notes = fitted.map(([name, label]) => `<b>${label}</b> : ${UI.accEffect(key, name)}`).join('<br>');
+    return `<div class="accrow">${btn('sup', 'Silencieux', !!SUPPRESSORS[key], w.kind === 'shotgun' ? 'Pas de silencieux sur un fusil à pompe' : 'Pas de silencieux pour cette arme')}${btn('laser', 'Laser', !!LASERS[key], 'Pas de rail pour fixer un laser')}</div>${notes ? `<p class="wd-acc">${notes}</p>` : ''}`;
+  }
+
+  // Ce qu'un accessoire change sur une arme donnée. Le silencieux dépend de la munition : une balle
+  // supersonique ne perd rien mais claque encore, une munition subsonique de remplacement est plus faible.
+  static accEffect(key, name) {
+    const w = WEAPONS[key];
+    if (name === 'laser') {
+      return "dispersion en mouvement divisée par deux (la gêne du bouclier aussi), rien de gagné à l'arrêt, arme épaulée. Mais le faisceau se voit : un adversaire qui l'aperçoit se tourne vers vous, puis vient voir.";
+    }
+    const s = SUPPRESSORS[key], cases = String(s.noise).replace('.', ','), kg = `Plus lourd (+${String(s.weight).replace('.', ',')} kg) et plus long.`;
+    const pct = m => `−${Math.round((1 - m) * 100)} %`; // insécable : « −15 % » ne se coupe pas
+    if (s.subsonic === 'load') return `munition subsonique, presque muette (${cases} cases), mais ${pct(SUBSONIC.damage)} de dégâts, ${pct(SUBSONIC.effRange)} de portée efficace et ${pct(SUBSONIC.range)} de portée. ${kg}`;
+    if (s.subsonic === 'native') return `le ${w.caliber} est subsonique d'origine : presque muet (${cases} cases) sans rien perdre. ${kg}`;
+    return `la balle reste supersonique : ni puissance ni portée perdues, mais son claquement s'entend encore à ${cases} cases. ${kg}`;
   }
 
   shieldDetail(sh) {
@@ -227,6 +245,8 @@ class UI {
       ['Puissance', Math.sqrt(w.damage * (w.pellets || 1) / 135)],
       ['Cadence', n(w.rof, 0, 16)],
       ['Précision', n(12 * DEG - (2 * w.spread + w.bloom), 0, 12 * DEG)],
+      // ce que le laser améliore : la visée sans épauler
+      ['En mouvement', n(6 * DEG - w.moveSpread * (w.laser ? LASER_MOVE : 1), 0, 6 * DEG)],
       ['Portée', n(w.effRange, 0, 12 * U)],
       ['Mobilité', n(w.mobility, 0.85, 1.04)],
       ['Discrétion', n(12 - w.noise, 0, 10)],

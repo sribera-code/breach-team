@@ -55,6 +55,9 @@ const FRAG_RADIUS = 3.5 * U;
 const FRAG_DAMAGE = 200;
 // Laser : portée du faisceau, intervalle entre deux coups d'œil d'un suspect, inquiétude ajoutée quand il le voit.
 const LASER_RANGE = 22 * U, LASER_LOOK = 0.2, LASER_ALARM = 0.4;
+// Tir dans une porte (suspects) : durée pendant laquelle il arrose une porte derrière laquelle il sait quelqu'un,
+// écart latéral de ses rafales autour du point visé, et distance à laquelle une balle sortie d'une porte le fait riposter.
+const BLIND_FIRE = 2.5, BLIND_SWEEP = 0.6 * U, BLIND_NEAR = 1.2 * U;
 
 class Game {
   constructor() {
@@ -1370,13 +1373,15 @@ class Game {
     // (et bute sur l'obstacle, ou le traverse avec le malus d'une porte) au lieu de naître derrière.
     const muzzle = this.map.castRay(shooter.x, shooter.y, shooter.angle, ml, false);
     const blocked = muzzle.hit;
+    // la chevrotine fait sauter une serrure ; tirée au jugé dans une porte (blindFire), elle vise quelqu'un, pas la serrure
+    const breach = w.kind === 'shotgun' && !shooter.blind ? 1 : 0;
     const mx = blocked ? muzzle.x - Math.cos(shooter.angle) * 2 : shooter.x + Math.cos(shooter.angle) * ml;
     const my = blocked ? muzzle.y - Math.sin(shooter.angle) * 2 : shooter.y + Math.sin(shooter.angle) * ml;
     for (let i = 0; i < n; i++) {
       const a = shooter.angle + rand(-spread, spread);
       const clear = !blocked && !this.map.castRay(shooter.x, shooter.y, a, ml, false).hit;
       const bx = clear ? shooter.x + Math.cos(a) * ml : shooter.x, by = clear ? shooter.y + Math.sin(a) * ml : shooter.y;
-      this.bullets.push({ x: bx, y: by, vx: Math.cos(a) * w.speed, vy: Math.sin(a) * w.speed, team: shooter.team, damage: w.damage, life: w.range / w.speed, shooter, trail: w.heavy ? 10 : 18, pierce: w.pierce === undefined ? 0.4 : w.pierce, pierced: 0, breach: w.kind === 'shotgun' ? 1 : 0, pen: w.pen || 1 });
+      this.bullets.push({ x: bx, y: by, vx: Math.cos(a) * w.speed, vy: Math.sin(a) * w.speed, team: shooter.team, damage: w.damage, life: w.range / w.speed, shooter, ox: shooter.x, oy: shooter.y, trail: w.heavy ? 10 : 18, pierce: w.pierce === undefined ? 0.4 : w.pierce, pierced: 0, breach, pen: w.pen || 1 });
     }
     shooter.bloom = Math.min(shooter.bloom + w.bloom, w.bloomMax || 8 * DEG);
     shooter.kick = 1;
@@ -1427,6 +1432,7 @@ class Game {
         const tt = Math.max(0, t - Math.sqrt(c.radius * c.radius - perp * perp));
         if (tt <= hitT) { hitT = tt; victim = c; onShield = false; }
       }
+      if (b.pierced) this.doorShotAlarm(b, cs, sn, hitT);
       if (victim && onShield) { this.shieldHit(victim, b, b.x + cs * hitT, b.y + sn * hitT, ang); continue; }
       if (victim) {
         this.damage(victim, b.damage, b.shooter, ang);
@@ -1801,12 +1807,17 @@ class Game {
   }
 
   enemyCombat(e, dt) {
-    if (e.stun > 0) { e.stun -= dt; e.target = null; e.moving = false; return; }
+    if (e.stun > 0) { e.stun -= dt; e.target = null; e.blind = null; e.moving = false; return; }
     let t = e.target;
-    if (t && (!t.alive || dist(e.x, e.y, t.x, t.y) > e.viewRange || !this.map.hasLOS(e.x, e.y, t.x, t.y))) t = null;
+    if (t && (!t.alive || dist(e.x, e.y, t.x, t.y) > e.viewRange || !this.map.hasLOS(e.x, e.y, t.x, t.y))) {
+      // vu disparaître derrière une porte : il sait où, et tire dedans
+      if (t.alive) { e.target = null; this.startBlindFire(e, t.x, t.y); }
+      t = null;
+    }
     if (!t) {
       t = this.acquireFor(e, this.ops);
       if (t) {
+        e.blind = null;
         e.reactT = e.reaction;
         // un suspect qui vous repère crie l'alerte : ses voisins accourent
         if (!(e instanceof Operator) && this.time - e.shoutT > 5) { e.shoutT = this.time; this.noise(e.x, e.y, 6 * U, e, 'voice'); }
@@ -1816,6 +1827,7 @@ class Game {
     e.fireT -= dt; e.pauseT -= dt;
     e.bloom = Math.max(0, e.bloom - dt * 6 * DEG);
     if (!t) {
+      if (e.blind && this.blindFire(e, dt)) return;
       if (e.alertAngle !== null && turnToward(e, e.alertAngle, e.turnRate, dt)) e.alertAngle = null;
       return;
     }
@@ -1838,6 +1850,54 @@ class Game {
     if (clear && e.engaged && e.reactT <= 0 && e.pauseT <= 0 && e.fireT <= 0 && !e.act && Math.abs(angleDiff(e.angle, a)) < 0.25) {
       this.fireWeapon(e);
       if (--e.burstLeft <= 0) { e.burstLeft = w.burst; e.pauseT = w.pause; }
+    }
+  }
+
+  // Tir dans une porte : un suspect qui sait quelqu'un derrière une porte (il l'y a vu disparaître, ou une
+  // balle en est sortie vers lui) l'arrose BLIND_FIRE s à travers le battant, puis va voir. Seules des portes
+  // doivent le séparer du point : un mur arrête tout. L'intervention ne tire pas ainsi à l'aveugle (des
+  // otages peuvent se trouver derrière). Renvoie false s'il ne tire pas.
+  startBlindFire(e, x, y) {
+    if (e instanceof Operator || !e.alive || e.target || dist(e.x, e.y, x, y) > e.weapon.range) return false;
+    if (this.map.doorsOnLine(e.x, e.y, x, y) <= 0) return false;
+    e.blind = { x, y, t: BLIND_FIRE, off: e.blind ? e.blind.off : 0 };
+    e.state = 'engage'; e.lostT = 0; e.lastKnown = { x, y };
+    e.path = []; e.alertAngle = null;
+    return true;
+  }
+
+  // Une rafale après l'autre dans la porte, chacune un peu décalée (il ne voit pas ce qu'il vise). Il cesse
+  // au bout du temps, ou si la porte s'ouvre (il verrait qu'il n'y a plus personne) ou qu'un mur s'interpose.
+  blindFire(e, dt) {
+    const b = e.blind;
+    b.t -= dt;
+    if (b.t <= 0 || this.map.doorsOnLine(e.x, e.y, b.x, b.y) <= 0) { e.blind = null; return false; }
+    const d = dist(e.x, e.y, b.x, b.y), w = e.weapon;
+    const a = Math.atan2(b.y - e.y, b.x - e.x) + Math.atan2(b.off, d);
+    e.aimDist = d;
+    turnToward(e, a, e.turnRate, dt);
+    e.reactT -= dt;
+    if (e.reactT <= 0 && e.pauseT <= 0 && e.fireT <= 0 && !e.act && Math.abs(angleDiff(e.angle, a)) < 0.25) {
+      this.fireWeapon(e);
+      if (--e.burstLeft <= 0) { e.burstLeft = w.burst; e.pauseT = w.pause; b.off = rand(-BLIND_SWEEP, BLIND_SWEEP); }
+    }
+    return true;
+  }
+
+  // Une balle sortie d'une porte frôle ou touche un suspect : il sait qu'on tire de derrière et riposte dans
+  // la porte, vers l'endroit d'où le coup est parti (à une demi-case près : il l'entend, il ne le voit pas).
+  doorShotAlarm(b, cs, sn, len) {
+    const ox = b.ox !== undefined ? b.ox : b.shooter && b.shooter.x, oy = b.oy !== undefined ? b.oy : b.shooter && b.shooter.y;
+    if (ox == null) return;
+    for (const e of this.enemies) {
+      if (!e.alive || e.team === b.team || e.target || e.stun > 0) continue;
+      const t = clamp((e.x - b.x) * cs + (e.y - b.y) * sn, 0, len);
+      if (dist(b.x + cs * t, b.y + sn * t, e.x, e.y) > BLIND_NEAR) continue;
+      const was = !!e.blind, a = rand(0, TAU), r = rand(0, 0.5 * U);
+      if (!this.startBlindFire(e, ox + Math.cos(a) * r, oy + Math.sin(a) * r) && !this.startBlindFire(e, ox, oy)) continue;
+      if (was) continue;
+      e.reactT = e.reaction;
+      if (this.time - e.shoutT > 5) { e.shoutT = this.time; this.noise(e.x, e.y, 6 * U, e, 'voice'); }
     }
   }
 
@@ -2050,6 +2110,8 @@ class Game {
       return;
     }
     e.engaged = false;
+    // il arrose une porte sans bouger ; ensuite seulement il ira voir (état engage, puis investigate)
+    if (e.blind) { e.lostT = 0; e.moving = false; return; }
     switch (e.state) {
       case 'engage':
         e.lostT += dt;
