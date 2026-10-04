@@ -70,6 +70,14 @@ const LOCK_CHANCE = 0.3, LOCKPICK_TIME = 4;
 const CHARGES = 2, CHARGE_PLACE = 1.4, CHARGE_RADIUS = 2.5 * U;
 // Entrée coordonnée : délai entre l'ouverture de la porte et l'entrée de l'équipe (sans flash en préparation).
 const ENTRY_DELAY = 0.5;
+// Rondes (assaut) : PATROLS suspects font le tour de deux ou trois points au lieu de tenir leur poste, au pas
+// (PATROL_SPEED de leur vitesse), avec une pause de PATROL_PAUSE s à chaque point ; une étape fait entre
+// PATROL_LEG[0] et PATROL_LEG[1] de chemin.
+const PATROLS = 2, PATROL_SPEED = 0.55, PATROL_PAUSE = [2, 5], PATROL_LEG = [4 * U, 12 * U];
+// Alerte générale (assaut) : un suspect encore debout ALARM_TIME s après avoir vu un opérateur (le temps sonné
+// ne compte pas) prévient tout le bâtiment. Les autres réagissent alors plus vite (ALARM_REACT), et les
+// RESPONDERS les plus proches vont voir. Une fois par mission.
+const ALARM_TIME = 3, ALARM_REACT = 0.7;
 
 class Game {
   constructor() {
@@ -90,6 +98,8 @@ class Game {
     this.entryRandom = Game.loadSavedEntry(); // par défaut, le point d'entrée est tiré au sort
     this.lockDoors = true;   // assaut : certaines portes sont fermées à clé (les tests l'écartent)
     this.saveRecords = true; // meilleure note par mission, gardée dans le navigateur
+    this.patrols = true;     // assaut : quelques suspects font des rondes (les tests l'écartent)
+    this.alarms = true;      // assaut : un suspect qui survit après vous avoir vu donne l'alerte générale (idem)
   }
 
   static loadSavedEntry() {
@@ -139,6 +149,8 @@ class Game {
       shield: (m.shields || []).includes(l.shield) ? l.shield : null,
       teamSup: !!(l.teamSup || l.sup),
       cutPower: !!l.cutPower && m !== MODES.siege,
+      // un équipement enregistré avant les gilets reçoit le premier du mode (le souple)
+      vest: (m.vests || []).includes(l.vest) ? l.vest : (m.vests || [])[0] || null,
     };
   }
 
@@ -240,6 +252,7 @@ class Game {
       if (this.lockDoors) for (const d of this.map.doors) d.locked = Math.random() < LOCK_CHANCE;
       // le courant tombe d'un coup : ils s'inquiètent, sans savoir encore d'où viendra la menace
       if (this.dark) for (const e of this.enemies) e.suspicion = 0.8;
+      if (this.patrols) this.buildPatrols(entryBreach);
     }
     this.bullets = [];
     this.beam = null; // faisceau du laser du joueur, recalculé à chaque pas (voir spotLaser)
@@ -256,6 +269,7 @@ class Game {
     this.charges = [];   // charges de brèche posées, en attente de mise à feu
     this.stack = null;   // équipe en colonne de part et d'autre d'une porte (entrée coordonnée)
     this.shoutT = -9;    // dernière sommation
+    this.alarm = null;   // alerte générale donnée par un suspect : { by, x, y, t } (voir raiseAlarm)
     this.score = null;   // note de fin de mission (voir scoreReport)
     this.record = null;  // meilleure note précédente pour cette mission, et si elle vient d'être battue
     this.squadSize = 1 + this.mates.length; // vous compris : c'est le groupe entier qui compte ses pertes
@@ -271,6 +285,97 @@ class Game {
     this.message = { text: '', t: 0 };
     this.computeVision();
     this.emit('level');
+  }
+
+  // Rondes : PATROLS suspects tirés au sort reçoivent un circuit de deux ou trois points, leur poste compris.
+  // Chaque étape fait entre PATROL_LEG[0] et PATROL_LEG[1] de chemin (des portes à franchir au besoin : ils ont
+  // les clés), et aucune ne passe par la pièce d'entrée de l'assaut.
+  buildPatrols(entryBreach) {
+    const m = this.map, room = entryBreach ? m.roomOf(entryBreach.inside.x, entryBreach.inside.y) : null;
+    const inRoom = q => !!room && room.has(Math.floor(q.y / TILE) * m.w + Math.floor(q.x / TILE));
+    const shuffle = a => { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+    const cand = [];
+    for (let ty = 2; ty < m.h - 2; ty += 2) for (let tx = 2; tx < m.w - 2; tx += 2) {
+      if (m.blocksMove(tx, ty) || m.door(tx, ty) || m.tile(tx, ty) !== 0) continue;
+      const q = { x: (tx + 0.5) * TILE, y: (ty + 0.5) * TILE };
+      if (!inRoom(q) && m.circleFree(q.x, q.y, 12, true)) cand.push(q);
+    }
+    // longueur du chemin de a à b, ou null s'il n'y en a pas, s'il sort des bornes ou traverse la pièce d'entrée
+    const leg = (a, b, r) => {
+      const path = m.routeTo(a.x, a.y, Math.floor(b.x / TILE), Math.floor(b.y / TILE), r);
+      if (!path || !path.length || path.some(inRoom)) return null;
+      let L = 0, px = a.x, py = a.y;
+      for (const q of path) { L += dist(px, py, q.x, q.y); px = q.x; py = q.y; }
+      return L >= PATROL_LEG[0] && L <= PATROL_LEG[1] ? L : null;
+    };
+    let made = 0;
+    for (const e of shuffle(this.enemies.slice())) {
+      if (made >= PATROLS) break;
+      const pts = [{ x: e.home.x, y: e.home.y }];
+      for (const c of shuffle(cand)) {
+        if (pts.length >= 3) break;
+        const last = pts[pts.length - 1];
+        if (pts.some(q => dist(q.x, q.y, c.x, c.y) < 3 * U) || dist(last.x, last.y, c.x, c.y) > PATROL_LEG[1]) continue;
+        if (leg(last, c, e.radius) === null) continue;
+        // le troisième point doit aussi ramener au poste
+        if (pts.length === 2 && leg(c, pts[0], e.radius) === null) continue;
+        pts.push(c);
+      }
+      if (pts.length < 2) continue;
+      e.patrol = { pts, i: 0, wait: rand(0, 3), going: false };
+      made++;
+    }
+  }
+
+  // Ronde d'un suspect au calme : il marche jusqu'au point suivant, s'y arrête et regarde autour de lui, puis
+  // repart. Son poste (home) suit la ronde : après être allé voir un bruit, il reprend où il en était.
+  patrolStep(e, dt) {
+    const P = e.patrol;
+    if (e.path.length || e.waitDoor || e.holdT > 0) { this.moveAlong(e, dt); return; }
+    if (P.going) { // arrivé : une pause, l'œil dans le sens de la marche
+      P.going = false;
+      P.wait = rand(PATROL_PAUSE[0], PATROL_PAUSE[1]);
+      e.homeAngle = e.angle;
+      e.idleT = rand(0.8, 1.6);
+    }
+    if (P.wait > 0) {
+      P.wait -= dt;
+      e.idleT -= dt;
+      if (e.idleT <= 0) { e.idleT = rand(1, 2.2); e.lookAt = e.homeAngle + rand(-1.2, 1.2); }
+      if (e.lookAt !== null && e.alertAngle === null && turnToward(e, e.lookAt, 2, dt)) e.lookAt = null;
+      return;
+    }
+    P.i = (P.i + 1) % P.pts.length;
+    const q = P.pts[P.i];
+    e.home = { x: q.x, y: q.y };
+    e.path = this.pathTo(e, q.x, q.y);
+    e.lookAt = null;
+    if (e.path.length) P.going = true;
+    else P.wait = 2; // injoignable pour l'instant (quelqu'un dans le passage) : il essaiera le suivant
+  }
+
+  // Alerte générale : le suspect crie (on l'entend), et tout le bâtiment se met sur ses gardes. Chacun se tourne
+  // vers l'endroit signalé et réagira plus vite ; les plus proches y vont.
+  raiseAlarm(e) {
+    const at = e.lastKnown || { x: e.x, y: e.y };
+    this.alarm = { by: e, x: at.x, y: at.y, t: this.time };
+    e.shoutT = this.time;
+    this.noise(e.x, e.y, 8 * U, e, 'voice');
+    Sound.alarm();
+    this.say("Un suspect a donné l'alerte : tout le bâtiment est sur ses gardes", 3.5);
+    const free = [];
+    for (const o of this.enemies) {
+      if (o === e || !Game.active(o) || o.surrender) continue;
+      o.alerted = true;
+      o.reaction *= ALARM_REACT;
+      o.suspicion = Math.max(o.suspicion, SUSPICION_GO * 0.9);
+      if (o.target || o.blind || o.state === 'engage') continue;
+      const toward = Math.atan2(at.y - o.y, at.x - o.x);
+      o.alertAngle = toward;
+      if (o.state !== 'investigate') { o.homeAngle = toward; free.push(o); }
+    }
+    free.sort((a, b) => dist(a.x, a.y, at.x, at.y) - dist(b.x, b.y, at.x, at.y));
+    for (const o of free.slice(0, RESPONDERS)) this.investigate(o, at.x, at.y, 0.7);
   }
 
   // Postes possibles pour les terroristes et les otages : les emplacements écrits sur la carte,
@@ -716,6 +821,7 @@ class Game {
       add('Équipe indemne', `${size - lost} / ${size}`, share(size - lost, size, 15));
       if (s.badKills) add('Suspects abattus après reddition', s.badKills, -15 * s.badKills);
       if (s.friendly) add("Balles dans l'équipe", s.friendly, -3 * s.friendly);
+      if (this.alarm) add('Alerte générale donnée', 'par un suspect', -5);
     }
     let total = clamp(lines.reduce((t, l) => t + l.pts, 0), 0, 100);
     if (!win) total = Math.min(total, 49);
@@ -752,7 +858,7 @@ class Game {
     this.unstick(p);
     if (dx || dy) {
       const l = Math.hypot(dx, dy); dx /= l; dy /= l;
-      const spd = (p.walkMode ? p.walkSpeed : p.runSpeed) * p.weapon.mobility * (p.shield ? p.shield.mobility : 1)
+      const spd = (p.walkMode ? p.walkSpeed : p.runSpeed) * p.weapon.mobility * (p.shield ? p.shield.mobility : 1) * (p.vest ? p.vest.mobility : 1)
         * (p.reloadT > 0 ? 0.8 : 1) * (p.act ? 0.55 : 1);
       const bx = p.x, by = p.y;
       this.tryMove(p, dx * spd * dt, dy * spd * dt);
@@ -1756,7 +1862,7 @@ class Game {
       if (b.pierced) this.doorShotAlarm(b, cs, sn, hitT);
       if (victim && onShield) { this.shieldHit(victim, b, b.x + cs * hitT, b.y + sn * hitT, ang); continue; }
       if (victim) {
-        this.damage(victim, b.damage, b.shooter, ang);
+        this.damage(victim, this.vestHit(victim, b, ang, b.damage), b.shooter, ang);
         if (b.shooter === this.player && victim.team === 'enemy') this.stats.hits++;
         continue;
       }
@@ -1797,7 +1903,7 @@ class Game {
     Sound.ping();
     this.noise(x, y, 2.5 * U, b.shooter, 'impact');
     if (b.pen > sh.stops) {
-      this.damage(c, b.damage * sh.through, b.shooter, ang);
+      this.damage(c, this.vestHit(c, b, ang, b.damage * sh.through), b.shooter, ang);
       if (b.shooter === this.player && c.team === 'enemy') this.stats.hits++;
       return;
     }
@@ -1805,6 +1911,22 @@ class Game {
     c.handBloom = Math.max(c.handBloom || 0, 2 * DEG); // le choc dérange la visée
     if (c === this.player) this.camShake = Math.max(this.camShake, 2.5);
     if (c !== this.player && !c.target && b.shooter) c.alertAngle = Math.atan2(b.shooter.y - c.y, b.shooter.x - c.x);
+  }
+
+  // Balle sur un porteur de gilet (ang : sens de sa course) : dégâts encaissés. De face ou de dos, dans l'arc
+  // des plaques, elles arrêtent jusqu'à vest.plate ; partout, le gilet souple arrête jusqu'à vest.soft. Une
+  // balle arrêtée ne laisse que le choc ; une balle qui perce frappe de tous ses dégâts.
+  vestHit(c, b, ang, dmg) {
+    const v = c.vest;
+    if (!v || !c.alive) return dmg;
+    const plate = v.plate && (Math.abs(angleDiff(c.angle, ang + Math.PI)) <= v.arc || Math.abs(angleDiff(c.angle, ang)) <= v.arc);
+    if (plate && b.pen <= v.plate) { this.vestStop(c); return dmg * v.plateBlunt; }
+    if (b.pen <= v.soft) { this.vestStop(c); return dmg * v.blunt; }
+    return dmg;
+  }
+
+  vestStop(c) {
+    c.handBloom = Math.max(c.handBloom || 0, 1.5 * DEG); // le choc dérange la visée
   }
 
   damage(target, dmg, shooter, ang) {
@@ -2145,8 +2267,9 @@ class Game {
       if (t) {
         e.blind = null;
         e.reactT = e.reaction + (this.dazzles(t, e) ? LAMP_DAZZLE : 0);
-        // un suspect qui vous repère crie l'alerte : ses voisins accourent
+        // un suspect qui vous repère crie l'alerte : ses voisins accourent ; et s'il tient, il prévient tout le monde
         if (!(e instanceof Operator) && this.time - e.shoutT > 5) { e.shoutT = this.time; this.noise(e.x, e.y, 6 * U, e, 'voice'); }
+        if (!(e instanceof Operator) && e.spotT === null) e.spotT = 0;
       }
     }
     e.target = t;
@@ -2250,7 +2373,8 @@ class Game {
       agent.waitDoor = door;
       return;
     }
-    const step = Math.min(d, agent.speed * dt);
+    // un suspect en ronde marche, il ne court pas
+    const step = Math.min(d, agent.speed * (agent.patrol && agent.state === 'idle' ? PATROL_SPEED : 1) * dt);
     agent.x += Math.cos(ang) * step;
     agent.y += Math.sin(ang) * step;
     agent.moving = true;
@@ -2422,6 +2546,8 @@ class Game {
     e.noiseT -= dt;
     e.suspicion = Math.max(0, e.suspicion - SUSPICION_DECAY * dt);
     this.enemyCombat(e, dt);
+    // il vous a vu : s'il tient ALARM_TIME (sonné, le temps ne compte pas), tout le bâtiment est prévenu
+    if (e.spotT !== null && !this.alarm && this.alarms && e.stun <= 0 && (e.spotT += dt) >= ALARM_TIME) this.raiseAlarm(e);
     if (e.stun > 0) return;
     if (!e.target) { this.spotBody(e); this.spotLaser(e, dt); }
     if (e.target) {
@@ -2465,6 +2591,7 @@ class Game {
         else { e.state = 'idle'; e.idleT = rand(1, 3); }
         break;
       default:
+        if (e.patrol) { this.patrolStep(e, dt); break; }
         e.idleT -= dt;
         if (e.idleT <= 0) { e.idleT = rand(2, 6); e.lookAt = e.homeAngle + rand(-0.9, 0.9); }
         if (e.lookAt !== null && e.alertAngle === null && turnToward(e, e.lookAt, 2, dt)) e.lookAt = null;

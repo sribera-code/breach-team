@@ -88,13 +88,14 @@ button.primary:hover { background: #38945d; }
 .wcard .wname { font-weight: 600; font-size: 12.5px; }
 .wcard small { color: #8e99a6; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .wcard.sel { border-color: #ffb347; background: #262017; box-shadow: inset 0 0 0 1px #ffb347; }
-.suprow { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
+.suprow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; }
 .supbtn { flex: none; padding: 6px 12px; font-size: 13px; font-weight: 600; }
 .supbtn.sel { border-color: #ffb347; background: #262017; color: #ffd27a; }
 .suprow small { color: #8e99a6; font-size: 11px; line-height: 1.4; }
-.accrow { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; align-items: center; gap: 6px; margin-bottom: 6px; }
-.accname { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.accbtn { padding: 4px 10px; font-size: 12px; font-weight: 600; }
+.accrow { margin-bottom: 6px; }
+.accname { display: block; font-size: 11px; letter-spacing: 1px; color: #8e99a6; margin: 0 0 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.accbtns { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 5px; }
+.accbtn { padding: 4px 4px; font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .accbtn.sel { border-color: #ffb347; background: #262017; color: #ffd27a; }
 .accbtn:disabled { opacity: 0.4; cursor: default; }
 .accbtn:disabled:hover { background: #1d232b; }

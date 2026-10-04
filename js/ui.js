@@ -31,7 +31,7 @@ class UI {
     } else {
       const out = g.hostages.filter(h => h.evacuated).length;
       const left = g.enemies.filter(Game.active).length, held = g.enemies.filter(e => e.cuffed).length;
-      this.$('objective').textContent = `Suspects : ${left} / ${g.enemies.length}${held ? ` (${held} arrêté${held > 1 ? 's' : ''})` : ''} · Otages évacués : ${out} / ${g.hostages.length}${g.dark ? ' · Courant coupé' : ''}`;
+      this.$('objective').textContent = `Suspects : ${left} / ${g.enemies.length}${held ? ` (${held} arrêté${held > 1 ? 's' : ''})` : ''} · Otages évacués : ${out} / ${g.hostages.length}${g.dark ? ' · Courant coupé' : ''}${g.alarm ? ' · Alerte générale' : ''}`;
     }
     const fill = this.$('hpFill');
     fill.style.width = (100 * p.hp / p.maxHp) + '%';
@@ -133,8 +133,7 @@ class UI {
           </div>
           <h2>Accessoires</h2>
           <div id="waccs"></div>
-          ${siege ? '' : `<div class="suprow"><button class="supbtn${g.loadout.teamSup ? ' sel' : ''}" id="ovSup">${g.loadout.teamSup ? '🔇 Coéquipiers au silencieux' : '🔊 Coéquipiers sans silencieux'}</button>
-            <small>Bravo et Charlie reçoivent alors une arme qui en accepte un (pas de fusil à pompe).</small></div>`}
+          ${siege ? '' : `<div class="suprow">${this.vestButton()}<button class="supbtn${g.loadout.teamSup ? ' sel' : ''}" id="ovSup" title="Silencieux pour Bravo et Charlie : ils reçoivent alors une arme qui en accepte un (pas de fusil à pompe).">${g.loadout.teamSup ? '🔇 Équipe au silencieux' : '🔊 Équipe sans silencieux'}</button></div>`}
         </section>
         <section class="brief-col brief-specs"><div class="brief-specs-in"><h2>Caractéristiques</h2><div id="wdetail"></div></div></section>
       </div>
@@ -151,6 +150,8 @@ class UI {
     this.hookPlan();
     const sup = this.panel.querySelector('#ovSup');
     if (sup) sup.onclick = () => { g.setLoadout({ teamSup: !g.loadout.teamSup }); this.showBriefing(); };
+    const vest = this.panel.querySelector('#ovVest');
+    if (vest) vest.onclick = () => { g.setLoadout({ vest: vest.dataset.next }); this.showBriefing(); };
     const pow = this.panel.querySelector('#ovPower');
     if (pow) pow.onclick = () => { g.setLoadout({ cutPower: !g.loadout.cutPower }); this.showBriefing(); };
     // une arme principale remplace le bouclier, et inversement
@@ -179,6 +180,16 @@ class UI {
     const btns = bs.map((b, i) =>
       `<button class="entrybtn${!g.entryRandom && i === g.entryIndex ? ' sel' : ''}" data-entry="${i}">${g.map.breachLabel(b)}</button>`).join('');
     return `<h2>Point d'entrée</h2><canvas class="plan pick" id="ovPlan" title="Cliquez une ouverture pour entrer par là"></canvas>${legend}<div class="entries">${hasard}${btns}</div>${this.powerRow()}`;
+  }
+
+  // Gilet pare-balles : un bouton qui passe de l'un à l'autre (souple, la référence, ou lourd à plaques),
+  // ce qu'il arrête en bulle d'aide.
+  vestButton() {
+    const g = this.game, keys = MODES[g.mode].vests || [];
+    if (!keys.length) return '';
+    const k = keys.includes(g.loadout.vest) ? g.loadout.vest : keys[0], v = VESTS[k], next = keys[(keys.indexOf(k) + 1) % keys.length];
+    const kg = String(v.weight).replace('.', ',');
+    return `<button class="supbtn${v.plate ? ' sel' : ''}" id="ovVest" data-next="${next}" title="${v.name}, ${v.rating}, ${kg} kg. ${v.note} Cliquez pour changer de gilet.">🦺 ${v.short} · ${kg} kg</button>`;
   }
 
   // Couper le courant avant d'entrer : tout le bâtiment dans le noir. On n'y voit plus qu'à quelques pas
@@ -283,14 +294,18 @@ class UI {
     const a = key ? accOf(this.game.loadout, key) : {}, w = key && WEAPONS[key];
     const tip = name => { const t = UI.accEffect(key, name); return t[0].toUpperCase() + t.slice(1); };
     const btn = (name, txt, fits, why) => `<button class="accbtn${fits && a[name] ? ' sel' : ''}" data-key="${key}" data-acc="${name}" title="${fits ? tip(name) : why}"${fits ? '' : ' disabled'}>${fits && a[name] ? '✓' : '+'} ${txt}</button>`;
-    const supWhy = !w ? 'Pas d\'accessoire sur un bouclier' : w.kind === 'shotgun' ? 'Pas de silencieux sur un fusil à pompe' : 'Pas de silencieux pour cette arme';
-    return `<div class="accrow"><span class="accname">${w ? w.name : label}</span>${btn('sup', 'Silencieux', !!(key && SUPPRESSORS[key]), supWhy)}${btn('laser', 'Laser', !!(key && LASERS[key]), w ? 'Pas de rail pour fixer un laser' : supWhy)}${btn('light', 'Lampe', !!(key && LIGHTS[key]), w ? 'Pas de rail pour fixer une lampe' : supWhy)}</div>`;
+    const none = 'Pas d\'accessoire sur un bouclier';
+    const why = txt => (w ? txt : none);
+    const supWhy = why(w && w.kind === 'shotgun' ? 'Pas de silencieux sur un fusil à pompe' : 'Pas de silencieux pour cette arme');
+    const gripWhy = why(w && w.cat === 'hg' ? 'Pas de poignée avant sur une arme de poing' : w && w.kind === 'pdw' ? 'Le MP7 a déjà sa poignée avant, repliable' : 'Pas de rail sous le garde-main');
+    return `<div class="accrow"><span class="accname">${w ? w.name : label}</span><div class="accbtns">${btn('sup', 'Silencieux', !!(key && SUPPRESSORS[key]), supWhy)}${btn('laser', 'Laser', !!(key && LASERS[key]), why('Pas de rail pour fixer un laser'))}${btn('light', 'Lampe', !!(key && LIGHTS[key]), why('Pas de rail pour fixer une lampe'))}${btn('grip', 'Poignée', !!(key && GRIPS[key]), gripWhy)}${btn('mag', 'Chargeur', !!(key && MAGS[key]), why('Pas de chargeur grande capacité pour cette arme'))}</div></div>`;
   }
 
   // Effet des accessoires montés, en clair dans la fiche.
   accNotes(key) {
     const a = accOf(this.game.loadout, key);
-    const notes = [['sup', 'Silencieux', SUPPRESSORS[key]], ['laser', 'Laser', LASERS[key]], ['light', 'Lampe', LIGHTS[key]]]
+    const notes = [['sup', 'Silencieux', SUPPRESSORS[key]], ['laser', 'Laser', LASERS[key]], ['light', 'Lampe', LIGHTS[key]],
+      ['grip', 'Poignée avant', GRIPS[key]], ['mag', 'Chargeur grande capacité', MAGS[key]]]
       .filter(([name, , fits]) => fits && a[name]).map(([name, label]) => `<b>${label}</b> : ${UI.accEffect(key, name)}`);
     return notes.length ? `<p class="wd-acc">${notes.join('<br>')}</p>` : '';
   }
@@ -298,7 +313,15 @@ class UI {
   // Ce qu'un accessoire change sur une arme donnée. Le silencieux dépend de la munition : une balle
   // supersonique ne perd rien mais claque encore, une munition subsonique de remplacement est plus faible.
   static accEffect(key, name) {
-    const w = WEAPONS[key];
+    const w = WEAPONS[key], num = v => String(v).replace('.', ',');
+    if (name === 'grip') {
+      return `la main avant tient l'arme : ${Math.round((1 - GRIP.bloom) * 100)} % d'ouverture en moins à chaque tir en rafale, ${Math.round((1 - GRIP.recoil) * 100)} % de recul en moins. Rien de changé au premier coup. +${num(GRIPS[key])} kg.`;
+    }
+    if (name === 'mag') {
+      const m = MAGS[key], what = m.drum ? `tambour de ${m.mag} coups` : m.tube ? `rallonge de tube : ${m.mag} cartouches au lieu de ${w.mag}` : `${m.mag} coups au lieu de ${w.mag}`;
+      const rl = m.reload > 1 ? `, rechargement ${Math.round((m.reload - 1) * 100)} % plus long` : '';
+      return `${what}. On recharge moins souvent, pas avec plus de munitions en tout. Plus lourd (+${num(m.weight)} kg)${rl}.`;
+    }
     if (name === 'light') {
       return "éclaire un cône devant l'arme. Inutile si le bâtiment est éclairé ; courant coupé, c'est elle qui fait voir loin. Prise en face de près, elle éblouit un suspect, qui met plus de temps à viser. Mais elle se voit de loin dans le noir. X l'éteint ou la rallume (celles de l'équipe avec).";
     }
@@ -403,7 +426,9 @@ class UI {
     const W = Math.round(170 * k), H = Math.round(50 * k), sc = 3.45 * k, ctx = UI.cardPlate(canvas, W, H);
     const x0 = { pistol: 8.2, pdw: -2.8, smg: -5.4 }[w.kind] ?? -6.6;
     const x1 = 13 + w.gunLen;
-    ctx.translate((W - (x1 - x0) * sc) / 2 - x0 * sc, H / 2 - 4 * k);
+    // un chargeur long (ou un tambour) descend plus bas : on remonte un peu l'arme pour qu'il tienne
+    const up = !w.tint || !w.tint.extMag || w.kind === 'pistol' || w.kind === 'shotgun' ? 0 : w.tint.extMag === 'drum' ? 4.5 * k : 3 * k;
+    ctx.translate((W - (x1 - x0) * sc) / 2 - x0 * sc, H / 2 - 4 * k - up);
     ctx.scale(sc, sc * GUN_THICK);
     ctx.shadowColor = 'rgba(0,0,0,0.4)'; ctx.shadowBlur = 1.2; ctx.shadowOffsetY = 0.8;
     Sprites.gun(ctx, w.kind, w.gunLen, w.tint);
@@ -536,11 +561,13 @@ class UI {
       <b>Flash</b> : <kbd>Espace</kbd> (ou <kbd>G</kbd>) lance une grenade aveuglante vers le curseur : la distance au curseur règle la force du lancer. Elle vole par-dessus le mobilier (tables, plantes, caisses...), retombe, puis roule et rebondit sur les murs, les meubles et les portes fermées, et explose au bout d'environ 1,7 s. Attention aux retours contre un mur proche. Collé à une porte entrouverte, visez l'embrasure pour glisser la grenade par l'entrebâillement ; de plus loin, elle rebondit sur le battant. Les ennemis aveuglés ne tirent plus pendant quelques secondes. Ne regardez pas l'explosion.<br>
       <b>À travers les portes</b> : un battant n'est pas un abri. Les balles le traversent en perdant de l'énergie (un tiers pour du 7,62, les quatre cinquièmes pour de la chevrotine) et en déviant un peu. Vous pouvez arroser une porte fermée — et un suspect peut faire de même. Les murs, eux, arrêtent tout.<br>
       <b>Relais et armes au sol</b> : si vous tombez, vous reprenez la main dans le coéquipier debout le plus proche ; la mission n'est perdue que quand toute l'équipe est à terre. Près d'un corps, <kbd>V</kbd> ramasse son arme et laisse au sol la vôtre de même catégorie (vous pouvez la reprendre).<br>
-      <b>Bruit</b> : coups de feu, portes, impacts, grenades, cris et pas de course s'entendent à une certaine distance, qui fond à travers les murs et les portes fermées (le son contourne les angles par les portes ouvertes). Marcher (<kbd>A</kbd>) est silencieux ; courir s'entend à deux ou trois cases. Un suspect qui entend quelque chose se tourne vers le bruit et s'inquiète ; un bruit fort (tir, cri, explosion) ou des bruits qui se répètent le font venir voir — deux au plus à la fois, les autres guettent de ce côté —, puis il regagne son poste. Un « ? » au-dessus de lui le signale. Celui qui vous repère crie l'alerte, celui qui découvre le corps d'un des siens aussi. Autour de vous, des arcs montrent la direction et la force de ce que vous entendez hors de vue : rouge pour un tir, jaune pour une porte, gris pour des pas ou une grenade qui rebondit, orange pour un cri, blanc pour une explosion. Après chacun de vos propres bruits, un halo montre jusqu'où il a porté.<br>
+      <b>Bruit</b> : coups de feu, portes, impacts, grenades, cris et pas de course s'entendent à une certaine distance, qui fond à travers les murs et les portes fermées (le son contourne les angles par les portes ouvertes). Marcher (<kbd>A</kbd>) est silencieux ; courir s'entend à deux ou trois cases. Un suspect qui entend quelque chose se tourne vers le bruit et s'inquiète ; un bruit fort (tir, cri, explosion) ou des bruits qui se répètent le font venir voir — deux au plus à la fois, les autres guettent de ce côté —, puis il regagne son poste. Un « ? » au-dessus de lui le signale. Celui qui vous repère crie l'alerte, celui qui découvre le corps d'un des siens aussi.<br>
+      <b>Rondes et alerte générale</b> : en assaut, deux suspects ne tiennent pas un poste mais font une ronde, au pas, entre deux ou trois points, avec une pause à chacun : observez avant d'entrer. Un suspect qui vous a vu et reste debout trois secondes prévient tout le bâtiment (un « ! » rouge, dont l'anneau se remplit, le signale) : tous les autres réagissent alors plus vite et les plus proches viennent voir. Abattez-le, arrêtez-le ou aveuglez-le avant (sonné, le temps ne compte pas). L'alerte générale coûte cinq points à la note de fin. Autour de vous, des arcs montrent la direction et la force de ce que vous entendez hors de vue : rouge pour un tir, jaune pour une porte, gris pour des pas ou une grenade qui rebondit, orange pour un cri, blanc pour une explosion. Après chacun de vos propres bruits, un halo montre jusqu'où il a porté.<br>
       <b>Sommation et arrestation</b> : <kbd>C</kbd> crie « Police ! À terre ! ». Chaque suspect que vous voyez à portée de voix peut se rendre : il lâche son arme et se met à genoux, mains sur la tête. Il cède plus facilement aveuglé par une flash, blessé, pris de dos ou tenu en joue par plusieurs d'entre vous ; bien moins en plein échange de tirs ou avec un complice à côté. Approchez-vous et <kbd>H</kbd> le menotte. Un suspect rendu que plus personne ne surveille finit par reprendre son arme. Il compte comme neutralisé une fois menotté. Le cri s'entend : les autres viennent voir. Abattre un suspect rendu coûte cher dans la note de fin.<br>
-      <b>Note de fin</b> : chaque mission est notée sur 100, de S à D : otages en vie et évacués, suspects arrêtés plutôt qu'abattus, équipe indemne ; un suspect abattu après sa reddition ou une balle dans un coéquipier retirent des points. Votre meilleure note par mission est gardée.<br>
+      <b>Note de fin</b> : chaque mission est notée sur 100, de S à D : otages en vie et évacués, suspects arrêtés plutôt qu'abattus, équipe indemne ; un suspect abattu après sa reddition, une balle dans un coéquipier ou l'alerte générale retirent des points. Votre meilleure note par mission est gardée.<br>
       <b>Courant coupé et lampe</b> : au briefing, vous pouvez couper le courant avant d'entrer. Dans le noir, on ne voit qu'à quatre cases, vous comme les suspects, sauf ce qu'éclaire une lampe, et un tireur sans silencieux se trahit un instant par sa flamme. La <b>lampe</b> (accessoire, sur toute arme à rail) éclaire un cône loin devant vous et éblouit un suspect pris en face de près, mais dans le noir elle se voit de loin. <kbd>X</kbd> l'éteint ou la rallume ; Bravo et Charlie, équipés d'une lampe quand le courant est coupé, font comme vous.<br>
-      <b>Accessoires</b> : au briefing, arme par arme. Le <b>silencieux</b> : un tir ne s'entend plus qu'à 2 à 5 cases selon le calibre, au lieu de 13 à 18, mais l'arme est plus lourde et plus longue, et l'impact d'une balle manquée s'entend toujours ; un bouton à part en munit aussi Bravo et Charlie. Le <b>laser</b> : le point montre où part la balle, ce qui divise par deux la dispersion en mouvement ; mais le faisceau se voit, et un suspect qui aperçoit le trait ou le point se tourne vers vous, puis vient voir. <kbd>L</kbd> l'éteint ou le rallume ; il s'éteint de lui-même pendant un geste ou un rechargement.<br>
+      <b>Accessoires</b> : au briefing, arme par arme. Le <b>silencieux</b> : un tir ne s'entend plus qu'à 2 à 5 cases selon le calibre, au lieu de 13 à 18, mais l'arme est plus lourde et plus longue, et l'impact d'une balle manquée s'entend toujours ; un bouton à part en munit aussi Bravo et Charlie. Le <b>laser</b> : le point montre où part la balle, ce qui divise par deux la dispersion en mouvement ; mais le faisceau se voit, et un suspect qui aperçoit le trait ou le point se tourne vers vous, puis vient voir. <kbd>L</kbd> l'éteint ou le rallume ; il s'éteint de lui-même pendant un geste ou un rechargement. La <b>poignée avant</b> (HK416, SCAR-H, MP5) : la rafale s'ouvre d'un quart de moins et l'arme relève moins. Le <b>chargeur grande capacité</b> (40 coups pour le HK416, 33 pour le Glock, rallonge de tube pour le Remington ; en siège, tambour de 75 pour l'AKM, 45 pour l'AK-74, 40 pour l'Uzi) : on recharge moins souvent, mais pas avec plus de cartouches en tout, l'arme est plus lourde et le rechargement un peu plus long.<br>
+      <b>Gilet</b> : au briefing, en assaut. Le <b>souple</b> (NIJ IIIA, la référence) arrête tout autour du torse les balles d'arme de poing, de pistolet mitrailleur en 9 mm et la chevrotine : il n'en reste que le choc, la moitié des dégâts. Une balle de fusil le traverse. Le <b>lourd</b> y ajoute des plaques devant et derrière qui arrêtent même une balle de fusil (il n'en reste qu'un tiers), mais pas de flanc ; onze kilos, on avance nettement moins vite.<br>
       <b>Bouclier</b> : à choisir au briefing à la place de l'arme principale. Tenu au bras gauche, il ne laisse que l'arme de poing, tirée d'une main par-dessus le bord, donc moins précise (un laser compense en partie), avec deux chargeurs de plus. De face, il arrête les balles de son niveau : le léger (NIJ IIIA) celles d'arme de poing, de pistolet mitrailleur et la chevrotine, mais pas celles d'un fusil (une balle d'AK le traverse) ; le lourd (NIJ III) arrête tout, mais il ralentit nettement et sa lucarne rétrécit le champ de vision. De flanc et de dos, on est à découvert. Bouclier au bras, on ne ramasse qu'une arme de poing.<br>
       <b>Minimap</b> : en haut à droite, le plan de ce que vous avez exploré, avec les portes, les fenêtres, le mobilier, votre équipe, les otages connus et les adversaires visibles. En siège, la pièce où une vague d'assaut vient d'entrer y clignote en rouge quelques secondes. <kbd>M</kbd> la replie.<br>
       <b>Otages</b> : ne tirez pas dessus, y compris à travers une porte. Un otage n'est sauvé qu'une fois sorti du bâtiment : près de lui, <kbd>H</kbd> le relève et il vous suit, en file s'ils sont plusieurs ; <kbd>H</kbd> à nouveau, il attend à genoux. Il n'ouvre pas les portes lui-même (laissez-les au moins entrouvertes derrière vous) et se jette à terre quand on tire près de lui. Amenez-le devant une porte extérieure ouverte ou une fenêtre : il sort, et il est évacué. Pendant l'escorte, les sorties battent en vert sur la minimap. Les faire sortir n'est pas exigé, mais un otage dehors ne risque plus rien : la mission est accomplie dès que tous les suspects sont neutralisés, et perdue si un otage meurt.<br>

@@ -55,6 +55,19 @@ const Sound = {
   ping() { this.noise(0.05, 0.22, 5200, 2); },  // balle sur un bouclier
   tick(vol) { this.noise(0.03, vol || 0.15, 3500, 1); },
   reload() { this.noise(0.05, 0.12, 1500, 1); setTimeout(() => this.noise(0.06, 0.14, 1200, 1), 350); },
+  // alerte générale : un cri qui monte, trois fois
+  alarm() {
+    const c = this.ctx; if (!c) return;
+    [0, 0.3, 0.6].forEach(at => {
+      const o = c.createOscillator(); o.type = 'sawtooth';
+      o.frequency.setValueAtTime(260, c.currentTime + at); o.frequency.linearRampToValueAtTime(420, c.currentTime + at + 0.22);
+      const f = c.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 1200;
+      const g = c.createGain(); g.gain.setValueAtTime(0.0001, c.currentTime + at);
+      g.gain.exponentialRampToValueAtTime(0.09, c.currentTime + at + 0.04);
+      g.gain.exponentialRampToValueAtTime(0.001, c.currentTime + at + 0.26);
+      o.connect(f); f.connect(g); g.connect(c.destination); o.start(c.currentTime + at); o.stop(c.currentTime + at + 0.28);
+    });
+  },
   // sommation : une voix forte, deux syllabes graves
   shout() {
     const c = this.ctx; if (!c) return;

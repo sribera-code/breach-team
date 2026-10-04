@@ -27,6 +27,8 @@ function mkGame(opts) {
   game.entryIndex = opts.entry || 0;
   game.lockDoors = !!opts.locks;     // pas de serrure au hasard, sauf demande
   game.saveRecords = false;          // pas de record écrit dans le navigateur
+  game.patrols = !!opts.patrols;     // pas de ronde au hasard, sauf demande
+  game.alarms = !!opts.alarm;        // ni d'alerte générale
   game.loadLevel(opts.level || 0);
   game.paused = false;
   if (opts.noEnd !== false) game.checkEnd = () => {}; // la fin de mission fige tout : on l'écarte
@@ -1943,6 +1945,24 @@ function briefingGearTest() {
   ui.panel.querySelector('#ovSup').click();
   ok(game.loadout.teamSup && game.mates.every(m => m.weapon.suppressed), 'coéquipiers au silencieux');
   ok(!game.player.slots[0].def.suppressed && game.player.slots[1].def.laser, 'le joueur garde ses accessoires');
+  // poignée et chargeur long sur le HK416 ; le MP7 n'accepte ni l'un ni l'autre
+  card('hk416').click();
+  eq(ui.$('waccs').querySelectorAll('.accrow')[0].querySelectorAll('.accbtn').length, 5, 'cinq accessoires par arme');
+  acc('hk416', 'grip').click();
+  acc('hk416', 'mag').click();
+  const w = game.player.slots[0].def;
+  ok(w.grip && w.bloom < WEAPONS.hk416.bloom && w.recoil < WEAPONS.hk416.recoil, 'poignée : moins d’ouverture et de recul en rafale');
+  ok(w.extMag && game.player.slots[0].mag === 40 && w.reload > WEAPONS.hk416.reload, 'chargeur de 40, un peu plus long à changer');
+  eq(game.player.slots[0].reserve, WEAPONS.hk416.reserve, 'pas une cartouche de plus en réserve');
+  ok(w.weight > WEAPONS.hk416.weight + 0.3, 'les deux pèsent');
+  ok(/40 coups/.test(ui.$('wdetail').textContent) && /Poignée avant/.test(ui.$('wdetail').textContent), 'la fiche les annonce');
+  card('mp7').click();
+  ok(acc('mp7', 'grip').disabled && acc('mp7', 'mag').disabled, 'MP7 : ni poignée ni chargeur long');
+  // gilet : souple par défaut, le bouton passe au lourd
+  eq(game.loadout.vest, 'vestL', 'gilet souple par défaut');
+  ui.panel.querySelector('#ovVest').click();
+  eq(game.loadout.vest, 'vestH', 'gilet lourd choisi');
+  ok(game.player.vest === VESTS.vestH && /Gilet lourd/.test(ui.panel.querySelector('#ovVest').textContent), 'porté, et le bouton le dit');
   ui.hideOverlay();
   game.paused = false;
 }
@@ -1994,6 +2014,7 @@ test('le bouclier arrête de face les balles de son niveau, pas de flanc ni de d
   const g = mkGame({ alone: true, loadout: { primary: 'hk416', sidearm: 'glock17', shield: 'shieldL' } });
   const game = g.game, p = game.player;
   ok(p.shield === SHIELDS.shieldL, 'bouclier au bras');
+  p.vest = null; // le bouclier seul : le gilet souple amortirait les balles de flanc
   const spot = reachableSpot(game, p, 2.5 * U, 3.5 * U, true);
   ok(spot, 'un tireur en vue');
   const toward = Math.atan2(spot.y - p.y, spot.x - p.x);
@@ -2392,13 +2413,156 @@ test('un clic droit sur une porte ouverte reste un ordre de déplacement', () =>
   ok(!game.stack && game.mates.every(m => m.order === 'move'), 'déplacement ordinaire');
 });
 
+// ---------------------------------------------------------------- poignée, chargeur, gilet
+test('poignée avant : la rafale s’ouvre moins ; chargeur long : plus de coups avant de recharger', () => {
+  ok(fittedDef('mp7', { grip: true }) === WEAPONS.mp7 && fittedDef('usp45', { mag: true }) === WEAPONS.usp45, 'refusés là où ils ne vont pas');
+  const drum = fittedDef('akP', { mag: true });
+  ok(drum.mag === 75 && drum.tint.extMag === 'drum' && drum.reload > WEAPONS.akP.reload, 'AKM : tambour de 75');
+  eq(fittedDef('m870', { mag: true }).mag, 8, 'Remington : rallonge de deux cartouches');
+  // dix coups en rafale, avec et sans poignée : l'ouverture accumulée est moindre
+  const bloomAfter = acc => {
+    const g = mkGame({ alone: true, loadout: { primary: 'hk416', sidearm: 'glock17', acc: { hk416: acc } } });
+    const p = g.game.player;
+    for (let i = 0; i < 10; i++) g.game.fireWeapon(p);
+    return { bloom: p.bloom, mag: p.slot.mag };
+  };
+  const nu = bloomAfter({}), tenu = bloomAfter({ grip: true });
+  ok(tenu.bloom < nu.bloom * 0.9, 'moins d’ouverture avec la poignée : ' + (tenu.bloom / DEG).toFixed(1) + '° contre ' + (nu.bloom / DEG).toFixed(1) + '°');
+  eq(bloomAfter({ mag: true }).mag, 30, 'chargeur de 40 : il en reste trente après dix coups');
+});
+
+test('gilet : le souple arrête les balles d’arme de poing, le lourd celles de fusil de face ou de dos, et il ralentit', () => {
+  const g = mkGame({ alone: true });
+  const game = g.game, p = game.player;
+  eq(p.vest, VESTS.vestL, 'gilet souple par défaut en assaut');
+  eq(Game.normLoadout({ primary: 'akP', sidearm: 'makarovP', vest: 'vestH' }, MODES.siege).vest, null, 'pas de gilet en siège');
+  p.angle = 0;
+  // ang : sens de la course de la balle (de face, elle va vers l'ouest)
+  const hit = (pen, ang) => game.vestHit(p, { pen }, ang, 100);
+  near(hit(1, Math.PI), 50, 1e-9, 'pistolet de face : le choc seul');
+  near(hit(1, Math.PI / 2), 50, 1e-9, 'de flanc aussi : le souple fait le tour');
+  eq(hit(3, Math.PI), 100, 'une balle de fusil le traverse');
+  p.equip({ ...game.loadout, vest: 'vestH' });
+  near(hit(3, Math.PI), 30, 1e-9, 'plaque avant : la balle de fusil s’arrête');
+  near(hit(3, 0), 30, 1e-9, 'plaque dorsale aussi');
+  eq(hit(3, Math.PI / 2), 100, 'de flanc, pas de plaque');
+  near(hit(1, Math.PI / 2), 50, 1e-9, 'mais le souple dessous arrête le pistolet');
+  // de vraies balles : un pistolet de face sur le gilet souple
+  p.equip({ ...game.loadout, vest: 'vestL' });
+  const spot = reachableSpot(game, p, 2.5 * U, 3.5 * U, true);
+  ok(spot, 'un tireur en vue');
+  p.angle = Math.atan2(spot.y - p.y, spot.x - p.x);
+  const foe = new Enemy(spot.x, spot.y, p.angle + Math.PI, 'pistol');
+  game.enemies = [foe];
+  let n = 0;
+  for (let k = 0; k < 4; k++) { foe.bloom = 0; game.fireWeapon(foe); n++; }
+  for (let i = 0; i < 40 && game.bullets.length; i++) game.updateBullets(1 / 60);
+  near((p.maxHp - p.hp) / n, WEAPONS.pistolE.damage * VESTS.vestL.blunt, 0.01, 'chaque balle ne fait que la moitié de ses dégâts');
+  game.enemies = [];
+  // le gilet lourd ralentit
+  const course = vest => {
+    p.equip({ ...game.loadout, vest });
+    p.x = spot.x; p.y = spot.y; p.walkMode = false;
+    const x0 = p.x, y0 = p.y;
+    const ang = Math.atan2(game.map.h * TILE / 2 - p.y, game.map.w * TILE / 2 - p.x);
+    game.input.keys = { [Math.cos(ang) > 0 ? 'KeyD' : 'KeyA']: true };
+    for (let i = 0; i < 20; i++) game.update(1 / 60);
+    game.input.keys = {};
+    return dist(x0, y0, p.x, p.y);
+  };
+  const leger = course('vestL'), lourd = course('vestH');
+  ok(lourd > 0 && lourd < leger * 0.9, 'plus lent avec les plaques : ' + lourd.toFixed(1) + ' px contre ' + leger.toFixed(1));
+});
+
+// ---------------------------------------------------------------- rondes et alerte générale
+test('rondes : un suspect fait le tour de ses points, au pas, et reprend sa ronde après être allé voir', () => {
+  const g = mkGame({ patrols: true });
+  const game = g.game;
+  eq(game.enemies.filter(o => o.patrol).length, PATROLS, PATROLS + ' suspects en ronde');
+  const e = game.enemies.find(o => o.patrol), P = e.patrol;
+  ok(P.pts.length >= 2 && P.pts.length <= 3, 'deux ou trois points');
+  ok(dist(P.pts[0].x, P.pts[0].y, e.x, e.y) < 1, 'son poste en fait partie');
+  const b = game.map.breaches[game.entryIndex], room = game.map.roomOf(b.inside.x, b.inside.y);
+  ok(P.pts.every(q => !room.has(Math.floor(q.y / TILE) * game.map.w + Math.floor(q.x / TILE))), 'aucun point dans la pièce d’entrée');
+  game.enemies = [e]; e.viewRange = 0; // il ne voit personne : on suit sa ronde seule
+  game.mates.forEach(m => { m.alive = false; });
+  P.wait = 0;
+  const seen = new Set();
+  let top = 0;
+  for (let i = 0; i < 90 * 60 && seen.size < P.pts.length + 1; i++) {
+    const x0 = e.x, y0 = e.y;
+    game.update(1 / 60);
+    if (e.moving && !e.act) top = Math.max(top, dist(x0, y0, e.x, e.y) * 60);
+    P.pts.forEach((q, k) => { if (dist(e.x, e.y, q.x, q.y) < 0.6 * U) seen.add(k); });
+    if (seen.size === P.pts.length && dist(e.x, e.y, P.pts[0].x, P.pts[0].y) < 0.6 * U && P.i === 0) seen.add('tour');
+  }
+  ok(seen.size > P.pts.length, 'il a fait le tour complet (' + [...seen].join(', ') + ')');
+  ok(top > 0 && top <= e.speed * PATROL_SPEED + 2, 'au pas : ' + top.toFixed(0) + ' px/s');
+  // un bruit : il va voir, puis regagne sa ronde
+  const spot = reachableSpot(game, e, 2 * U, 4 * U, false);
+  ok(spot, 'un endroit où aller voir');
+  game.investigate(e, spot.x, spot.y, 1);
+  let back = false;
+  for (let i = 0; i < 40 * 60 && !back; i++) {
+    game.update(1 / 60);
+    back = e.state === 'idle' && P.going && e.moving;
+  }
+  ok(back, 'après sa recherche, il repart sur sa ronde');
+  ok(P.pts.some(q => q.x === e.home.x && q.y === e.home.y), 'son poste suit la ronde');
+});
+
+// Un suspect face au joueur, qui le voit, et deux autres loin de là. Le joueur ne tombe pas.
+function alarmScene() {
+  const g = mkGame({ alone: true, alarm: true });
+  const game = g.game, p = game.player;
+  p.hp = p.maxHp = 1e9;
+  const spot = freeSpotsAround(game, p, 40).find(q => dist(q.x, q.y, p.x, p.y) >= 2 * U);
+  const e = new Enemy(spot.x, spot.y, Math.atan2(p.y - spot.y, p.x - spot.x), 'pistol');
+  const far = game.buildPosts(null, 30).filter(q => dist(q.x, q.y, p.x, p.y) > 9 * U).slice(0, 3);
+  const others = far.map(q => { const o = new Enemy(q.x, q.y, 0, 'ak'); o.viewRange = 0; return o; });
+  game.enemies = [e, ...others];
+  game.input.mouse.x = e.x; game.input.mouse.y = e.y;
+  return { g, game, p, e, others };
+}
+
+test('alerte générale : un suspect qui tient trois secondes après vous avoir vu prévient tout le bâtiment', () => {
+  const { game, e, others } = alarmScene();
+  eq(others.length, 3, 'trois suspects loin de là');
+  for (let i = 0; i < 60; i++) game.update(1 / 60);
+  ok(e.spotT !== null && !game.alarm, 'il vous a vu, l’alerte n’est pas encore donnée');
+  const react = others[0].reaction;
+  for (let i = 0; i < (ALARM_TIME + 0.5) * 60 && !game.alarm; i++) game.update(1 / 60);
+  ok(game.alarm && game.alarm.by === e, 'au bout de trois secondes, il donne l’alerte');
+  ok(others.every(o => o.alerted && o.reaction < react), 'tous sont prévenus et réagiront plus vite');
+  const going = others.filter(o => o.state === 'investigate').length;
+  ok(going >= 1 && going <= RESPONDERS, going + ' vont voir, pas plus de ' + RESPONDERS);
+  ok(game.scoreReport('win').lines.some(l => /Alerte générale/.test(l.label)), 'la note de fin le retient');
+});
+
+test('alerte générale : abattu ou sonné à temps, il ne prévient personne', () => {
+  const sc = alarmScene();
+  for (let i = 0; i < 60; i++) sc.game.update(1 / 60);
+  sc.game.damage(sc.e, 1000, sc.p, 0);
+  for (let i = 0; i < (ALARM_TIME + 1) * 60; i++) sc.game.update(1 / 60);
+  ok(!sc.game.alarm, 'abattu au bout d’une seconde : pas d’alerte');
+  const sc2 = alarmScene();
+  for (let i = 0; i < 60; i++) sc2.game.update(1 / 60);
+  sc2.e.stun = 4; // une flash
+  for (let i = 0; i < 3.5 * 60; i++) sc2.game.update(1 / 60);
+  ok(!sc2.game.alarm, 'sonné, le temps ne compte pas');
+  for (let i = 0; i < (ALARM_TIME + 1) * 60 && !sc2.game.alarm; i++) sc2.game.update(1 / 60);
+  ok(sc2.game.alarm, 'revenu à lui, il finit par la donner');
+});
+
 // ---------------------------------------------------------------- rendu
 test('chaque mission se joue sans exception, dans les deux modes', () => {
   for (const mode of ['assault', 'siege']) {
     for (let lvl = 0; lvl < LEVELS.length; lvl++) {
-      // en assaut, une mission sur deux dans le noir, portes verrouillées et lampe en main
-      const dark = mode === 'assault' && lvl % 2 === 1;
-      const g = mkGame({ mode, level: lvl, locks: mode === 'assault', loadout: dark ? { primary: 'mp5', sidearm: 'glock17', cutPower: true, acc: { mp5: { light: true } } } : undefined });
+      // en assaut, une mission sur deux dans le noir, portes verrouillées, rondes, alerte générale, lampe en
+      // main, poignée, chargeur long et gilet lourd
+      const dark = mode === 'assault' && lvl % 2 === 1, live = mode === 'assault';
+      const g = mkGame({ mode, level: lvl, locks: live, patrols: live, alarm: live, loadout: dark ? { primary: 'mp5', sidearm: 'glock17', cutPower: true, vest: 'vestH', acc: { mp5: { light: true, grip: true }, glock17: { mag: true } } } : undefined });
+      if (live) ok(g.game.enemies.some(e => e.patrol), 'des rondes en mission ' + (lvl + 1));
       const p = g.game.player;
       if (g.game.siege) g.game.siege.prep = 0.5;
       for (let i = 0; i < 420; i++) {

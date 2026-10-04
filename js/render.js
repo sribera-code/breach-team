@@ -203,7 +203,7 @@ class Renderer {
         if (mt.stun > 0) { ctx.strokeStyle = 'rgba(255,240,120,0.9)'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(mt.x, mt.y, 15, 0, TAU); ctx.stroke(); }
       }
     }
-    const pst = { ...(g.player.style || STYLE_PLAYER), ...gunStyle(g.player.weapon), ...shieldStyle(g.player), ...actStyle(g.player) };
+    const pst = { ...(g.player.style || STYLE_PLAYER), ...gunStyle(g.player.weapon), ...shieldStyle(g.player), ...actStyle(g.player), plates: !!(g.player.vest && g.player.vest.plate) };
     const p = g.player;
     if (p.dying) Sprites.dying(ctx, p, pst, p.dying);
     else if (p.alive) {
@@ -346,7 +346,7 @@ class Renderer {
   drawBodies() {
     const g = this.game;
     for (const e of g.enemies) if (!e.alive && !e.dying && e.bodySeen) Sprites.body(this.ctx, e, this.enemyStyle(e));
-    if (!g.player.alive && !g.player.dying) Sprites.body(this.ctx, g.player, { ...(g.player.style || STYLE_PLAYER), ...gunStyle(g.player.weapon), ...shieldStyle(g.player) });
+    if (!g.player.alive && !g.player.dying) Sprites.body(this.ctx, g.player, { ...(g.player.style || STYLE_PLAYER), ...gunStyle(g.player.weapon), ...shieldStyle(g.player), plates: !!(g.player.vest && g.player.vest.plate) });
     for (const mt of g.mates) if (!mt.alive && !mt.dying) Sprites.body(this.ctx, mt, { ...mt.style, ...gunStyle(mt.weapon), ...shieldStyle(mt) });
     for (const h of g.hostages) if (!h.alive && h.bodySeen) Sprites.body(this.ctx, h, STYLE_HOSTAGE);
   }
@@ -430,8 +430,20 @@ class Renderer {
   drawEnemy(e) {
     const k = this.kickOffset(e);
     Sprites.character(this.ctx, e.x + k.x, e.y + k.y, e.angle, this.enemyStyle(e), e.muzzleT, e.walk, e.moving);
+    // il vous a vu et va prévenir tout le monde : « ! » rouge, l'anneau se remplit jusqu'à l'alerte générale
+    const g = this.game;
+    if (e.spotT !== null && !g.alarm && g.alarms && !g.siege) {
+      const ctx = this.ctx, k = clamp(e.spotT / ALARM_TIME, 0, 1), y = e.y - 21;
+      ctx.save();
+      ctx.lineWidth = 2.5; ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+      ctx.beginPath(); ctx.arc(e.x, y, 7, 0, TAU); ctx.stroke();
+      ctx.lineWidth = 2; ctx.strokeStyle = '#ef5350';
+      ctx.beginPath(); ctx.arc(e.x, y, 7, -Math.PI / 2, -Math.PI / 2 + k * TAU); ctx.stroke();
+      ctx.font = 'bold 11px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillStyle = '#ef5350'; ctx.fillText('!', e.x, y + 0.5);
+      ctx.restore();
+    } else if (!e.target && !(e instanceof Operator) && (e.state === 'investigate' || e.suspicion >= 0.5)) {
     // suspect alerté par un bruit : « ? » quand il va voir ou qu'il cherche, plus pâle quand il guette
-    if (!e.target && !(e instanceof Operator) && (e.state === 'investigate' || e.suspicion >= 0.5)) {
       const ctx = this.ctx, searching = e.state === 'investigate';
       ctx.save();
       ctx.font = `bold ${searching ? 12 : 10}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
