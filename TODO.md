@@ -11,8 +11,9 @@ de chaque section.
   n'a été jouée par un humain : elles sortent de parties simulées.
 - **Grenades à fragmentation à régler** : 200 de dégâts au centre, rayon de 3,5 cases, 2 s de mèche. Les complices
   n'en lancent pas, seul le joueur (ou celui qui reprend la main) en a.
-- **Les otages ne bougent pas.** Ils attendent sur place qu'on vienne les chercher. Les voir fuir vers
-  l'intervention, ou pouvoir les regrouper, changerait beaucoup la tension.
+- **Les otages ne bougent que sous escorte.** L'intervention les relève et les fait sortir, mais ils ne
+  fuient jamais d'eux-mêmes, et le preneur d'otages ne peut pas les déplacer (les regrouper près de lui, ou
+  reprendre celui qu'une escorte abattue a laissé près d'une sortie).
 - **Les opérateurs entrent par une ouverture, ils ne l'ouvrent pas depuis dehors.** L'extérieur n'existe
   pas dans le jeu : ils apparaissent dans l'embrasure ou la fenêtre, avec un geste d'entrée. On ne peut
   donc ni les voir approcher, ni les surprendre avant qu'ils ne soient dedans.
@@ -43,6 +44,24 @@ de chaque section.
   interface, où le rendu logiciel domine tout et varie du simple au quadruple. La simulation, elle, reste
   sous 0,3 ms par image.
 
+## Bruit et IA
+
+- **Réglages du bruit à éprouver en jeu.** Portées (`w.noise`, portes, pas), coûts des murs et des portes
+  (`SOUND_WALL`, `SOUND_DOOR`) et seuils d'attention (`HEAR_*`, `SUSPICION_*`, `RESPONDERS`) sortent de parties
+  simulées : depuis l'entrée, une rafale sans silencieux fait venir un ou deux suspects, la même au silencieux
+  personne. À rejouer à la main, surtout en siège où les opérateurs convergent sur ce qu'ils entendent.
+- **Les opérateurs du siège n'ont pas de silencieux**, et les suspects ne se replient ni ne se barricadent :
+  ils viennent voir, puis rentrent.
+
+## Équipement
+
+- **Boucliers à éprouver en jeu.** Arc couvert (±60° et ±66°), vitesse (×0,88 et ×0,74), gêne de la tenue
+  d'une main (×1,35 et ×1,5) et champ de vision (110° et 95°) sortent du calcul, pas d'une partie jouée. Les
+  suspects ne cherchent pas à contourner un porteur de bouclier : ils tirent dedans.
+- **Pas de bouclier chez les coéquipiers ni chez les opérateurs du siège.** Seul le joueur en prend un en assaut.
+- **Le laser n'est réglé qu'à l'estime** : dispersion en mouvement divisée par deux, et un suspect qui voit le
+  faisceau vient voir au bout de trois coups d'œil (0,6 s). Les coéquipiers n'en ont pas.
+
 ## Confort de jeu
 
 - **Pas de réglage de difficulté.** Ni pour l'assaut, ni pour le siège.
@@ -58,6 +77,12 @@ de chaque section.
 
 ## Fait depuis la dernière version
 
+Neutraliser tous les suspects suffit pour gagner en assaut · boucliers balistiques léger et lourd, avec l'arme
+de poing seule · accessoires choisis arme par arme au briefing : silencieux et laser (`L`), et un silencieux pour
+les coéquipiers à part ·
+Otages à escorter jusqu'à une sortie pour les mettre à l'abri (H en assaut, les opérateurs en siège) ·
+Bruit propagé à travers le bâtiment (murs et portes l'étouffent), suspects qui se tournent, vont voir à deux,
+puis rentrent à leur poste, crient l'alerte et découvrent les corps · bruits entendus affichés autour du joueur ·
 Trois cartes (Hôtel, Banque, Centre de données) · trois sols (moquette, marbre, tôle striée) et six meubles
 (canapé, rayonnage, armoire, baie de serveurs, palette, comptoir), adossés au mur et d'un seul tenant quand on
 les aligne · grenades qui passent par-dessus le mobilier en vol · pièce d'arrivée de chaque vague signalée sur la

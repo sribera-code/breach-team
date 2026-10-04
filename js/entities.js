@@ -8,6 +8,8 @@
 // kind : dessin (Sprites.gun), tint : variante de couleurs, snd : [durée, coupure] du son de tir.
 // reloadType 'shell' : chargement cartouche par cartouche (reload = durée par cartouche), interrompu par un tir.
 // pierce : part des dégâts conservée après avoir traversé une porte (les murs, eux, arrêtent tout).
+// pen : classe de perforation face à un bouclier (1 : arme de poing, PM en 9 mm, chevrotine ; 2 : munition de
+// poing rapide, 4,6 × 30 et 7,62 × 25 ; 3 : balle de fusil). Déduite de kind, sauf exception (voir SHIELDS).
 const WEAPONS = {
   // ---- Fusils d'assaut ----
   hk416: {
@@ -37,7 +39,7 @@ const WEAPONS = {
     kind: 'pdw', cat: 'smg', name: 'HK MP7A1', maker: 'Heckler & Koch', caliber: '4,6×30 mm HK', mode: 'Auto', rpm: 950, weight: 2.1,
     note: "Arme de défense compacte à très haute cadence. Munition légère et tendue, chargeur de 40.",
     damage: 19, auto: true, spread: 1 * DEG, moveSpread: 2 * DEG, bloom: 0.9 * DEG, bloomMax: 6.5 * DEG, recoil: 2,
-    effRange: 7 * U, rangeSpread: 3.5 * DEG, mag: 40, reserve: 160, reload: 1.8, pierce: 0.5, speed: 1050, gunLen: 13, heavy: false, range: 12 * U,
+    effRange: 7 * U, rangeSpread: 3.5 * DEG, mag: 40, reserve: 160, reload: 1.8, pierce: 0.5, pen: 2, speed: 1050, gunLen: 13, heavy: false, range: 12 * U,
     snd: [0.07, 3000],
   },
   // ---- Fusils à pompe ----
@@ -109,7 +111,7 @@ const WEAPONS = {
     note: "Munition très rapide : elle perce le bois et les gilets là où un 9 mm s'arrête. Huit coups.",
     tint: { slide: '#4a4136' },
     damage: 26, auto: false, spread: 1 * DEG, moveSpread: 3 * DEG, bloom: 3.2 * DEG, bloomMax: 9 * DEG, recoil: 4.5,
-    effRange: 5 * U, rangeSpread: 4 * DEG, mag: 8, reserve: 32, reload: 1.6, pierce: 0.55, speed: 1100, gunLen: 11, heavy: false, range: 11 * U,
+    effRange: 5 * U, rangeSpread: 4 * DEG, mag: 8, reserve: 32, reload: 1.6, pierce: 0.55, pen: 2, speed: 1100, gunLen: 11, heavy: false, range: 11 * U,
     snd: [0.08, 2200],
   },
   sgE:     { kind: 'shotgun', pickup: 'm870', name: 'Remington 870 scié', damage: 11, pellets: 7, rof: 0.9, auto: false, spread: 7 * DEG, moveSpread: 4 * DEG, bloom: 3 * DEG, bloomMax: 10 * DEG, effRange: 3 * U, rangeSpread: 3 * DEG, mag: Infinity, reserve: 0, reload: 0, pierce: 0.2, speed: 850, gunLen: 16, heavy: true, burst: 1, pause: 1.3, range: 6 * U, snd: [0.22, 800] },
@@ -121,24 +123,104 @@ const WEAPONS = {
   ak:      { kind: 'ak', pickup: 'akP',      name: 'AKM',        damage: 18, rof: 10,  auto: true,  spread: 4.5 * DEG,   moveSpread: 4 * DEG, bloom: 2 * DEG, bloomMax: 12 * DEG, effRange: 6 * U, rangeSpread: 4 * DEG, mag: Infinity, reserve: 0, reload: 0, pierce: 0.6, speed: 950, gunLen: 20, heavy: false, burst: 5, pause: 0.9, range: 12 * U, snd: [0.12, 1700] },
   pistolE: { kind: 'pistol', pickup: 'makarovP',  name: 'Makarov PM', damage: 18, rof: 4,   auto: true,  spread: 4 * DEG,   moveSpread: 3 * DEG, bloom: 1.5 * DEG, bloomMax: 9 * DEG, effRange: 4 * U, rangeSpread: 4 * DEG, mag: Infinity, reserve: 0, reload: 0, pierce: 0.3, speed: 900, gunLen: 10, heavy: false, burst: 2, pause: 0.8, range: 8 * U, snd: [0.07, 2400] },
 };
-// Cadence de jeu tirée de la cadence réelle ; mobilité tirée de la masse.
+// Mobilité (multiplicateur de vitesse) tirée de la masse.
+const mobilityOf = weight => (weight ? clamp(1.06 - 0.035 * weight, 0.85, 1.04) : 1);
+// Cadence de jeu tirée de la cadence réelle ; mobilité tirée de la masse ; portée du coup de feu (en
+// cases, en plein air) selon l'arme : les murs et les portes l'atténuent (voir Game.soundField).
 for (const w of Object.values(WEAPONS)) {
   if (w.rpm && !w.rof) w.rof = w.rpm / 60;
-  w.mobility = w.weight ? clamp(1.06 - 0.035 * w.weight, 0.85, 1.04) : 1;
+  w.mobility = mobilityOf(w.weight);
+  if (w.noise === undefined) w.noise = w.kind === 'shotgun' || w.heavy ? 18 : w.kind === 'pistol' ? 13 : w.kind === 'smg' || w.kind === 'pdw' ? 14 : 16;
+  if (w.pen === undefined) w.pen = w.kind === 'rifle' || w.kind === 'ak' ? 3 : 1;
 }
 
-const WEAPON_CATS = { ar: "Fusils d'assaut", smg: 'Pistolets mitrailleurs', sg: 'Fusils à pompe', hg: 'Armes de poing' };
+// Accessoires, choisis arme par arme au briefing. Silencieux : portée du coup de feu (cases), masse (kg)
+// et longueur (px) ajoutées. Le 5,56, le 7,62 et le 4,6 restent supersoniques : le claquement de la balle
+// s'entend encore à quelques cases. Le 9 mm et le .45 tirés en subsonique ne font presque plus de bruit, mais
+// la balle, plus lente, porte moins loin et frappe un peu moins fort. Pas de silencieux sur un fusil à pompe.
+const SUPPRESSORS = {
+  hk416:   { noise: 4,   weight: 0.5,  len: 6 },
+  scarh:   { noise: 5,   weight: 0.6,  len: 6 },
+  mp5:     { noise: 2.5, weight: 0.45, len: 6, subsonic: true },
+  mp7:     { noise: 3,   weight: 0.35, len: 5 },
+  glock17: { noise: 2.5, weight: 0.2,  len: 5, subsonic: true },
+  usp45:   { noise: 2,   weight: 0.25, len: 5, subsonic: true },
+};
+// Module laser (masse en kg) : il lui faut un rail, que n'ont ni l'AKM, ni l'Uzi, ni le Škorpion, ni le
+// Makarov, ni le Tokarev. Le point montre où part la balle sans épauler : la dispersion due au déplacement
+// est multipliée par LASER_MOVE, et la gêne de la tenue d'une main derrière un bouclier réduite de moitié.
+// Mais un faisceau se voit : un suspect qui l'aperçoit se tourne vers sa source (voir Game.spotLaser).
+const LASERS = { hk416: 0.2, scarh: 0.2, mp5: 0.2, mp7: 0.15, m870: 0.2, m4super90: 0.2, glock17: 0.1, usp45: 0.1 };
+const LASER_MOVE = 0.5;
+const FITTED = {};
+// L'arme équipée de ses accessoires (acc : { sup, laser }) ; ceux qu'elle n'accepte pas sont ignorés.
+// Chaque combinaison n'est calculée qu'une fois.
+function fittedDef(key, acc) {
+  const w = WEAPONS[key], s = SUPPRESSORS[key];
+  const sup = !!(acc && acc.sup && s), laser = !!(acc && acc.laser && LASERS[key]);
+  if (!sup && !laser) return w;
+  const id = key + (sup ? '+sup' : '') + (laser ? '+laser' : '');
+  if (FITTED[id]) return FITTED[id];
+  const d = { ...w, tint: { ...(w.tint || {}) } };
+  if (sup) {
+    Object.assign(d, {
+      suppressed: true, noise: s.noise, weight: d.weight + s.weight, gunLen: w.gunLen + s.len,
+      damage: s.subsonic ? Math.round(w.damage * 0.9) : w.damage,
+      effRange: s.subsonic ? w.effRange * 0.85 : w.effRange,
+      speed: s.subsonic ? w.speed * 0.85 : w.speed,
+      snd: [w.snd[0] * 0.6, Math.min(900, w.snd[1] * 0.45)],
+    });
+    d.tint.sup = s.len;
+  }
+  if (laser) { d.laser = true; d.weight += LASERS[key]; d.tint.laser = true; }
+  d.mobility = mobilityOf(d.weight);
+  return (FITTED[id] = d);
+}
+// Version silencieuse d'une arme (la même si elle n'en accepte pas).
+const suppressedDef = key => fittedDef(key, { sup: true });
+// Accessoires choisis pour une arme dans un équipement.
+const accOf = (loadout, key) => (loadout && loadout.acc && loadout.acc[key]) || {};
+
+// Boucliers balistiques portables, tenus au bras gauche : il ne reste que l'arme de poing, tenue d'une main
+// par-dessus le bord. Ils couvrent ±arc devant le porteur, jusqu'à SHIELD_REACH de son centre. stops :
+// classe de perforation arrêtée (pen des armes) ; au-delà, la balle traverse et le porteur encaisse through
+// de ses dégâts. Le poids coûte de la vitesse (mobility), la tenue d'une main de la précision (aim,
+// multiplicateur de dispersion), la lucarne du champ de vision (fov). Formats et masses de boucliers de
+// colonne courants, niveau NIJ IIIA (armes de poing) et NIJ III (fusils).
+const SHIELD_REACH = 14;
+const SHIELDS = {
+  shieldL: {
+    cat: 'sh', name: 'Bouclier léger', rating: 'NIJ IIIA', size: '50 × 90 cm', weight: 7.3,
+    note: "Arrête les balles d'arme de poing et de pistolet mitrailleur, et la chevrotine — pas celles d'un fusil d'assaut. Assez léger pour avancer presque à l'allure normale.",
+    stops: 1, through: 0.75, arc: 60 * DEG, mobility: 0.88, aim: 1.35, fov: 110 * DEG, look: { r: 17, span: 55 * DEG, thick: 3.6, color: '#545c66' },
+  },
+  shieldH: {
+    cat: 'sh', name: 'Bouclier lourd', rating: 'NIJ III', size: '55 × 95 cm', weight: 14,
+    note: "Renforcé de céramique : il arrête aussi les balles de fusil, 5,56 et 7,62 compris. Mais il pèse le double : on avance lentement, et sa lucarne étroite rétrécit le champ de vision.",
+    stops: 3, through: 0.75, arc: 66 * DEG, mobility: 0.74, aim: 1.5, fov: 95 * DEG, look: { r: 18, span: 60 * DEG, thick: 5, color: '#5b6150' },
+  },
+};
+// Chargeurs d'arme de poing en plus pour le porteur de bouclier : c'est sa seule arme.
+const SHIELD_EXTRA_MAGS = 2;
+
+const WEAPON_CATS = { ar: "Fusils d'assaut", smg: 'Pistolets mitrailleurs', sg: 'Fusils à pompe', sh: 'Boucliers (avec arme de poing)', hg: 'Armes de poing' };
 const PRIMARY_WEAPONS = ['hk416', 'scarh', 'mp5', 'mp7', 'm870', 'm4super90'];
 const SIDEARMS = ['glock17', 'usp45'];
-const DEFAULT_LOADOUT = { primary: 'hk416', sidearm: 'glock17' };
+// shield : bouclier pris à la place de l'arme principale (null : aucun) ; acc : accessoires de chaque arme
+// ({ hk416: { sup, laser } }) ; teamSup : silencieux pour les coéquipiers (assaut).
+const DEFAULT_LOADOUT = { primary: 'hk416', sidearm: 'glock17', shield: null, acc: {}, teamSup: false };
 
 // Deux modes de jeu : l'assaut (on incarne l'opérateur) et le siège (on incarne le groupe armé).
 const MODES = {
-  assault: { name: 'Assaut', primaries: PRIMARY_WEAPONS, sidearms: SIDEARMS, loadout: DEFAULT_LOADOUT },
-  siege:   { name: 'Siège',  primaries: ['akP', 'uziP', 'skorpionP', 'm870'], sidearms: ['makarovP', 'tt33', 'glock17'], loadout: { primary: 'akP', sidearm: 'makarovP' } },
+  assault: { name: 'Assaut', primaries: PRIMARY_WEAPONS, sidearms: SIDEARMS, shields: Object.keys(SHIELDS), loadout: DEFAULT_LOADOUT },
+  siege:   { name: 'Siège',  primaries: ['akP', 'uziP', 'skorpionP', 'm870'], sidearms: ['makarovP', 'tt33', 'glock17'], shields: [], loadout: { ...DEFAULT_LOADOUT, primary: 'akP', sidearm: 'makarovP' } },
 };
 
-const makeSlot = key => ({ def: WEAPONS[key], mag: WEAPONS[key].mag, reserve: WEAPONS[key].reserve });
+// acc : accessoires ({ sup, laser }), ou true pour un simple silencieux
+const makeSlot = (key, acc) => {
+  const def = fittedDef(key, acc === true ? { sup: true } : acc);
+  return { def, mag: def.mag, reserve: def.reserve };
+};
 
 class Agent {
   constructor(x, y, team) {
@@ -189,10 +271,16 @@ class Player extends Agent {
     this.flashbangs = 3;
     this.fiber = null; // fibre optique glissée sous une porte (voir Game.updateFiber)
     this.flashT = 0; // aveuglé (écran blanc)
+    this.laserOn = true; // L éteint ou rallume le laser de l'arme qui en porte un
   }
   get slot() { return this.slots[this.cur]; }
+  // Avec un bouclier, l'arme de poing est la seule arme, avec des chargeurs en plus.
   equip(loadout) {
-    this.slots = [makeSlot(loadout.primary), makeSlot(loadout.sidearm)];
+    this.shield = SHIELDS[loadout.shield] || null;
+    const side = makeSlot(loadout.sidearm, accOf(loadout, loadout.sidearm));
+    if (this.shield) side.reserve += side.def.mag * SHIELD_EXTRA_MAGS;
+    this.slots = this.shield ? [side] : [makeSlot(loadout.primary, accOf(loadout, loadout.primary)), side];
+    this.fov = this.shield ? this.shield.fov : 120 * DEG;
     this.cur = 0;
     this.reloadT = 0;
   }
@@ -238,7 +326,7 @@ class Teammate extends Agent {
     this.style = def.militant
       ? { ...STYLE_MILITANT, body: def.jacket, shoulder: def.jacket, sleeve: def.jacket, pants: def.pants }
       : { ...STYLE_PLAYER, helmet: def.helmet, vest: def.vest };
-    this.slot = { ...makeSlot(def.weapon), reserve: Infinity };
+    this.slot = { ...makeSlot(def.weapon, def.sup), reserve: Infinity };
     this.fov = 130 * DEG;
     this.viewRange = 13 * U;
     this.reaction = 0.4;
@@ -276,7 +364,11 @@ class Enemy extends Agent {
     this.turnRate = 5;
     this.speed = 95;
     this.hp = this.maxHp = 70;
-    this.state = 'idle'; // idle | engage | investigate
+    this.state = 'idle'; // idle | engage | investigate | return (retour au poste après une recherche)
+    this.home = { x, y }; // son poste : il y retourne après être allé voir un bruit
+    this.suspicion = 0;   // bruits entendus récemment, qui s'additionnent et s'estompent (Game.hearNoise)
+    this.heardT = -9;     // instant du dernier bruit entendu
+    this.shoutT = -9;     // dernier cri d'alerte
     this.idleT = rand(1, 4);
     this.lostT = 0;
     this.searchT = 0;
@@ -316,19 +408,31 @@ class Operator extends Enemy {
   }
 }
 
+// Otage : à genoux là où on l'a posé, jusqu'à ce que l'intervention le prenne en charge. Il se relève
+// alors et suit son escorte, puis sort du bâtiment par une ouverture (voir Game.updateHostages).
 class Hostage {
   constructor(x, y) {
     this.x = x; this.y = y;
-    this.found = false;   // repéré par l'intervention (mode siège)
-    this.secured = false; // récupéré : autant de perdu pour le preneur d'otages
-    this.secureT = 0;
-    this.radius = 7;        // à genoux, tête baissée : une petite cible
+    this.found = false;     // repéré par l'intervention (mode siège)
+    this.escort = null;     // celui qu'il suit, debout ; null : à genoux, il attend
+    this.escortSince = 0;   // instant de la prise en charge : son rang dans la file derrière l'escorte
+    this.exiting = null;    // en train de sortir par une ouverture
+    this.evacuated = false; // sorti : sauvé pour l'intervention, perdu pour le preneur d'otages
+    this.duckT = 0;         // se jette à genoux quand on tire près de lui
     this.wounded = false;   // une première blessure légère ne tue pas (voir Game.damage)
     this.alive = true;
     this.visible = false;
     this.angle = rand(0, TAU);
     this.team = 'civ';
+    this.path = [];
+    this.repathT = 0;
+    this.blockedT = 0;      // sans chemin jusqu'à son escorte (une porte fermée les sépare)
+    this.moving = false;
+    this.walk = 0;
   }
+  get standing() { return !!this.exiting || (!!this.escort && this.duckT <= 0); }
+  // à genoux, tête baissée : une petite cible ; debout, il en offre davantage
+  get radius() { return this.standing ? 9 : 7; }
   get tx() { return Math.floor(this.x / TILE); }
   get ty() { return Math.floor(this.y / TILE); }
 }

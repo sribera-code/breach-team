@@ -349,9 +349,11 @@ class GameMap {
 
   // A* sur la grille (8 directions, pas de coupe de coin, portes traversées en ligne droite).
   // opts.noClosedDoors : les portes non ouvertes sont infranchissables (coéquipiers en suivi).
+  // opts.passableDoors : seules les portes où l'on se glisse (doorPassable) sont franchissables (otages).
   // opts.avoid : [{x, y, r}] zones à contourner (alliés), fortement pénalisées.
   findPath(sx, sy, tx, ty, opts) {
     const noClosed = !!(opts && opts.noClosedDoors);
+    const passOnly = !!(opts && opts.passableDoors);
     const avoid = (opts && opts.avoid) || [];
     if (!this.inBounds(tx, ty) || this.blocksMove(tx, ty)) return null;
     if (!this.inBounds(sx, sy)) return null;
@@ -385,6 +387,7 @@ class GameMap {
         const diag = dx !== 0 && dy !== 0;
         const dObj = this.doorAt.get(nk);
         if (noClosed && dObj && !dObj.open) continue;
+        if (passOnly && dObj && !this.doorPassable(dObj)) continue;
         if (diag) {
           if (this.blocksMove(cx + dx, cy) || this.blocksMove(cx, cy + dy)) continue;
           if (curDoor || dObj) continue;

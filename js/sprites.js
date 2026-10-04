@@ -48,6 +48,9 @@ const POSE_LIE = {
   side: 1,
 };
 const DROPPED_GUN = { x: 14, y: -22, rot: -0.35 };
+const DROPPED_SHIELD = { x: 2, y: 22, rot: 0.25 };
+// Module laser sur le rail, selon le dessin de l'arme : [début, fin, décalage latéral].
+const LASER_MOUNT = { pistol: [12.4, 15.2, 1.3], smg: [15.2, 18.4, 1.9], pdw: [15.4, 18, 1.7], shotgun: [15.6, 18.8, -2.2], ak: [15, 18, 2], rifle: [15.2, 18.2, 2] };
 // Arme tenue : avancée devant la tête et un peu épaissie pour rester lisible vue de dessus.
 const GUN_SHIFT = 2.5, GUN_THICK = 1.18;
 // Distance du centre du personnage à la bouche du canon (utilisée aussi par le jeu pour les tirs).
@@ -657,6 +660,54 @@ const Sprites = {
         dark(M - 1.1, -0.75, 0.3, 0.5, 0.75); dark(M - 1.1, 0.25, 0.3, 0.5, 0.75);
       }
     }
+    // silencieux : un manchon sombre vissé au bout du canon (t.sup : sa longueur)
+    if (t.sup) {
+      const h = kind === 'pistol' ? 2.2 : 2.6;
+      part(M - t.sup, M, h, '#1b1d21', 0, h / 2);
+      shine(M - t.sup + 0.6, M - 0.6, -h / 2 + 0.35, 0.13);
+      dark(M - t.sup + 0.8, -0.15, 0.3, 0.3, 0.35);
+    }
+    // module laser sur le rail : un petit boîtier, lentille rouge vers l'avant
+    if (t.laser) {
+      const [x0, x1, dy] = LASER_MOUNT[kind] || LASER_MOUNT.rifle;
+      part(x0, x1, 1.3, '#4a4436', dy, 0.3);
+      ctx.fillStyle = '#ff4433'; ctx.fillRect(x1 - 0.5, A + dy - 0.35, 0.45, 0.7);
+    }
+  },
+
+  // Bouclier tenu, vu de dessus : on n'en voit que la tranche, un arc devant le porteur (repère du
+  // personnage, regard vers +x ; s : SHIELDS[..].look).
+  shieldHeld(ctx, s) {
+    const cx = -3;
+    ctx.save();
+    ctx.lineCap = 'butt';
+    ctx.beginPath(); ctx.arc(cx, 0, s.r, -s.span, s.span);
+    ctx.lineWidth = s.thick + 2.2; ctx.strokeStyle = 'rgba(0,0,0,0.7)'; ctx.stroke();
+    ctx.lineWidth = s.thick; ctx.strokeStyle = s.color; ctx.stroke();
+    ctx.beginPath(); ctx.arc(cx, 0, s.r - s.thick * 0.15, -s.span * 0.96, s.span * 0.96);
+    ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(255,255,255,0.3)'; ctx.stroke(); // arête supérieure, éclairée
+    // lampe fixée sur le bord gauche
+    const a = -s.span * 0.72, lr = s.r + s.thick / 2 + 1;
+    ctx.save(); ctx.translate(cx + Math.cos(a) * lr, Math.sin(a) * lr); ctx.rotate(a + Math.PI / 2);
+    ctx.fillStyle = '#16181b'; ctx.fillRect(-2.2, -1.2, 4.4, 2.4);
+    ctx.fillStyle = '#c9d0d6'; ctx.fillRect(-0.5, -1.2, 1, 0.8);
+    ctx.restore();
+    ctx.restore();
+  },
+
+  // Bouclier posé à plat (lâché au sol) : on voit sa face, la lucarne et la bande « POLICE ».
+  shieldFlat(ctx, s) {
+    const W = s.r * 0.95, L = s.r * 1.7;
+    ctx.fillStyle = 'rgba(0,0,0,0.3)'; roundRect(ctx, -L / 2 + 1.5, -W / 2 + 2, L, W, 3); ctx.fill();
+    roundRect(ctx, -L / 2, -W / 2, L, W, 3);
+    ctx.fillStyle = s.color; ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,0.65)'; ctx.lineWidth = 1; ctx.stroke();
+    ctx.fillStyle = 'rgba(255,255,255,0.08)'; ctx.fillRect(-L / 2 + 2, -W / 2 + 1.5, L - 4, 1.6);
+    ctx.fillStyle = '#0c1014'; roundRect(ctx, L / 2 - 8.5, -W * 0.3, 4.5, W * 0.6, 1); ctx.fill(); // lucarne
+    ctx.fillStyle = 'rgba(160,190,215,0.3)'; ctx.fillRect(L / 2 - 7.8, -W * 0.25, 1.1, W * 0.45);
+    ctx.fillStyle = '#dfe3e7'; ctx.fillRect(-L * 0.2, -W * 0.38, 3.4, W * 0.76);                   // bande
+    ctx.fillStyle = 'rgba(30,34,40,0.8)';
+    for (let k = 0; k < 4; k++) ctx.fillRect(-L * 0.2 + 1.2, -W * 0.3 + k * W * 0.16, 1, W * 0.1);  // lettres
   },
   // Geste à deux mains : la pose est modifiée sur place et le style renvoyé porte l'inclinaison
   // de l'arme (tenue d'une seule main) et, pour une grenade, sa position dans la main.
@@ -674,8 +725,8 @@ const Sprites = {
       pose.arms[0] = [[-2, -9.5], [9 + e * 2, -8.2], [h[0][0] + e * 8, h[0][1] - e * 4]];
       return { ...st, gunRot: 0.5 * e };
     }
-    if (st.act.type === 'pickup') {
-      // arme basse, la main avant descend saisir l'arme au sol puis revient
+    if (st.act.type === 'pickup' || st.act.type === 'hostage') {
+      // arme basse, la main avant descend saisir l'arme au sol (ou relever l'otage) puis revient
       const e = Math.sin(k * Math.PI);
       pose.arms[0] = [[-2, -9.5], [8, -10 - e * 3], [h[0][0] + e * 5, h[0][1] - e * 9]];
       return { ...st, gunRot: 0.75 * e };
@@ -777,7 +828,7 @@ const Sprites = {
       ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fillRect(V.x, V.y + V.h / 2 - 1, V.w, 2);
       ctx.fillStyle = st.vestLight || 'rgba(255,255,255,0.1)'; ctx.fillRect(V.x + V.w / 2 - 1.1, V.y, 2.2, V.h);
       ctx.fillStyle = 'rgba(255,255,255,0.08)'; ctx.fillRect(V.x, V.y, V.w, 2.5);
-    } else {
+    } else if (!st.civil) {
       ctx.strokeStyle = 'rgba(0,0,0,0.45)'; ctx.lineWidth = 2.2;
       ctx.beginPath(); ctx.moveTo(V.x - 1.5, V.y - 0.5); ctx.lineTo(V.x + V.w, V.y + V.h - 0.5); ctx.moveTo(V.x - 1.5, V.y + V.h); ctx.lineTo(V.x + V.w, V.y + 0.5); ctx.stroke();
       ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.fillRect(V.x + V.w - 2.5, V.y + 2.5, 3, 3); ctx.fillRect(V.x + V.w - 2.5, V.y + V.h - 5.5, 3, 3);
@@ -785,6 +836,8 @@ const Sprites = {
     if (pose.side > 0.5) { ctx.fillStyle = 'rgba(0,0,0,0.12)'; ctx.beginPath(); ctx.ellipse(T.x - 2, T.y, T.rx * 0.78, T.ry * 0.7, 0, 0, TAU); ctx.fill(); }
     // bras
     for (const arm of pose.arms) limb(arm, 5.5, st.sleeve);
+    // bouclier au bras gauche, devant le torse : l'arme de poing et la main passent par-dessus le bord
+    if (held && st.shield) this.shieldHeld(ctx, st.shield);
     // arme tenue
     if (held) {
       ctx.save();
@@ -818,10 +871,13 @@ const Sprites = {
 
   character(ctx, x, y, angle, st, muzzle, walk, moving) {
     const h = this.hands(st.gun);
-    const pose = { ...POSE_STAND, arms: [[[-2, -9.5], [7, -6.5], h[0]], [[-2, 9.5], [4.5, 7], h[1]]] };
+    // avec un bouclier, la main gauche tient sa poignée et la droite l'arme de poing, bras tendu
+    const pose = st.shield
+      ? { ...POSE_STAND, arms: [[[-2, -9.5], [3, -11], [8.5, -5.5]], [[-2, 9.5], [6.5, 7], h[1]]] }
+      : { ...POSE_STAND, arms: [[[-2, -9.5], [7, -6.5], h[0]], [[-2, 9.5], [4.5, 7], h[1]]] };
     if (st.act) st = this.actionPose(st, pose, h);
     this.figure(ctx, x, y, angle, st, pose, true, walk, moving);
-    if (muzzle > 0) this.muzzleFlash(ctx, x, y, angle, muzzleDist(st.gunLen || 18), muzzle);
+    if (muzzle > 0) this.muzzleFlash(ctx, x, y, angle, muzzleDist(st.gunLen || 18), muzzle, st.gunSup ? 0.3 : 1);
   },
 
   helmet(ctx, st) {
@@ -881,9 +937,10 @@ const Sprites = {
     }
   },
 
-  muzzleFlash(ctx, x, y, angle, ml, t) {
+  // k : taille de la flamme (un silencieux l'étouffe presque entièrement)
+  muzzleFlash(ctx, x, y, angle, ml, t, k = 1) {
     const mx = x + Math.cos(angle) * ml, my = y + Math.sin(angle) * ml;
-    ctx.save(); ctx.translate(mx, my); ctx.rotate(angle);
+    ctx.save(); ctx.translate(mx, my); ctx.rotate(angle); ctx.scale(k, k);
     ctx.globalAlpha = Math.min(1, t / 0.04);
     const g = ctx.createRadialGradient(0, 0, 0, 0, 0, 36);
     g.addColorStop(0, 'rgba(255,230,150,0.6)'); g.addColorStop(1, 'rgba(255,180,60,0)');
@@ -897,6 +954,11 @@ const Sprites = {
   // Corps au sol
   body(ctx, a, st) {
     const rot = a.bodyAngle === undefined ? a.angle + 0.9 : a.bodyAngle;
+    if (st.shield) {
+      ctx.save(); ctx.translate(a.x, a.y); ctx.rotate(rot); ctx.translate(DROPPED_SHIELD.x, DROPPED_SHIELD.y); ctx.rotate(DROPPED_SHIELD.rot);
+      this.shieldFlat(ctx, st.shield);
+      ctx.restore();
+    }
     if (st.gun) {
       ctx.save(); ctx.translate(a.x, a.y); ctx.rotate(rot); ctx.translate(DROPPED_GUN.x, DROPPED_GUN.y); ctx.rotate(DROPPED_GUN.rot);
       this.droppedGun(ctx, st.gun, st.gunLen || 18, st.gunTint);
@@ -918,6 +980,16 @@ const Sprites = {
     pose.arms = e < 0.01 ? [[[-2, -9.5], [7, -6.5], this.hands(st.gun)[0]], [[-2, 9.5], [4.5, 7], this.hands(st.gun)[1]]] : pose.arms;
     const rot = a.angle + angleDiff(a.angle, bodyAngle) * smoothstep(e);
     const held = k < 0.12;
+    if (!held && st.shield) {
+      // le bouclier bascule vers l'avant et tombe à plat à côté du corps
+      const g = smoothstep(clamp((k - 0.12) / 0.6, 0, 1));
+      const sx = a.x + Math.cos(a.angle) * 10, sy = a.y + Math.sin(a.angle) * 10;
+      const ex = a.x + Math.cos(bodyAngle) * DROPPED_SHIELD.x - Math.sin(bodyAngle) * DROPPED_SHIELD.y, ey = a.y + Math.sin(bodyAngle) * DROPPED_SHIELD.x + Math.cos(bodyAngle) * DROPPED_SHIELD.y;
+      ctx.save(); ctx.translate(lerp(sx, ex, g), lerp(sy, ey, g)); ctx.rotate(lerp(a.angle, bodyAngle + DROPPED_SHIELD.rot, g));
+      ctx.scale(lerp(0.2, 1, g), 1); // vu par la tranche, puis à plat
+      this.shieldFlat(ctx, st.shield);
+      ctx.restore();
+    }
     if (!held && st.gun) {
       // l'arme part de la main et retombe à côté du corps
       const g = smoothstep(clamp((k - 0.12) / 0.5, 0, 1));
@@ -955,6 +1027,22 @@ const Sprites = {
     ctx.fillStyle = '#d9b48f'; circle(ctx, 4, -5.5, 2.7); ctx.fill(); circle(ctx, 4, 5.5, 2.7); ctx.fill();
     if (h.wounded) {
       // blessé : chemise tachée de sang
+      ctx.fillStyle = 'rgba(150,12,14,0.85)';
+      ctx.beginPath(); ctx.ellipse(-4, 3, 3.6, 2.6, 0.4, 0, TAU); ctx.fill();
+      circle(ctx, -6.5, -2, 1.3); ctx.fill();
+    }
+    ctx.restore();
+  },
+
+  // Otage debout (escorté, ou qui sort) : il marche les mains sur la tête ; il s'efface en franchissant
+  // la façade (h.exiting.alpha).
+  hostageStanding(ctx, h) {
+    const pose = { ...POSE_STAND, arms: [[[-2.5, -9.5], [1, -13.5], [2.8, -8]], [[-2.5, 9.5], [1, 13.5], [2.8, 8]]] };
+    ctx.save();
+    if (h.exiting) ctx.globalAlpha = h.exiting.alpha;
+    this.figure(ctx, h.x, h.y, h.angle, STYLE_HOSTAGE, pose, false, h.walk, h.moving);
+    if (h.wounded) {
+      ctx.translate(h.x, h.y); ctx.rotate(h.angle);
       ctx.fillStyle = 'rgba(150,12,14,0.85)';
       ctx.beginPath(); ctx.ellipse(-4, 3, 3.6, 2.6, 0.4, 0, TAU); ctx.fill();
       circle(ctx, -6.5, -2, 1.3); ctx.fill();
@@ -1003,6 +1091,12 @@ const STYLE_MILITANT = {
 // Le chef (celui que l'on incarne) : même tête cagoulée que ses hommes, juste une veste plus sombre.
 const STYLE_BOSS = {
   ...STYLE_MILITANT, body: '#3b3f46', shoulder: '#33373d', sleeve: '#3b3f46',
+};
+
+// Otage : chemise claire, sans équipement (civil : pas de brelage dessiné).
+const STYLE_HOSTAGE = {
+  body: '#8a97a8', shoulder: '#8a97a8', sleeve: '#8a97a8', vest: null, pack: null, civil: true,
+  pants: '#3b4250', boots: '#17181b', skin: '#d9b48f', hair: '#3b2a1a', head: 'hair',
 };
 
 const STYLE_PLAYER = {

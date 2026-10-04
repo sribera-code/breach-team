@@ -1,7 +1,8 @@
 'use strict';
 // Tests de non-régression. Ouvrir tests/index.html dans un navigateur, ou :
 //   chrome --headless --dump-dom tests/index.html   (le titre de la page vaut PASS ou FAIL n)
-// Les tests ne passent jamais par setMode / setLoadout : rien n'est écrit dans localStorage.
+// Les tests ne passent pas par setMode / setLoadout : rien n'est écrit dans localStorage (ceux qui cliquent
+// sur le briefing remettent les réglages du joueur en sortant).
 
 const T = { pass: 0, fail: 0, lines: [] };
 
@@ -21,7 +22,7 @@ function mkGame(opts) {
   const ui = new UI(game);
   r.resize();
   game.mode = opts.mode || 'assault';
-  game.loadout = opts.loadout || Game.loadSavedLoadout(game.mode);
+  game.loadout = opts.loadout ? Game.normLoadout(opts.loadout, MODES[game.mode]) : Game.loadSavedLoadout(game.mode);
   game.entryRandom = false;          // les tests choisissent, sinon l'entrée est tirée au sort
   game.entryIndex = opts.entry || 0;
   game.loadLevel(opts.level || 0);
@@ -826,6 +827,411 @@ test('le joueur ne peut pas sortir du bâtiment', () => {
   }
 });
 
+// ---------------------------------------------------------------- bruit
+// Mur plein (ni porte ni ouverture) avec du sol des deux côtés : sa colonne tx et une ordonnée y.
+function wallSpot(map) {
+  for (let ty = 2; ty < map.h - 2; ty++) for (let tx = 2; tx < map.w - 2; tx++) {
+    if (!map.isWall(tx, ty) || map.door(tx, ty) || map.isWall(tx - 1, ty) || map.isWall(tx + 1, ty)) continue;
+    if (![-2, -1, 1, 2].every(k => map.isWall(tx, ty + k) && !map.door(tx, ty + k))) continue;
+    const y = (ty + 0.5) * TILE;
+    if (map.circleFree(tx * TILE - 20, y, 10, true) && map.circleFree((tx + 1) * TILE + 20, y, 10, true)) return { tx, y };
+  }
+  return null;
+}
+// Intensité perçue en (x, y) d'un bruit parti de (x0, y0) avec la portée R.
+function heardAt(game, x0, y0, R, x, y) {
+  const f = game.soundField(x0, y0, R);
+  const d = f[Math.floor(y / TILE) * game.map.w + Math.floor(x / TILE)];
+  return d < R ? 1 - d / R : 0;
+}
+// Un suspect « sourd-voyant » : il entend mais ne voit personne (on isole l'ouïe).
+function deafEye(game, x, y) {
+  const e = new Enemy(x, y, 0, 'ak');
+  e.viewRange = 0;
+  game.enemies.push(e);
+  return e;
+}
+// n cases libres autour de c, à 20 px au moins les unes des autres, en vue de c.
+function freeSpotsAround(game, c, n) {
+  const out = [];
+  for (let r = 0.8 * U; r <= 3 * U && out.length < n; r += 0.4 * U) for (let k = 0; k < 12 && out.length < n; k++) {
+    const x = c.x + Math.cos(k * TAU / 12 + r) * r, y = c.y + Math.sin(k * TAU / 12 + r) * r;
+    if (!game.map.circleFree(x, y, 12, true) || !game.map.hasLOS(c.x, c.y, x, y)) continue;
+    if (out.some(o => dist(o.x, o.y, x, y) < 22)) continue;
+    out.push({ x, y });
+  }
+  return out;
+}
+
+test('le bruit s’étouffe à travers une porte fermée ou un mur, pas par une porte ouverte', () => {
+  const g = mkGame({ alone: true });
+  const game = g.game, map = game.map;
+  const w = doorWithRoom(game);
+  ok(w, 'une porte de test');
+  const R = 6 * U;
+  setDoor(w.d, 1);
+  const open = heardAt(game, w.a.x, w.a.y, R, w.b.x, w.b.y);
+  setDoor(w.d, 0);
+  const closed = heardAt(game, w.a.x, w.a.y, R, w.b.x, w.b.y);
+  near(open, 1 - dist(w.a.x, w.a.y, w.b.x, w.b.y) / R, 0.08, 'porte ouverte : comme en plein air');
+  ok(closed > 0 && closed < open - 0.15, 'porte fermée : nettement plus faible (' + closed.toFixed(2) + ' contre ' + open.toFixed(2) + ')');
+  const s = wallSpot(map);
+  ok(s, 'un mur de test');
+  const L = { x: s.tx * TILE - 20, y: s.y }, Rt = { x: (s.tx + 1) * TILE + 20, y: s.y };
+  const thru = heardAt(game, L.x, L.y, R, Rt.x, Rt.y);
+  ok(thru < 1 - dist(L.x, L.y, Rt.x, Rt.y) / R - 0.3, 'un mur étouffe le son (' + thru.toFixed(2) + ')');
+  eq(heardAt(game, L.x, L.y, 2 * U, Rt.x, Rt.y), 0, 'un bruit faible ne passe pas le mur');
+});
+
+test('un suspect se tourne vers un bruit léger, va voir un bruit fort ou répété, puis regagne son poste', () => {
+  const g = mkGame({ alone: true });
+  const game = g.game;
+  const c = { x: game.hostages[0].x, y: game.hostages[0].y }; // un poste libre, loin de l'entrée
+  const e = deafEye(game, c.x, c.y);
+  const s2 = reachableSpot(game, e, 2 * U, 2.5 * U, true);
+  ok(s2, 'un point de bruit à deux cases');
+  game.noise(s2.x, s2.y, 4 * U, game.player, 'door');
+  eq(e.state, 'idle', 'une porte au loin : il ne bouge pas');
+  ok(e.alertAngle !== null && Math.abs(angleDiff(e.alertAngle, Math.atan2(s2.y - e.y, s2.x - e.x))) < 0.05, 'mais il se tourne vers le bruit');
+  let n = 1;
+  while (e.state !== 'investigate' && n < 12) { g.step(30); game.noise(s2.x, s2.y, 4 * U, game.player, 'door'); n++; }
+  eq(e.state, 'investigate', 'à force de bruits répétés, il va voir');
+  ok(n >= 3, 'mais pas au premier (' + n + ' bruits)');
+  // un coup de feu proche : il y va tout de suite
+  const e2 = deafEye(game, c.x, c.y);
+  e.alive = false;
+  game.noise(s2.x, s2.y, 11 * U, game.player, 'shot');
+  eq(e2.state, 'investigate', 'un coup de feu : il va voir sur-le-champ');
+  ok(e2.lastKnown && dist(e2.lastKnown.x, e2.lastKnown.y, s2.x, s2.y) < 1.5 * U, 'vers l’endroit du bruit');
+  for (let i = 0; i < 60 * 20 && e2.state !== 'idle'; i++) g.step(1);
+  eq(e2.state, 'idle', 'rien trouvé : il retourne à son poste');
+  ok(dist(e2.x, e2.y, e2.home.x, e2.home.y) < U, 'il y est revenu');
+});
+
+test('au plus deux suspects vont voir un même bruit ; une fusillade qui dure attire les autres', () => {
+  const g = mkGame({ alone: true });
+  const game = g.game;
+  const c = { x: game.hostages[0].x, y: game.hostages[0].y };
+  const spots = freeSpotsAround(game, c, 5);
+  eq(spots.length, 5, 'cinq places autour du point');
+  const es = spots.map(q => deafEye(game, q.x, q.y));
+  game.noise(c.x, c.y, 11 * U, game.player, 'shot');
+  const going = () => es.filter(e => e.state === 'investigate').length;
+  eq(going(), 2, 'deux vont voir');
+  // les deux qui l'entendent le mieux (le plus près, à l'oreille)
+  const I = e => heardAt(game, c.x, c.y, 11 * U, e.x, e.y);
+  const goers = es.filter(e => e.state === 'investigate'), others = es.filter(e => e.state !== 'investigate');
+  ok(goers.every(e => others.every(o => I(e) >= I(o) - 1e-6)), 'ceux qui l’entendent le mieux');
+  ok(es.every(e => e.state === 'investigate' || Math.abs(angleDiff(e.homeAngle, Math.atan2(c.y - e.y, c.x - e.x))) < 0.05), 'les autres guettent de ce côté');
+  for (let i = 0; i < 8 && going() < 5; i++) { game.time += 0.6; game.noise(c.x, c.y, 11 * U, game.player, 'shot'); }
+  eq(going(), 5, 'des tirs répétés finissent par les attirer tous');
+});
+
+test('silencieux : le tir ne s’entend plus qu’à quelques cases ; il se choisit arme par arme', () => {
+  const s = suppressedDef('hk416'), w = WEAPONS.hk416;
+  ok(s.suppressed && s.noise < w.noise / 2, 'HK416 : ' + w.noise + ' cases, ' + s.noise + ' au silencieux');
+  ok(s.gunLen > w.gunLen && s.mobility < w.mobility && s.weight > w.weight, 'plus long, plus lourd, un peu moins mobile');
+  eq(suppressedDef('m870'), WEAPONS.m870, 'pas de silencieux sur un fusil à pompe');
+  ok(suppressedDef('mp5').damage < WEAPONS.mp5.damage, '9 mm subsonique : un peu moins de dégâts');
+  eq(suppressedDef('hk416'), s, 'chaque combinaison n’est calculée qu’une fois');
+  // sur l'arme principale seulement, puis sur l'arme de poing seulement
+  const { game: g1 } = mkGame({ loadout: { primary: 'hk416', sidearm: 'glock17', acc: { hk416: { sup: true } } } });
+  ok(g1.player.slots[0].def.suppressed && !g1.player.slots[1].def.suppressed, 'silencieux sur l’arme principale seule');
+  ok(g1.mates.every(m => !m.weapon.suppressed), 'les coéquipiers n’en héritent pas');
+  const { game: g2 } = mkGame({ loadout: { primary: 'hk416', sidearm: 'glock17', acc: { glock17: { sup: true } } } });
+  ok(!g2.player.slots[0].def.suppressed && g2.player.slots[1].def.suppressed, 'silencieux sur l’arme de poing seule');
+  // les coéquipiers ont leur propre réglage
+  for (let n = 0; n < 6; n++) {
+    const { game } = mkGame({ loadout: { primary: 'm870', sidearm: 'glock17', teamSup: true } });
+    ok(game.player.slots.every(sl => !sl.def.suppressed), 'le joueur garde ses propres choix');
+    ok(game.mates.every(m => m.weapon.suppressed), 'les coéquipiers au silencieux (' + game.mates.map(m => m.weapon.name).join(', ') + ')');
+  }
+  const { game: g0 } = mkGame();
+  ok(g0.player.slots.every(sl => !sl.def.suppressed) && g0.mates.every(m => !m.weapon.suppressed), 'sans silencieux par défaut');
+  // un équipement enregistré avant les accessoires (un seul drapeau, pour toute l'équipe)
+  const old = Game.normLoadout({ primary: 'mp5', sidearm: 'usp45', sup: true }, MODES.assault);
+  ok(old.acc.mp5.sup && old.acc.usp45.sup && old.teamSup && !('sup' in old), 'ancien réglage : silencieux sur les deux armes et l’équipe');
+  // à six cases, en plein air : le tir silencieux ne s'entend pas, l'autre si
+  const g = mkGame({ alone: true, loadout: { primary: 'hk416', sidearm: 'glock17', acc: { hk416: { sup: true } } } });
+  const game = g.game, p = game.player;
+  const far = reachableSpot(game, p, 5.5 * U, 6.5 * U, true);
+  ok(far, 'un point à six cases en vue');
+  eq(heardAt(game, p.x, p.y, s.noise * U, far.x, far.y), 0, 'silencieux : rien à six cases');
+  ok(heardAt(game, p.x, p.y, w.noise * U, far.x, far.y) > 0.3, 'sans : bien audible à six cases');
+  const e = deafEye(game, far.x, far.y);
+  p.angle = Math.atan2(p.y - far.y, p.x - far.x); // on tire à l'opposé du suspect
+  game.fireWeapon(p);
+  eq(e.state, 'idle', 'il n’a rien entendu');
+  ok(e.suspicion === 0, 'pas la moindre inquiétude');
+  p.slots[0] = makeSlot('hk416');
+  game.fireWeapon(p);
+  eq(e.state, 'investigate', 'sans silencieux, il vient voir');
+});
+
+test('les bruits hors de vue s’affichent autour du joueur, avec leur direction et leur force', () => {
+  const g = mkGame({ alone: true });
+  const game = g.game, p = game.player;
+  const w = doorWithRoom(game);
+  ok(w, 'une porte de test');
+  setDoor(w.d, 0);
+  p.x = w.a.x; p.y = w.a.y;
+  game.input.mouse.x = w.d.cx; game.input.mouse.y = w.d.cy;
+  g.step(2);
+  game.heard = [];
+  game.noise(w.b.x, w.b.y, 11 * U, null, 'shot');
+  eq(game.heard.length, 1, 'un tir derrière la porte : un repère');
+  const h = game.heard[0];
+  eq(h.kind, 'shot', 'c’est un tir');
+  ok(Math.abs(angleDiff(h.a, Math.atan2(w.b.y - p.y, w.b.x - p.x))) < 0.05, 'dans la bonne direction');
+  ok(h.i > 0.2 && h.i < 1, 'avec son intensité (' + h.i.toFixed(2) + ')');
+  game.noise(w.b.x, w.b.y, 11 * U, null, 'shot');
+  eq(game.heard.length, 1, 'une rafale au même endroit ne multiplie pas les repères');
+  game.noise(w.b.x, w.b.y, 3 * U, null, 'step');
+  ok(game.heard.length === 1 || game.heard[1].i < h.i, 'des pas derrière une porte : à peine, ou pas du tout');
+  // un bruit sous les yeux : pas de repère
+  game.heard = [];
+  const ax = p.x + Math.cos(p.angle) * U, ay = p.y + Math.sin(p.angle) * U;
+  game.noise(ax, ay, 11 * U, null, 'shot');
+  eq(game.heard.length, 0, 'un bruit qu’on voit n’a pas besoin de repère');
+  game.noise(w.b.x, w.b.y, 11 * U, null, 'shot');
+  g.step(1); // dessin des repères
+  g.step(Math.ceil(NOISE_KINDS.shot.life * 60) + 2);
+  eq(game.heard.length, 0, 'il s’efface');
+});
+
+test('votre propre bruit laisse un halo, bien plus petit au silencieux', () => {
+  const cells = sup => {
+    const g = mkGame({ alone: true, loadout: { primary: 'hk416', sidearm: 'glock17', acc: { hk416: { sup } } } });
+    const game = g.game, p = game.player;
+    game.input.mouse.x = p.x + 100; game.input.mouse.y = p.y;
+    game.ownNoise = null;
+    game.fireWeapon(p);
+    ok(game.ownNoise, (sup ? 'silencieux' : 'sans silencieux') + ' : un halo');
+    g.step(1); // dessin du halo
+    eq(g.r.noiseC.width, game.map.w, 'calque du halo à la taille de la grille');
+    return game.ownNoise.cells.length / 2;
+  };
+  const loud = cells(false), quiet = cells(true);
+  ok(quiet < loud / 3, 'halo : ' + loud + ' cases sans silencieux, ' + quiet + ' avec');
+});
+
+test('un suspect qui vous repère crie l’alerte, et un corps découvert aussi', () => {
+  const g = mkGame({ alone: true });
+  const game = g.game, p = game.player;
+  const spot = reachableSpot(game, p, 3 * U, 4 * U, true);
+  ok(spot, 'un point en vue du joueur');
+  const a = new Enemy(spot.x, spot.y, Math.atan2(p.y - spot.y, p.x - spot.x), 'ak');
+  game.enemies.push(a);
+  const nb = freeSpotsAround(game, spot, 1)[0];
+  const b = deafEye(game, nb.x, nb.y);
+  b.angle = Math.atan2(nb.y - p.y, nb.x - p.x); // il tourne le dos
+  game.updateEnemy(a, 1 / 60);
+  eq(a.target, p, 'le premier vous voit');
+  ok(game.time - a.shoutT < 0.1, 'et crie');
+  eq(b.state, 'investigate', 'son voisin accourt');
+  // un corps
+  const g2 = mkGame({ alone: true });
+  const game2 = g2.game, c = { x: game2.hostages[0].x, y: game2.hostages[0].y };
+  const [q1, q2] = freeSpotsAround(game2, c, 2);
+  const dead = new Enemy(q1.x, q1.y, 0, 'ak');
+  dead.alive = false;
+  const finder = new Enemy(q2.x, q2.y, Math.atan2(q1.y - q2.y, q1.x - q2.x), 'ak');
+  game2.enemies.push(dead, finder);
+  game2.updateEnemy(finder, 1 / 60);
+  ok(dead.noticed, 'le corps est découvert');
+  eq(finder.state, 'investigate', 'il va voir');
+  ok(game2.time - finder.shoutT < 0.1, 'et crie l’alerte');
+});
+
+test('courir s’entend, marcher non', () => {
+  const g = mkGame({ alone: true });
+  const game = g.game, p = game.player;
+  const steps = [];
+  const noise = game.noise.bind(game);
+  game.noise = (x, y, R, src, kind) => { if (kind === 'step' && src === p) steps.push(R); noise(x, y, R, src, kind); };
+  const dir = reachableSpot(game, p, 3 * U, 5 * U, true);
+  const run = walk => {
+    p.walkMode = walk;
+    steps.length = 0;
+    const a = Math.atan2(dir.y - p.y, dir.x - p.x);
+    const k = Math.abs(Math.cos(a)) > Math.abs(Math.sin(a)) ? (Math.cos(a) > 0 ? 'KeyD' : 'KeyA') : (Math.sin(a) > 0 ? 'KeyS' : 'KeyW');
+    game.input.keys[k] = true; g.step(40); game.input.keys[k] = false;
+    return steps.length;
+  };
+  eq(run(true), 0, 'en marchant : aucun bruit de pas');
+  ok(run(false) >= 2, 'en courant : des pas qu’on entend');
+});
+
+// ---------------------------------------------------------------- otages
+// Partie d'assaut au calme, le joueur juste à côté du premier otage.
+function withHostage(level) {
+  const g = mkGame({ alone: true, level: level || 0 });
+  const game = g.game, p = game.player, h = game.hostages[0];
+  ok(besideHostage(game, p, h), 'une place à côté de l’otage');
+  game.input.mouse.x = h.x; game.input.mouse.y = h.y;
+  return { g, game, p, h };
+}
+// Case libre entre dMin et dMax de `from`, qu'un otage peut rejoindre (portes franchissables seulement).
+// open : en ligne droite et à découvert depuis `from` (pas d'angle à contourner).
+function reachableSpot(game, from, dMin, dMax, open) {
+  const m = game.map;
+  for (let r = dMin; r <= dMax; r += 0.5 * U) for (let k = 0; k < 16; k++) {
+    const x = from.x + Math.cos(k * TAU / 16) * r, y = from.y + Math.sin(k * TAU / 16) * r;
+    const tx = Math.floor(x / TILE), ty = Math.floor(y / TILE);
+    if (!m.inBounds(tx, ty) || !m.circleFree(x, y, 12, true)) continue;
+    if (m.breaches.some(b => dist(b.cx, b.cy, x, y) < 3 * U)) continue; // près d'une sortie, un otage escorté s'en irait
+    if (open && !m.segmentFree(from.x, from.y, x, y, 12)) continue;
+    if (m.routeTo(from.x, from.y, tx, ty, 9, { passableDoors: true })) return { x, y };
+  }
+  return null;
+}
+const who = a => (a ? a.constructor.name + (a.name ? ' ' + a.name : '') : 'personne');
+
+test('H relève l’otage : il suit en file derrière vous, et attend à genoux sur ordre', () => {
+  const { g, game, p, h } = withHostage();
+  ok(!h.standing && h.radius <= 7, 'à genoux au départ');
+  g.press('KeyH');
+  ok(p.act && p.act.type === 'hostage', 'un geste pour l’aider à se relever');
+  g.step(40);
+  eq(h.escort, p, 'il vous suit');
+  ok(h.standing && h.radius > 7, 'debout, il fait une cible plus large');
+  const h2 = game.hostages[1];
+  ok(besideHostage(game, h2, h), 'un deuxième otage à côté');
+  game.takeCharge(h2, p);
+  const go = reachableSpot(game, p, 3 * U, 6 * U, true) || reachableSpot(game, p, 2 * U, 6 * U);
+  ok(go, 'un point où aller');
+  p.x = go.x; p.y = go.y;
+  g.step(360);
+  // en file : le plus proche juste derrière vous, l'autre derrière lui
+  const [first, second] = [h, h2].sort((a, b) => dist(a.x, a.y, p.x, p.y) - dist(b.x, b.y, p.x, p.y));
+  const d1 = dist(first.x, first.y, p.x, p.y), d2 = dist(second.x, second.y, p.x, p.y);
+  ok(d1 <= HOSTAGE_GAP + 14 && game.map.hasLOS(first.x, first.y, p.x, p.y), 'le premier s’arrête juste derrière vous (' + Math.round(d1) + ' px)');
+  ok(d2 >= d1 + HOSTAGE_GAP_STEP * 0.5 && d2 <= HOSTAGE_GAP + HOSTAGE_GAP_STEP + 20, 'le second se range derrière lui (' + Math.round(d2) + ' px)');
+  g.press('KeyH');
+  eq(first.escort, null, 'H à nouveau : le plus proche attend');
+  ok(!first.standing, 'à genoux');
+  ok(/attend ici/.test(game.message.text), 'annoncé');
+  const x = first.x, y = first.y;
+  const go2 = reachableSpot(game, p, 3 * U, 6 * U, true) || reachableSpot(game, p, 2 * U, 6 * U);
+  p.x = go2.x; p.y = go2.y;
+  g.step(240);
+  ok(dist(first.x, first.y, x, y) < 2, 'il ne bouge plus');
+  eq(second.escort, p, 'l’autre vous suit toujours');
+  ok(dist(second.x, second.y, p.x, p.y) <= HOSTAGE_GAP + 14, 'et prend la tête de la file');
+  // l'escorte tombe : il se remet à genoux
+  game.damage(p, 1000, null, 0);
+  g.step(2);
+  eq(second.escort, null, 'son escorte tombée, il ne suit plus personne');
+  ok(!second.standing, 'il se remet à genoux');
+});
+
+test('un otage amené devant une porte extérieure ouverte ou une fenêtre sort du bâtiment', () => {
+  for (const kind of ['door', 'window']) {
+    const { g, game, p, h } = withHostage();
+    const b = game.map.breaches.find(x => x.kind === kind);
+    ok(b, kind + ' : une ouverture de ce type');
+    game.takeCharge(h, p);
+    p.x = b.inside.x; p.y = b.inside.y;
+    h.x = b.inside.x + Math.cos(b.angle) * 1.2 * U; h.y = b.inside.y + Math.sin(b.angle) * 1.2 * U;
+    game.unstick(h);
+    if (b.door) {
+      setDoor(b.door, 0);
+      g.step(120);
+      ok(!h.evacuated && !h.exiting, 'porte fermée : il ne sort pas');
+      setDoor(b.door, 1);
+    }
+    let fade = 1;
+    for (let i = 0; i < 360 && !h.evacuated; i++) { g.step(1); if (h.exiting) fade = Math.min(fade, h.exiting.alpha); }
+    ok(h.evacuated, kind + ' : évacué');
+    ok(fade < 1, kind + ' : il s’efface en franchissant la façade');
+    ok(!h.visible && h.escort === null, kind + ' : hors jeu une fois sorti');
+    ok(new RegExp('Otage évacué \\(1 / ' + game.hostages.length + '\\)').test(game.message.text), kind + ' : évacuation annoncée');
+    ok(document.getElementById('objective').textContent.includes('Otages évacués : 1 / ' + game.hostages.length), kind + ' : compteur du HUD');
+  }
+});
+
+test('un otage n’ouvre pas les portes, et on ne referme pas une porte sur lui', () => {
+  const g = mkGame({ alone: true });
+  const game = g.game, p = game.player;
+  const w = doorWithRoom(game);
+  ok(w, 'une porte de test');
+  const side = (x, y) => Math.sign(w.d.horizontal ? y - w.d.cy : x - w.d.cx);
+  const h = game.hostages[0];
+  h.x = w.a.x; h.y = w.a.y;
+  p.x = w.b.x; p.y = w.b.y;
+  setDoor(w.d, 0);
+  game.takeCharge(h, p);
+  g.step(120);
+  eq(side(h.x, h.y), side(w.a.x, w.a.y), 'porte fermée : il reste de son côté');
+  ok(/ouvrez-lui la porte/.test(game.message.text), 'le joueur en est averti');
+  setDoor(w.d, DOOR_STEPS[1]);
+  g.step(90);
+  eq(side(h.x, h.y), side(w.a.x, w.a.y), 'entrebâillée : toujours pas');
+  setDoor(w.d, DOOR_STEPS[2]);
+  for (let i = 0; i < 300 && side(h.x, h.y) !== side(w.b.x, w.b.y); i++) g.step(1);
+  eq(side(h.x, h.y), side(w.b.x, w.b.y), 'entrouverte : il se glisse dans l’embrasure');
+  // un otage dans l'embrasure : la porte ne se referme pas
+  game.releaseHostage(h);
+  h.x = w.d.cx; h.y = w.d.cy;
+  setDoor(w.d, 1);
+  game.message = { text: '', t: 0 };
+  ok(!game.doorAction(p, w.d, 0), 'fermeture refusée');
+  ok(/Un otage est dans l'embrasure/.test(game.message.text), 'refus expliqué');
+  eq(w.d.progress, 1, 'la porte reste ouverte');
+});
+
+test('un otage escorté se jette à terre quand on tire près de lui', () => {
+  const { g, game, p, h } = withHostage();
+  game.takeCharge(h, p);
+  g.step(10);
+  ok(h.standing, 'debout');
+  const away = Math.atan2(p.y - h.y, p.x - h.x); // on tire à l'opposé de l'otage
+  game.input.mouse.x = p.x + Math.cos(away) * 100; game.input.mouse.y = p.y + Math.sin(away) * 100;
+  game.input.mouse.down = true; game.input.pressed.Mouse0 = true; g.step(1);
+  game.input.mouse.down = false;
+  ok(game.stats.shots > 0, 'le coup est parti');
+  ok(!h.standing && h.radius <= 7 && h.duckT > 0, 'il se jette à genoux');
+  const go = reachableSpot(game, p, 3 * U, 6 * U);
+  p.x = go.x; p.y = go.y;
+  const x = h.x, y = h.y;
+  g.step(30);
+  ok(dist(h.x, h.y, x, y) < 1, 'il ne bouge pas tant que ça tire');
+  g.step(240);
+  ok(h.standing && dist(h.x, h.y, p.x, p.y) <= HOSTAGE_GAP + 14, 'puis il se relève et reprend la file');
+});
+
+test('assaut : neutraliser tous les suspects suffit, otages dehors ou non', () => {
+  const g = mkGame({ noEnd: false });
+  const game = g.game;
+  ok(document.getElementById('objective').textContent.includes('Otages évacués : 0 / ' + game.hostages.length), 'le HUD compte les otages évacués');
+  game.enemies.forEach(e => { e.alive = false; });
+  g.step(1);
+  eq(game.over, 'win', 'suspects neutralisés, otages encore à l’intérieur : mission accomplie');
+  ok(game.hostages.every(h => h.alive && !h.evacuated), 'aucun otage n’a eu à sortir');
+  g.ui.showEnd('win');
+  eq(document.getElementById('endHostagesOut').textContent, '0 / ' + game.hostages.length, 'le bilan compte quand même les otages évacués');
+  g.ui.hideOverlay();
+  // otages dehors d'abord : annoncé, et la mission continue jusqu'au dernier suspect
+  const g2 = mkGame({ noEnd: false });
+  g2.game.hostages.forEach(h => { h.evacuated = true; });
+  g2.step(1);
+  eq(g2.game.over, null, 'des suspects encore debout');
+  ok(/reste à neutraliser/.test(g2.game.message.text), 'annoncé');
+  g2.game.enemies.forEach(e => { e.alive = false; });
+  g2.step(1);
+  eq(g2.game.over, 'win', 'le dernier suspect tombé : accomplie');
+  // un otage tué reste un échec, même si les suspects tombent en même temps
+  const g3 = mkGame({ noEnd: false });
+  g3.game.hostages[0].alive = false;
+  g3.game.enemies.forEach(e => { e.alive = false; });
+  g3.step(1);
+  eq(g3.game.over, 'lose', 'un otage mort : mission échouée');
+  // en siège, H ne fait pas bouger les otages
+  const g4 = mkGame({ mode: 'siege' });
+  g4.press('KeyH');
+  ok(/seule l'intervention les emmène/.test(g4.game.message.text), 'siège : les otages restent à genoux');
+});
+
 // ---------------------------------------------------------------- siège
 test('chaque carte : neuf suspects, et de trois à cinq otages', () => {
   LEVELS.forEach((l, i) => {
@@ -882,7 +1288,12 @@ test('l’assaut entre par une ouverture, avec un geste d’entrée', () => {
     ok(dist(e.x, e.y, b.inside.x, b.inside.y) < 3 * TILE, 'ils arrivent par ' + game.map.breachLabel(b));
     ok(e.act || e.waitDoor, 'entrer prend un geste');
   }
-  // ils peuvent ensuite s'arrêter (combat, otage à récupérer) : on vérifie qu'ils ont quitté l'ouverture
+  // ils peuvent ensuite s'arrêter (combat, otage à récupérer) : on vérifie qu'ils ont quitté l'ouverture.
+  // Un poste tiré juste derrière l'ouverture les fixerait au combat dès l'entrée : on dégage le seuil.
+  const near = o => dist(o.x, o.y, b.inside.x, b.inside.y) < 6 * U;
+  game.mates.forEach(m => { if (near(m)) m.alive = false; });
+  const far = game.mates.filter(m => m.alive).sort((x, y) => dist(y.x, y.y, b.inside.x, b.inside.y) - dist(x.x, x.y, b.inside.x, b.inside.y))[0];
+  if (near(game.player) && far) { game.player.x = far.x; game.player.y = far.y; far.alive = false; }
   let loin = 0;
   for (let i = 0; i < 600; i++) {
     g.step(1);
@@ -901,24 +1312,98 @@ test('les renforts changent d’ouverture', () => {
   eq(game.enemies.length, s.waves[0] + s.waves[1], 'la deuxième vague s’ajoute à la première');
 });
 
-test('l’assaut récupère les otages, et sans otage la partie est perdue', () => {
-  const g = mkGame({ mode: 'siege', noEnd: false });
-  const game = g.game;
-  game.siege.prep = 0.01; g.step(2);
+// Siège réduit à un seul opérateur, aveugle (il ne se bat pas) : on observe l'escorte seule.
+function loneOperator(level) {
+  const g = mkGame({ mode: 'siege', level: level || 0 });
+  const game = g.game, s = game.siege;
+  s.prep = 0.01; g.step(2);
+  s.wave = s.waves.length;                       // plus de vague après celle-ci
   game.mates.forEach(m => { m.alive = false; }); // sinon les complices l'abattent avant la fin
-  game.player.hp = game.player.maxHp = 1e9;      // abattu, il ferait perdre la partie avant la remise
-  const h = game.hostages[0];
+  game.player.hp = game.player.maxHp = 1e9;
   const op = game.enemies[0];
-  op.hp = op.maxHp = 100000;
-  // un côté libre de l'otage : sa position est tirée au sort, il peut être contre un mur
-  const cote = [[10, 0], [-10, 0], [0, 10], [0, -10]].find(([dx, dy]) => game.map.circleFree(h.x + dx, h.y + dy, 10, false)) || [10, 0];
-  op.x = h.x + cote[0]; op.y = h.y + cote[1];
+  game.enemies.slice(1).forEach(e => { e.alive = false; });
+  op.hp = op.maxHp = 1e9;
+  op.viewRange = 0; // ne voit personne : pas de combat, il fait son travail d'escorte
+  // ce qu'il a pu voir en entrant ne compte pas : chaque test désigne lui-même l'otage repéré
+  game.hostages.forEach(h => { h.found = false; });
+  op.lastKnown = null;
+  return { g, game, op };
+}
+// Place un agent à une case libre voisine de l'otage, avec vue sur lui.
+function besideHostage(game, a, h) {
+  for (const r of [10, 16, 22]) for (let k = 0; k < 8; k++) {
+    const x = h.x + Math.cos(k * TAU / 8) * r, y = h.y + Math.sin(k * TAU / 8) * r;
+    if (game.map.circleFree(x, y, 12, true) && game.map.hasLOS(x, y, h.x, h.y)) { a.x = x; a.y = y; return true; }
+  }
+  return false;
+}
+
+test('en siège, l’intervention relève un otage et l’emmène jusqu’à une sortie', () => {
+  const { g, game, op } = loneOperator();
+  const h = game.hostages[0];
+  ok(besideHostage(game, op, h), 'une place à côté de l’otage');
   h.found = true;
-  for (let i = 0; i < 300; i++) { op.x = h.x + cote[0]; op.y = h.y + cote[1]; game.update(1 / 60); }
-  ok(h.secured, 'otage récupéré après quelques secondes');
-  game.hostages.forEach(x => { x.secured = true; });
+  let pris = false, sortie = null;
+  for (let i = 0; i < 60 * 60 && !h.evacuated; i++) {
+    game.update(1 / 60);
+    if (h.escort === op) { pris = true; sortie = op.exit; }
+  }
+  ok(pris, 'l’opérateur l’a pris en charge (' + who(h.escort) + ')');
+  ok(/emmène un otage/.test(game.message.text) || h.evacuated, 'le preneur d’otages en est averti');
+  ok(sortie && game.map.breaches.includes(sortie), 'il vise une ouverture de la carte');
+  ok(h.evacuated, 'otage évacué par une sortie');
+  eq(op.escorting, null, 'l’escorte est libre ensuite');
+  ok(/évacué/.test(game.message.text), 'évacuation annoncée');
+  g.ui.update();
+  ok(document.getElementById('objective').textContent.includes('Otages : ' + game.hostages.filter(x => x.alive && !x.evacuated).length), 'le HUD compte les otages qui vous restent');
+  delete game.checkEnd; // la vraie fin de partie, cette fois
+  game.hostages.forEach(x => { x.evacuated = true; });
   game.update(1 / 60);
-  eq(game.over, 'lose', 'plus d’otage : la partie est perdue');
+  eq(game.over, 'lose', 'plus d’otage entre vos mains : la partie est perdue');
+  ok(/évacués par l'intervention/.test(game.loseReason), 'raison : ils ont tous été évacués');
+});
+
+test('un opérateur ne reste pas planté devant un point injoignable, ni sur un simple impact', () => {
+  const { game, op } = loneOperator();
+  const m = game.mates[0];
+  m.alive = true; m.x = op.x + 2 * U; m.y = op.y; // une source « d'en face » pour le bruit
+  op.lastKnown = null;
+  game.noise(op.x + U, op.y, 3 * U, m, 'impact');
+  eq(op.lastKnown, null, 'un impact ne dit pas où est le tireur');
+  m.alive = false;
+  const s = wallSpot(game.map);
+  op.lastKnown = { x: (s.tx + 0.5) * TILE, y: s.y }; // dans un mur
+  const x0 = op.x, y0 = op.y;
+  for (let i = 0; i < 240; i++) game.update(1 / 60);
+  eq(op.lastKnown, null, 'point injoignable oublié');
+  ok(dist(op.x, op.y, x0, y0) > U, 'il reprend sa progression');
+});
+
+test('en siège, l’escorte abattue, l’otage reste à genoux et un autre opérateur le reprend', () => {
+  const { game, op } = loneOperator();
+  // l'otage le plus loin des sorties : il ne doit pas déjà être en train de sortir quand l'escorte tombe
+  const far = o => Math.min(...game.map.breaches.map(b => dist(o.x, o.y, b.cx, b.cy)));
+  const h = game.hostages.slice().sort((x, y) => far(y) - far(x))[0];
+  besideHostage(game, op, h);
+  h.found = true;
+  for (let i = 0; i < 300 && h.escort !== op; i++) game.update(1 / 60);
+  ok(h.escort === op, 'pris en charge (' + who(h.escort) + ')');
+  for (let i = 0; i < 10; i++) game.update(1 / 60);
+  ok(!h.exiting, 'pas encore à la sortie'); // un otage qui sort termine sa sortie, escorte ou pas
+  op.hp = 1; game.damage(op, 50, game.player, 0);
+  game.update(1 / 60);
+  ok(h.escort === null, 'plus d’escorte (' + who(h.escort) + ', évacué : ' + h.evacuated + ')');
+  ok(!h.standing && h.radius <= 7, 'il se remet à genoux');
+  ok(/escorte est tombée/.test(game.message.text), 'annoncé');
+  const x = h.x, y = h.y;
+  for (let i = 0; i < 60; i++) game.update(1 / 60);
+  ok(dist(h.x, h.y, x, y) < 1, 'il ne bouge plus');
+  const op2 = new Operator(h.x, h.y, 0, 'hk416op');
+  op2.viewRange = 0; op2.hp = op2.maxHp = 1e9;
+  game.enemies.push(op2);
+  besideHostage(game, op2, h);
+  for (let i = 0; i < 300 && h.escort !== op2; i++) game.update(1 / 60);
+  ok(h.escort === op2, 'un autre opérateur l’emmène (' + who(h.escort) + ')');
 });
 
 test('en siège, la mission ne tombe que quand plus aucun otage n’est vivant entre vos mains', () => {
@@ -936,10 +1421,10 @@ test('en siège, la mission ne tombe que quand plus aucun otage n’est vivant e
   eq(game.over, 'lose', 'tous morts : mission échouée');
   ok(/Tous les otages sont morts/.test(game.loseReason), 'raison affichée');
 
-  // morts et récupérés mêlés : il n'en reste aucun à vous non plus
+  // morts et évacués mêlés : il n'en reste aucun à vous non plus
   const g2 = mkGame({ mode: 'siege', noEnd: false });
   const h2 = g2.game.hostages;
-  h2.slice(1).forEach(h => { h.secured = true; });
+  h2.slice(1).forEach(h => { h.evacuated = true; });
   g2.step(1);
   ok(!g2.game.over, 'un otage encore entre vos mains : la partie continue');
   g2.game.damage(h2[0], 50, g2.game.player, 0);
@@ -1240,6 +1725,7 @@ test('après une victoire, « Missions » puis « Retour » ne fige pas le jeu',
   const g = mkGame({ noEnd: false });
   const game = g.game, ui = g.ui;
   game.enemies.forEach(e => { e.alive = false; });
+  game.hostages.forEach(h => { h.evacuated = true; });
   g.step(2);
   eq(game.over, 'win', 'victoire');
   ui.showEnd('win');
@@ -1285,10 +1771,188 @@ test('le briefing propose les deux modes et l’équipement du camp', () => {
   const ui = g.ui;
   ui.showBriefing();
   eq(ui.panel.querySelectorAll('.modebtn').length, Object.keys(MODES).length, 'un bouton par mode');
-  const cards = [...ui.panel.querySelectorAll('.wcard')].map(b => b.dataset.key);
-  eq(cards.length, MODES.assault.primaries.length + MODES.assault.sidearms.length, 'cartes d’armes du mode');
-  ok(cards.every(k => MODES.assault.primaries.includes(k) || MODES.assault.sidearms.includes(k)), 'armes du bon camp');
+  const A = MODES.assault, cards = [...ui.panel.querySelectorAll('.wcard')].map(b => b.dataset.key);
+  eq(cards.length, A.primaries.length + A.shields.length + A.sidearms.length, 'cartes d’armes et de boucliers du mode');
+  ok(cards.every(k => A.primaries.includes(k) || A.shields.includes(k) || A.sidearms.includes(k)), 'armes du bon camp');
+  ui.hideOverlay();
+  // le groupe armé n'a pas de bouclier
+  const gs = mkGame({ mode: 'siege' });
+  gs.ui.showBriefing();
+  eq(gs.ui.panel.querySelectorAll('.wcard[data-slot="shield"]').length, 0, 'siège : aucun bouclier');
+  gs.ui.hideOverlay();
 });
+
+test('au briefing : un bouclier à la place de l’arme principale, des accessoires arme par arme', () => {
+  // le briefing enregistre l'équipement : on remet celui du joueur en sortant
+  const KEY = 'breach.loadout.assault';
+  let sauve = null;
+  try { sauve = localStorage.getItem(KEY); } catch (e) { /* stockage indisponible */ }
+  try { briefingGearTest(); } finally {
+    try { if (sauve === null) localStorage.removeItem(KEY); else localStorage.setItem(KEY, sauve); } catch (e) { /* idem */ }
+  }
+});
+
+function briefingGearTest() {
+  const g = mkGame({ loadout: { primary: 'hk416', sidearm: 'glock17' } });
+  const game = g.game, ui = g.ui;
+  game.paused = true;
+  ui.showBriefing();
+  const card = k => ui.panel.querySelector('.wcard[data-key="' + k + '"]');
+  const acc = (k, a) => ui.panel.querySelector('.accbtn[data-key="' + k + '"][data-acc="' + a + '"]');
+  ok(card('shieldL') && card('shieldH'), 'deux boucliers proposés');
+  card('shieldL').click();
+  eq(game.loadout.shield, 'shieldL', 'bouclier choisi');
+  const p = game.player;
+  ok(p.shield === SHIELDS.shieldL && p.slots.length === 1 && p.weapon.kind === 'pistol', 'il ne reste que l’arme de poing');
+  ok(card('shieldL').classList.contains('sel') && !card('hk416').classList.contains('sel'), 'l’arme principale n’est plus cochée');
+  ok(/NIJ IIIA/.test(ui.$('wdetail').textContent), 'fiche du bouclier');
+  card('mp5').click();
+  eq(game.loadout.shield, null, 'une arme principale remplace le bouclier');
+  eq(game.player.slots[0].def, WEAPONS.mp5, 'et revient en main');
+  // silencieux sur le MP5, laser sur le Glock
+  acc('mp5', 'sup').click();
+  acc('glock17', 'laser').click();
+  ok(game.player.slots[0].def.suppressed && !game.player.slots[0].def.laser, 'MP5 au silencieux');
+  ok(game.player.slots[1].def.laser && !game.player.slots[1].def.suppressed, 'Glock au laser');
+  ok(acc('mp5', 'sup').classList.contains('sel') && !acc('mp5', 'laser').classList.contains('sel'), 'les boutons le montrent');
+  card('hk416').click();
+  ok(!game.player.slots[0].def.suppressed, 'le HK416 n’hérite pas du silencieux du MP5');
+  card('mp5').click();
+  ok(game.player.slots[0].def.suppressed, 'le MP5 a gardé le sien');
+  card('m870').click();
+  ok(acc('m870', 'sup').disabled && !acc('m870', 'laser').disabled, 'fusil à pompe : un laser, pas de silencieux');
+  const back = Game.loadSavedLoadout('assault');
+  ok(back.primary === 'm870' && back.acc.mp5.sup && back.acc.glock17.laser, 'choix retrouvés au rechargement, arme par arme');
+  // les coéquipiers ont leur bouton à part, qui leur redonne une arme
+  ui.panel.querySelector('#ovSup').click();
+  ok(game.loadout.teamSup && game.mates.every(m => m.weapon.suppressed), 'coéquipiers au silencieux');
+  ok(!game.player.slots[0].def.suppressed && game.player.slots[1].def.laser, 'le joueur garde ses accessoires');
+  ui.hideOverlay();
+  game.paused = false;
+}
+
+test('le bouclier arrête de face les balles de son niveau, pas de flanc ni de dos', () => {
+  const g = mkGame({ alone: true, loadout: { primary: 'hk416', sidearm: 'glock17', shield: 'shieldL' } });
+  const game = g.game, p = game.player;
+  ok(p.shield === SHIELDS.shieldL, 'bouclier au bras');
+  const spot = reachableSpot(game, p, 2.5 * U, 3.5 * U, true);
+  ok(spot, 'un tireur en vue');
+  const toward = Math.atan2(spot.y - p.y, spot.x - p.x);
+  // dégâts encaissés d'une salve tirée depuis spot, le joueur tourné de turn par rapport au tireur
+  const hurt = (key, turn) => {
+    p.hp = p.maxHp; p.angle = toward + turn;
+    const foe = new Enemy(spot.x, spot.y, toward + Math.PI, key);
+    game.enemies = [foe]; game.bullets = [];
+    let n = 0;
+    for (let k = 0; k < 4; k++) { foe.bloom = 0; game.fireWeapon(foe); n += foe.weapon.pellets || 1; }
+    for (let i = 0; i < 40 && game.bullets.length; i++) game.updateBullets(1 / 60);
+    return (p.maxHp - p.hp) / n;
+  };
+  eq(hurt('pistol', 0), 0, 'de face, les balles d’arme de poing s’arrêtent');
+  ok(hurt('pistol', Math.PI / 2) > 15, 'de flanc, elles touchent');
+  ok(hurt('pistol', Math.PI) > 15, 'de dos aussi');
+  near(hurt('ak', 0), WEAPONS.ak.damage * SHIELDS.shieldL.through, 0.01, 'une balle de fusil traverse le bouclier léger, un peu freinée');
+  p.equip({ ...game.loadout, shield: 'shieldH' });
+  eq(hurt('ak', 0), 0, 'le bouclier lourd l’arrête');
+  ok(game.effects.some(f => f.type === 'spark'), 'étincelles sur le bouclier');
+  // ça se dessine : tenu, puis lâché à la chute
+  g.step(2);
+  game.damage(p, 1000, null, 0);
+  g.step(60);
+  ok(!p.alive, 'tombé, bouclier compris');
+});
+
+test('avec un bouclier : l’arme de poing seule, plus lente, moins précise, et l’on ne ramasse qu’une arme de poing', () => {
+  const plain = mkGame({ alone: true, loadout: { primary: 'hk416', sidearm: 'glock17' } });
+  const g = mkGame({ alone: true, loadout: { primary: 'hk416', sidearm: 'glock17', shield: 'shieldL' } });
+  const game = g.game, p = game.player, q = plain.game.player;
+  eq(p.slots.length, 1, 'une seule arme');
+  eq(p.slot.reserve, WEAPONS.glock17.reserve + SHIELD_EXTRA_MAGS * WEAPONS.glock17.mag, 'des chargeurs en plus');
+  ok(p.fov < q.fov, 'la lucarne rétrécit le champ de vision');
+  q.cur = 1; // même arme en main de part et d'autre
+  ok(game.spreadOf(p, 100) > plain.game.spreadOf(q, 100) * 1.2, 'tenue d’une main : moins précis');
+  ok(document.getElementById('weaponName').textContent.includes('bouclier léger'), 'le HUD le dit');
+  // plus lent : même départ, même temps
+  const run = h => {
+    const pl = h.game.player, x0 = pl.x, key = h.game.map.circleFree(pl.x + 60, pl.y, 12, true) ? 'KeyD' : 'KeyA';
+    h.game.input.keys[key] = true; h.step(60); h.game.input.keys[key] = false;
+    return Math.abs(pl.x - x0);
+  };
+  const slow = run(g), fast = run(plain);
+  ok(fast > 10 && slow < fast * 0.95, 'il avance moins vite : ' + slow.toFixed(1) + ' px contre ' + fast.toFixed(1));
+  // un AKM au sol ne se prend pas, une arme de poing si
+  const away = a => { a.x = (game.map.w - 4) * TILE; a.y = (game.map.h - 4) * TILE; };
+  game.mates.forEach(away);
+  const foe = new Enemy(p.x + 12, p.y, 0, 'ak');
+  game.enemies = [foe];
+  game.damage(foe, 1000, p, 0);
+  g.step(60);
+  game.input.pressed.KeyV = true; g.step(1);
+  ok(!p.act && /bouclier au bras/.test(game.message.text), 'arme d’épaule refusée, et dit pourquoi');
+  eq(p.slots.length, 1, 'rien n’a changé');
+  away(foe);
+  const foe2 = new Enemy(p.x - 12, p.y, 0, 'pistol');
+  game.enemies.push(foe2);
+  game.damage(foe2, 1000, p, 0);
+  g.step(60);
+  game.input.pressed.KeyV = true; g.step(40);
+  eq(p.slot.def, WEAPONS.makarovP, 'arme de poing échangée');
+  eq(p.slots.length, 1, 'toujours une seule arme');
+});
+
+// Suspect posé à côté du faisceau, tourné vers le mur où tombe le point, le joueur dans son dos.
+function laserScene(lit) {
+  const g = mkGame({ alone: true, loadout: { primary: 'hk416', sidearm: 'glock17', acc: { hk416: { laser: true } } } });
+  const game = g.game, p = game.player, map = game.map;
+  for (let k = 0; k < 32; k++) {
+    const a = k * TAU / 32, r = map.castRay(p.x, p.y, a, 10 * U, false);
+    if (!r.hit || r.dist < 5 * U) continue;
+    for (const side of [1, -1]) {
+      const ex = p.x + Math.cos(a) * r.dist * 0.45 - Math.sin(a) * U * side, ey = p.y + Math.sin(a) * r.dist * 0.45 + Math.cos(a) * U * side;
+      if (!map.circleFree(ex, ey, 12, true) || !map.hasLOS(ex, ey, r.x - Math.cos(a) * 2, r.y - Math.sin(a) * 2)) continue;
+      const e = new Enemy(ex, ey, Math.atan2(r.y - ey, r.x - ex), 'ak');
+      game.enemies = [e];
+      game.input.mouse.x = r.x; game.input.mouse.y = r.y;
+      p.laserOn = lit;
+      return { g, game, p, e, dot: r };
+    }
+  }
+  return null;
+}
+
+test('le laser resserre le tir en mouvement, mais son point se voit', () => {
+  const g = mkGame({ alone: true, loadout: { primary: 'hk416', sidearm: 'glock17', acc: { hk416: { laser: true } } } });
+  const game = g.game, p = game.player;
+  ok(p.weapon.laser && !p.slots[1].def.laser, 'laser sur le HK416 seulement');
+  p.moving = true; p.walkMode = false;
+  const lit = game.spreadOf(p, 100);
+  p.laserOn = false;
+  const off = game.spreadOf(p, 100);
+  ok(lit < off * 0.8, 'en courant, le laser resserre la dispersion : ' + (lit / DEG).toFixed(2) + '° contre ' + (off / DEG).toFixed(2) + '°');
+  p.moving = false; p.laserOn = true;
+  g.press('KeyL');
+  ok(!p.laserOn && /éteint/.test(game.message.text), 'L l’éteint');
+  g.press('KeyL');
+  ok(p.laserOn, 'et le rallume');
+  ok(document.getElementById('laserMode').classList.contains('on'), 'le HUD le montre');
+  // pendant un rechargement, il s'éteint de lui-même
+  p.slot.mag = 1; g.press('KeyR');
+  ok(p.reloadT > 0 && !game.laserBeam(p), 'arme basse : pas de faisceau');
+  // le faisceau s'arrête au mur ; un suspect qui regarde le point se retourne vers vous
+  const sc = laserScene(true);
+  ok(sc, 'une mise en scène');
+  sc.g.step(1);
+  const b = sc.game.laserBeam(sc.p);
+  ok(b && b.hit && dist(b.x1, b.y1, sc.dot.x, sc.dot.y) < 4, 'le point tombe sur le mur visé');
+  eq(sc.e.target, null, 'au départ, il ne vous voit pas');
+  sc.g.step(60);
+  ok(sc.e.target === sc.p || sc.e.state === 'investigate', 'il a vu le point, il se retourne ou vient voir (état ' + sc.e.state + ')');
+  const dark = laserScene(false);
+  dark.g.step(61);
+  ok(!dark.e.target && dark.e.state === 'idle' && dark.e.suspicion === 0, 'laser éteint : il ne se doute de rien');
+});
+
+
 
 // ---------------------------------------------------------------- rendu
 test('chaque mission se joue sans exception, dans les deux modes', () => {
@@ -1303,6 +1967,7 @@ test('chaque mission se joue sans exception, dans les deux modes', () => {
         inp.mouse.down = i % 90 < 8;
         if (i % 150 === 40) inp.pressed.KeyE = true;
         if (i % 150 === 90) inp.pressed.Space = true;
+        if (i % 150 === 120) inp.pressed.KeyH = true;
         g.step(1);
       }
       ok(true, mode + ' / mission ' + (lvl + 1));

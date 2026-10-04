@@ -15,14 +15,18 @@ class UI {
     const g = this.game, p = g.player;
     this.$('timer').textContent = fmtTime(g.time);
     const alive = g.enemies.filter(e => e.alive).length;
+    const held = g.hostages.filter(h => h.alive && !h.evacuated).length;
     if (g.siege) {
       const s = g.siege;
       this.$('objective').textContent = s.prep > 0
         ? `Préparation : ${fmtTime(Math.max(0, s.prep)).slice(0, 5)} — prenez position`
-        : alive ? `Vague ${s.wave} / ${s.waves.length} · Assaut : ${alive}`
-        : s.wave < s.waves.length ? `Vague ${s.wave + 1} / ${s.waves.length} dans ${Math.ceil(Math.max(0, s.nextWave))} s`
-        : `Vague ${s.wave} / ${s.waves.length} repoussée`;
-    } else this.$('objective').textContent = `Suspects : ${alive} / ${g.enemies.length}`;
+        : (alive ? `Vague ${s.wave} / ${s.waves.length} · Assaut : ${alive}`
+          : s.wave < s.waves.length ? `Vague ${s.wave + 1} / ${s.waves.length} dans ${Math.ceil(Math.max(0, s.nextWave))} s`
+          : `Vague ${s.wave} / ${s.waves.length} repoussée`) + ` · Otages : ${held}`;
+    } else {
+      const out = g.hostages.filter(h => h.evacuated).length;
+      this.$('objective').textContent = `Suspects : ${alive} / ${g.enemies.length} · Otages évacués : ${out} / ${g.hostages.length}`;
+    }
     const fill = this.$('hpFill');
     fill.style.width = (100 * p.hp / p.maxHp) + '%';
     fill.style.background = p.hp > 60 ? '#4caf50' : p.hp > 30 ? '#ffb300' : '#ef5350';
@@ -33,7 +37,7 @@ class UI {
     const rh = this.$('reloadHint');
     if (rh) {
       if (this._reloadHint === undefined) this._reloadHint = rh.textContent;
-      const txt = g.siege ? this._reloadHint.replace(' · F (maintenu) : fibre sous la porte', '').replace('Espace : flash', 'Espace : grenade') : this._reloadHint;
+      const txt = g.siege ? this._reloadHint.replace(' · F (maintenu) : fibre sous la porte', '').replace('Espace : flash', 'Espace : grenade').replace(' · H : emmener / laisser un otage', '') : this._reloadHint;
       if (rh.textContent !== txt) rh.textContent = txt;
     }
     const mode = this.$('moveMode');
@@ -43,9 +47,13 @@ class UI {
     if (fib) fib.classList.toggle('on', !!p.fiber);
     this.updateSquad();
     const s = p.slot, w = s.def;
-    if (this._weaponShown !== w) {
-      this._weaponShown = w;
-      this.$('weaponName').innerHTML = `${w.name} <small>${w.caliber || ''}${w.mode ? ' · ' + w.mode : ''}</small>`;
+    // laser de l'arme en main : allumé, ou barré quand on l'a éteint (L)
+    const las = this.$('laserMode');
+    if (las) { las.classList.toggle('on', !!w.laser); las.classList.toggle('off', !p.laserOn); }
+    if (this._weaponShown !== w || this._shieldShown !== p.shield) {
+      this._weaponShown = w; this._shieldShown = p.shield;
+      const tags = [w.caliber, w.mode, w.suppressed && 'silencieux', w.laser && 'laser', p.shield && p.shield.name.toLowerCase()].filter(Boolean);
+      this.$('weaponName').innerHTML = `${w.name} <small>${tags.join(' · ')}</small>`;
     }
     const ammo = this.$('ammo');
     // Chargement cartouche par cartouche : le compteur reste visible et monte.
@@ -101,13 +109,17 @@ class UI {
       <div class="modes">${Object.keys(MODES).map(m => `<button class="modebtn${m === g.mode ? ' sel' : ''}" data-mode="${m}">${m === 'siege' ? '☠ Siège — vous tenez le bâtiment' : '🛡 Assaut — vous menez l\'intervention'}</button>`).join('')}</div>
       <p>${siege ? (g.def.siegeBriefing || this.siegeBriefing()) : g.def.briefing}</p>
       ${siege ? '' : this.entryPicker()}
-      <p><small><kbd>ZQSD</kbd>/<kbd>WASD</kbd> se déplacer · <kbd>A</kbd> marche/course · souris viser · <kbd>clic</kbd> tirer · <kbd>R</kbd> / clic molette recharger · <kbd>E</kbd> ouvrir/fermer une porte · molette haut/bas ouvrir/fermer par étapes · <kbd>Alt</kbd> changer d'arme · ${siege ? '<kbd>Espace</kbd> grenade à fragmentation · ' : '<kbd>Espace</kbd> flash · <kbd>F</kbd> fibre sous la porte · '}<kbd>V</kbd> ramasser une arme · <kbd>M</kbd> minimap · ${siege ? '' : "<kbd>T</kbd> équipe suivre/tenir · clic droit envoyer l'équipe (maintenir et tirer : direction à couvrir ; sur vous : suivre) · "}<kbd>Échap</kbd> pause</small></p>
+      <p><small><kbd>ZQSD</kbd>/<kbd>WASD</kbd> se déplacer · <kbd>A</kbd> marche/course · souris viser · <kbd>clic</kbd> tirer · <kbd>R</kbd> / clic molette recharger · <kbd>E</kbd> ouvrir/fermer une porte · molette haut/bas ouvrir/fermer par étapes · <kbd>Alt</kbd> changer d'arme · <kbd>L</kbd> allumer/éteindre le laser · ${siege ? '<kbd>Espace</kbd> grenade à fragmentation · ' : '<kbd>Espace</kbd> flash · <kbd>F</kbd> fibre sous la porte · <kbd>H</kbd> emmener un otage / le faire attendre · '}<kbd>V</kbd> ramasser une arme · <kbd>M</kbd> minimap · ${siege ? '' : "<kbd>T</kbd> équipe suivre/tenir · clic droit envoyer l'équipe (maintenir et tirer : direction à couvrir ; sur vous : suivre) · "}<kbd>Échap</kbd> pause</small></p>
       <h2>Équipement</h2>
       <div class="loadout">
         ${['ar', 'smg', 'sg'].map(c => this.weaponGroup(c, MODES[g.mode].primaries, 'primary')).join('')}
+        ${this.shieldGroup(MODES[g.mode].shields)}
         ${this.weaponGroup('hg', MODES[g.mode].sidearms, 'sidearm')}
       </div>
       <div id="wdetail"></div>
+      <p class="accnote"><small>Accessoires, arme par arme. <b>Silencieux</b> : un coup de feu ne s'entend plus qu'à 2 à 5 cases au lieu de 13 à 18 ; l'arme s'alourdit et s'allonge, et en 9 mm ou en .45 (subsonique) la balle porte un peu moins loin. <b>Laser</b> : en mouvement, la dispersion est divisée par deux (la gêne du bouclier aussi), mais le faisceau se voit — un adversaire qui l'aperçoit se tourne vers vous, puis vient voir. <kbd>L</kbd> l'éteint en jeu.</small></p>
+      ${siege ? '' : `<div class="suprow"><button class="supbtn${g.loadout.teamSup ? ' sel' : ''}" id="ovSup">${g.loadout.teamSup ? '🔇 Coéquipiers au silencieux' : '🔊 Coéquipiers sans silencieux'}</button>
+        <small>Bravo et Charlie montent un silencieux : chacun reçoit alors une arme qui en accepte un (pas de fusil à pompe).</small></div>`}
       <div class="row"><button class="primary" id="ovGo">${siege ? 'Prendre position' : "Lancer l'assaut"}</button><button id="ovLevels">Missions</button></div>`);
     this.panel.classList.add('wide');
     this.panel.querySelectorAll('.modebtn').forEach(b => {
@@ -116,9 +128,12 @@ class UI {
     this.panel.querySelectorAll('.entrybtn').forEach(b => {
       b.onclick = () => { g.setEntry(b.dataset.entry === 'random' ? null : +b.dataset.entry); this.showBriefing(); };
     });
+    const sup = this.panel.querySelector('#ovSup');
+    if (sup) sup.onclick = () => { g.setLoadout({ teamSup: !g.loadout.teamSup }); this.showBriefing(); };
+    // une arme principale remplace le bouclier, et inversement
     this.panel.querySelectorAll('.wcard').forEach(b => {
-      UI.drawWeapon(b.querySelector('canvas'), WEAPONS[b.dataset.key]);
-      b.onclick = () => { g.setLoadout({ [b.dataset.slot]: b.dataset.key }); this.refreshLoadout(); };
+      const k = b.dataset.key, slot = b.dataset.slot;
+      b.onclick = () => { g.setLoadout(slot === 'primary' ? { primary: k, shield: null } : { [slot]: k }); this.refreshLoadout(); };
     });
     this.refreshLoadout();
     this.panel.querySelector('#ovGo').onclick = () => {
@@ -142,6 +157,15 @@ class UI {
   }
 
   // ---- Équipement ----
+  shieldGroup(keys) {
+    if (!keys || !keys.length) return '';
+    const cards = keys.map(k => {
+      const sh = SHIELDS[k];
+      return `<button class="wcard" data-slot="shield" data-key="${k}"><canvas></canvas><span class="wname">${sh.name}</span><small>${sh.rating} · ${String(sh.weight).replace('.', ',')} kg</small></button>`;
+    }).join('');
+    return `<div class="wcat"><div class="wcat-name">${WEAPON_CATS.sh}</div><div class="wcards">${cards}</div></div>`;
+  }
+
   weaponGroup(cat, keys, slot) {
     if (!keys.some(k => WEAPONS[k].cat === cat)) return '';
     const cards = keys.filter(k => WEAPONS[k].cat === cat).map(k => {
@@ -151,13 +175,53 @@ class UI {
     return `<div class="wcat"><div class="wcat-name">${WEAPON_CATS[cat]}</div><div class="wcards">${cards}</div></div>`;
   }
 
-  refreshLoadout() {
-    const l = this.game.loadout;
-    this.panel.querySelectorAll('.wcard').forEach(b => b.classList.toggle('sel', l[b.dataset.slot] === b.dataset.key));
-    this.$('wdetail').innerHTML = this.weaponDetail(WEAPONS[l.primary]) + this.weaponDetail(WEAPONS[l.sidearm]);
+  // L'arme telle qu'on l'emporte : avec les accessoires choisis pour elle (ceux qu'elle accepte).
+  loadoutDef(key) {
+    return fittedDef(key, accOf(this.game.loadout, key));
   }
 
-  weaponDetail(w) {
+  // Cartes (sélection, et dessin qui montre les accessoires) et fiches de ce qu'on emporte.
+  refreshLoadout() {
+    const g = this.game, l = g.loadout;
+    this.panel.querySelectorAll('.wcard').forEach(b => {
+      const k = b.dataset.key, slot = b.dataset.slot;
+      b.classList.toggle('sel', slot === 'shield' ? l.shield === k : slot === 'primary' ? !l.shield && l.primary === k : l[slot] === k);
+      if (slot === 'shield') UI.drawShield(b.querySelector('canvas'), SHIELDS[k]);
+      else UI.drawWeapon(b.querySelector('canvas'), this.loadoutDef(k));
+    });
+    const sh = SHIELDS[l.shield];
+    this.$('wdetail').innerHTML = (sh ? this.shieldDetail(sh) : this.weaponDetail(this.loadoutDef(l.primary), l.primary))
+      + this.weaponDetail(this.loadoutDef(l.sidearm), l.sidearm);
+    this.$('wdetail').querySelectorAll('.accbtn').forEach(b => {
+      b.onclick = () => { const k = b.dataset.key, a = b.dataset.acc; g.setAccessory(k, a, !accOf(g.loadout, k)[a]); this.refreshLoadout(); };
+    });
+  }
+
+  // Accessoires d'une arme : un bouton par accessoire, grisé si l'arme n'en accepte pas.
+  accRow(key) {
+    const a = accOf(this.game.loadout, key), w = WEAPONS[key];
+    const btn = (name, label, fits, why) => `<button class="accbtn${fits && a[name] ? ' sel' : ''}" data-key="${key}" data-acc="${name}"${fits ? '' : ` disabled title="${why}"`}>${fits && a[name] ? '✓' : '+'} ${label}</button>`;
+    return `<div class="accrow">${btn('sup', 'Silencieux', !!SUPPRESSORS[key], w.kind === 'shotgun' ? 'Pas de silencieux sur un fusil à pompe' : 'Pas de silencieux pour cette arme')}${btn('laser', 'Laser', !!LASERS[key], 'Pas de rail pour fixer un laser')}</div>`;
+  }
+
+  shieldDetail(sh) {
+    const n = (v, a, b) => clamp((v - a) / (b - a), 0.05, 1);
+    const bars = [
+      ['Protection', sh.stops / 3],
+      ['Mobilité', n(sh.mobility, 0.6, 1)],
+      ['Précision', n(1 / sh.aim, 0.5, 1)],
+      ['Champ de vision', n(sh.fov, 60 * DEG, 120 * DEG)],
+    ];
+    const stops = sh.stops >= 3 ? 'armes de poing, pistolets mitrailleurs, chevrotine et fusils' : 'armes de poing, pistolets mitrailleurs (pas le 4,6 mm) et chevrotine';
+    return `<div class="wd">
+      <div class="wd-head"><b>${sh.name}</b> <small>${sh.rating}</small></div>
+      <div class="wd-specs">${sh.size} · ${String(sh.weight).replace('.', ',')} kg · arrête : ${stops} · champ de vision ${Math.round(sh.fov / DEG)}° · ${SHIELD_EXTRA_MAGS} chargeurs de poing en plus</div>
+      <p>${sh.note} Il ne couvre que l'avant : de flanc ou de dos, on est à découvert. L'arme de poing se tient d'une main, moins précise ; pas d'arme d'épaule, et on ne ramasse qu'une arme de poing.</p>
+      <div class="wd-bars">${bars.map(([k, v]) => `<span>${k}</span><div class="bar"><div style="width:${Math.round(v * 100)}%"></div></div>`).join('')}</div>
+    </div>`;
+  }
+
+  weaponDetail(w, key) {
     const n = (v, a, b) => clamp((v - a) / (b - a), 0.05, 1);
     const bars = [
       ['Puissance', Math.sqrt(w.damage * (w.pellets || 1) / 135)],
@@ -165,6 +229,7 @@ class UI {
       ['Précision', n(12 * DEG - (2 * w.spread + w.bloom), 0, 12 * DEG)],
       ['Portée', n(w.effRange, 0, 12 * U)],
       ['Mobilité', n(w.mobility, 0.85, 1.04)],
+      ['Discrétion', n(12 - w.noise, 0, 10)],
     ];
     const kg = w.weight.toFixed(1).replace('.', ',');
     const cap = w.reloadType === 'shell' ? `${w.mag} cartouches (tube)` : `${w.mag} coups`;
@@ -172,27 +237,43 @@ class UI {
     const pierce = Math.round((w.pierce === undefined ? 0.4 : w.pierce) * 100);
     return `<div class="wd">
       <div class="wd-head"><b>${w.name}</b> ${w.name.startsWith(w.maker) ? '' : `<small>${w.maker}</small>`}</div>
-      <div class="wd-specs">${w.caliber} · ${cap} · ${w.mode === 'Pompe' ? 'pompe' : w.rpm + ' cps/min'} · ${w.mode} · ${kg} kg · dégâts ${dmg} · à travers une porte ${pierce} %</div>
+      <div class="wd-specs">${w.caliber} · ${cap} · ${w.mode === 'Pompe' ? 'pompe' : w.rpm + ' cps/min'} · ${w.mode} · ${kg} kg · dégâts ${dmg} · à travers une porte ${pierce} % · ${w.suppressed ? 'silencieux : ' : ''}s'entend à ${String(w.noise).replace('.', ',')} cases</div>
       <p>${w.note}</p>
+      ${this.accRow(key)}
       <div class="wd-bars">${bars.map(([k, v]) => `<span>${k}</span><div class="bar"><div style="width:${Math.round(v * 100)}%"></div></div>`).join('')}</div>
     </div>`;
   }
 
-  // Arme vue de dessus, même dessin qu'en jeu et même échelle pour toutes (proportions réelles).
-  static drawWeapon(canvas, w) {
-    const W = 170, H = 50, dpr = window.devicePixelRatio || 1, sc = 3.9;
+  // Plaquette claire des cartes d'équipement : une arme vue de dessus est presque noire, il lui faut
+  // un fond contrasté. Renvoie le contexte, à l'échelle de l'écran.
+  static cardPlate(canvas, W, H) {
+    const dpr = window.devicePixelRatio || 1;
     canvas.width = W * dpr; canvas.height = H * dpr;
     canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
     const ctx = canvas.getContext('2d');
-    const x0 = { pistol: 8.2, pdw: -2.8, smg: -5.4 }[w.kind] ?? -6.6;
-    const x1 = 13 + w.gunLen;
     ctx.scale(dpr, dpr);
-    // Plaquette claire : une arme vue de dessus est presque noire, il lui faut un fond contrasté.
     const g = ctx.createLinearGradient(0, 0, 0, H);
     g.addColorStop(0, '#7a8189'); g.addColorStop(1, '#5c636b');
     roundRect(ctx, 1, 1, W - 2, H - 2, 4);
     ctx.fillStyle = g; ctx.fill();
     ctx.strokeStyle = 'rgba(0,0,0,0.35)'; ctx.lineWidth = 1; ctx.stroke();
+    return ctx;
+  }
+
+  // Bouclier vu de face, couché sur la plaquette comme lâché au sol en jeu.
+  static drawShield(canvas, sh) {
+    const W = 170, H = 50, ctx = UI.cardPlate(canvas, W, H);
+    ctx.translate(W / 2, H / 2);
+    ctx.scale(2.7, 2.7);
+    Sprites.shieldFlat(ctx, sh.look);
+  }
+
+  // Arme vue de dessus, même dessin qu'en jeu et même échelle pour toutes (proportions réelles) : la
+  // plus longue, le SCAR-H avec son silencieux, tient tout juste sur la plaquette.
+  static drawWeapon(canvas, w) {
+    const W = 170, H = 50, sc = 3.45, ctx = UI.cardPlate(canvas, W, H);
+    const x0 = { pistol: 8.2, pdw: -2.8, smg: -5.4 }[w.kind] ?? -6.6;
+    const x1 = 13 + w.gunLen;
     ctx.translate((W - (x1 - x0) * sc) / 2 - x0 * sc, H / 2 - 4);
     ctx.scale(sc, sc * GUN_THICK);
     ctx.shadowColor = 'rgba(0,0,0,0.4)'; ctx.shadowBlur = 1.2; ctx.shadowOffsetY = 0.8;
@@ -204,7 +285,7 @@ class UI {
     const ret = back || (() => this.showBriefing());
     let html = `<h1>Missions</h1><p>${g.mode === 'siege'
       ? `Objectif : repousser les ${SIEGE_WAVES.length} vagues d'assaut avec vos otages vivants et entre vos mains.`
-      : "Objectif : neutraliser tous les suspects sans perdre toute l'équipe ni tuer d'otage."}</p>
+      : "Objectif : neutraliser tous les suspects, sans perdre toute l'équipe ni tuer d'otage. Escorter les otages dehors, par une porte extérieure ou une fenêtre, les met à l'abri en attendant."}</p>
       <p class="planlegend"><i class="lg-door"></i> porte <i class="lg-win"></i> fenêtre <i class="lg-entry"></i> ouverture sur l'extérieur</p>`;
     const siege = g.mode === 'siege';
     html += '<div class="levels">';
@@ -256,8 +337,9 @@ class UI {
     const siege = !!g.siege;
     const title = siege ? (win ? 'Assaut repoussé' : 'Bâtiment repris') : (win ? 'Mission accomplie' : 'Mission échouée');
     const intro = win
-      ? (siege ? 'Toutes les vagues sont repoussées : les négociations aboutissent.' : 'Tous les suspects sont neutralisés.')
+      ? (siege ? 'Toutes les vagues sont repoussées : les négociations aboutissent.' : 'Tous les suspects sont neutralisés, et les otages sont saufs.')
       : g.loseReason;
+    const out = g.hostages.filter(h => h.evacuated).length;
     const html = `<h1 class="${win ? 'win' : 'lose'}">${title}</h1>
       <p>${intro}</p>
       <div class="stats">
@@ -268,7 +350,7 @@ class UI {
         <span>${siege ? 'Grenades utilisées' : 'Flashs utilisées'}</span><b>${s.flashes}</b>
         <span>${siege ? 'Terroristes perdus' : 'Opérateurs perdus'}</span><b>${g.ops.filter(o => !o.alive).length} / ${g.squadSize}</b>
         <span>Otages tués</span><b id="endHostagesKilled">${g.hostages.filter(h => !h.alive).length} / ${g.hostages.length}</b>
-        ${siege ? `<span>Otages récupérés par l'intervention</span><b>${g.hostages.filter(h => h.secured).length} / ${g.hostages.length}</b>` : ''}
+        <span>${siege ? "Otages évacués par l'intervention" : 'Otages évacués'}</span><b id="endHostagesOut">${out} / ${g.hostages.length}</b>
       </div>
       <div class="row">
         <button id="ovRetry">↺ Rejouer</button>
@@ -294,13 +376,18 @@ class UI {
       <b>Flash</b> : <kbd>Espace</kbd> (ou <kbd>G</kbd>) lance une grenade aveuglante vers le curseur : la distance au curseur règle la force du lancer. Elle vole par-dessus le mobilier (tables, plantes, caisses...), retombe, puis roule et rebondit sur les murs, les meubles et les portes fermées, et explose au bout d'environ 1,7 s. Attention aux retours contre un mur proche. Collé à une porte entrouverte, visez l'embrasure pour glisser la grenade par l'entrebâillement ; de plus loin, elle rebondit sur le battant. Les ennemis aveuglés ne tirent plus pendant quelques secondes. Ne regardez pas l'explosion.<br>
       <b>À travers les portes</b> : un battant n'est pas un abri. Les balles le traversent en perdant de l'énergie (un tiers pour du 7,62, les quatre cinquièmes pour de la chevrotine) et en déviant un peu. Vous pouvez arroser une porte fermée — et un suspect peut faire de même. Les murs, eux, arrêtent tout.<br>
       <b>Relais et armes au sol</b> : si vous tombez, vous reprenez la main dans le coéquipier debout le plus proche ; la mission n'est perdue que quand toute l'équipe est à terre. Près d'un corps, <kbd>V</kbd> ramasse son arme et laisse au sol la vôtre de même catégorie (vous pouvez la reprendre).<br>
+      <b>Bruit</b> : coups de feu, portes, impacts, grenades, cris et pas de course s'entendent à une certaine distance, qui fond à travers les murs et les portes fermées (le son contourne les angles par les portes ouvertes). Marcher (<kbd>A</kbd>) est silencieux ; courir s'entend à deux ou trois cases. Un suspect qui entend quelque chose se tourne vers le bruit et s'inquiète ; un bruit fort (tir, cri, explosion) ou des bruits qui se répètent le font venir voir — deux au plus à la fois, les autres guettent de ce côté —, puis il regagne son poste. Un « ? » au-dessus de lui le signale. Celui qui vous repère crie l'alerte, celui qui découvre le corps d'un des siens aussi. Autour de vous, des arcs montrent la direction et la force de ce que vous entendez hors de vue : rouge pour un tir, jaune pour une porte, gris pour des pas ou une grenade qui rebondit, orange pour un cri, blanc pour une explosion. Après chacun de vos propres bruits, un halo montre jusqu'où il a porté.<br>
+      <b>Accessoires</b> : au briefing, arme par arme. Le <b>silencieux</b> : un tir ne s'entend plus qu'à 2 à 5 cases selon le calibre, au lieu de 13 à 18, mais l'arme est plus lourde et plus longue, et l'impact d'une balle manquée s'entend toujours ; un bouton à part en munit aussi Bravo et Charlie. Le <b>laser</b> : le point montre où part la balle, ce qui divise par deux la dispersion en mouvement ; mais le faisceau se voit, et un suspect qui aperçoit le trait ou le point se tourne vers vous, puis vient voir. <kbd>L</kbd> l'éteint ou le rallume ; il s'éteint de lui-même pendant un geste ou un rechargement.<br>
+      <b>Bouclier</b> : à choisir au briefing à la place de l'arme principale. Tenu au bras gauche, il ne laisse que l'arme de poing, tirée d'une main par-dessus le bord, donc moins précise (un laser compense en partie), avec deux chargeurs de plus. De face, il arrête les balles de son niveau : le léger (NIJ IIIA) celles d'arme de poing, de pistolet mitrailleur et la chevrotine, mais pas celles d'un fusil (une balle d'AK le traverse) ; le lourd (NIJ III) arrête tout, mais il ralentit nettement et sa lucarne rétrécit le champ de vision. De flanc et de dos, on est à découvert. Bouclier au bras, on ne ramasse qu'une arme de poing.<br>
       <b>Minimap</b> : en haut à droite, le plan de ce que vous avez exploré, avec les portes, les fenêtres, le mobilier, votre équipe, les otages connus et les adversaires visibles. En siège, la pièce où une vague d'assaut vient d'entrer y clignote en rouge quelques secondes. <kbd>M</kbd> la replie.<br>
-      <b>Otages</b> : ne tirez pas dessus, y compris à travers une porte.<br>
+      <b>Otages</b> : ne tirez pas dessus, y compris à travers une porte. Un otage n'est sauvé qu'une fois sorti du bâtiment : près de lui, <kbd>H</kbd> le relève et il vous suit, en file s'ils sont plusieurs ; <kbd>H</kbd> à nouveau, il attend à genoux. Il n'ouvre pas les portes lui-même (laissez-les au moins entrouvertes derrière vous) et se jette à terre quand on tire près de lui. Amenez-le devant une porte extérieure ouverte ou une fenêtre : il sort, et il est évacué. Pendant l'escorte, les sorties battent en vert sur la minimap. Les faire sortir n'est pas exigé, mais un otage dehors ne risque plus rien : la mission est accomplie dès que tous les suspects sont neutralisés, et perdue si un otage meurt.<br>
       <b>Équipe</b> : Bravo et Charlie vous suivent en formation et couvrent vos flancs et vos arrières. <kbd>T</kbd> leur fait tenir la position (ou reprendre le suivi), le clic droit les envoie sur un point (ils ouvrent les portes sur ce trajet), et un clic droit sur vous-même les rappelle en suivi. En <b>maintenant</b> le clic droit puis en tirant vers une direction, vous ajoutez une consigne de couverture : celui des deux qui se place de ce côté gardera cet angle au lieu de choisir lui-même son point d'intérêt (jusqu'à l'ordre suivant ; un contact reste prioritaire). Ils tirent sur tout suspect visible, mais jamais à travers vous ou un otage : quand l'axe reste bouché, ils se décalent pour dégager l'angle (le HUD indique « Axe bouché »). Un ordre de déplacement reste prioritaire sur un contact : ils rompent et progressent en gardant le suspect en joue. Attention, vos propres balles peuvent les blesser.<br>
       <kbd>Échap</kbd> pause.</p>
       <p><b>Mode siège</b> : vous incarnez le chef du groupe armé. L'équipe d'intervention entre par l'entrée
       de la carte après un court temps de préparation, progresse secteur par secteur et converge sur le moindre coup
-      de feu. Vos huit complices tiennent chacun leur poste et se battent seuls : personne ne commande personne, ni <kbd>T</kbd> ni le clic droit ne leur donnent d'ordres. Pas de fibre optique de ce côté, et deux grenades à fragmentation au lieu des flashs : elles tuent autour d'elles (vous et vos otages compris), mais une porte fermée ou un mur arrête l'éclat. Il y a ${SIEGE_WAVES.length} vagues : la
+      de feu. Quand un opérateur trouve un otage, il le relève et l'emmène vers la sortie la plus proche : abattez
+      l'escorte avant qu'elle n'y arrive, l'otage reste alors à genoux sur place (un autre viendra le chercher).
+      Un otage évacué est perdu pour vous. Vos huit complices tiennent chacun leur poste et se battent seuls : personne ne commande personne, ni <kbd>T</kbd> ni le clic droit ne leur donnent d'ordres. Pas de fibre optique de ce côté, et deux grenades à fragmentation au lieu des flashs : elles tuent autour d'elles (vous et vos otages compris), mais une porte fermée ou un mur arrête l'éclat. Il y a ${SIEGE_WAVES.length} vagues : la
       suivante entre quelques secondes après l'élimination de la précédente, ou au bout de trente secondes si
       elle tient encore. Repoussez la dernière et vous avez gagné. Portes, fibre optique et
       tir à travers les battants sont vos meilleurs outils ; les otages sont votre protection, jamais une cible.</p>

@@ -1,5 +1,7 @@
 'use strict';
-const gunStyle = w => (w ? { gun: w.kind, gunLen: w.gunLen, gunTint: w.tint } : { gun: null });
+const gunStyle = w => (w ? { gun: w.kind, gunLen: w.gunLen, gunTint: w.tint, gunSup: !!w.suppressed } : { gun: null });
+// Bouclier porté (tenu, ou lâché à côté du corps).
+const shieldStyle = a => ({ shield: a.shield ? a.shield.look : null });
 // Geste en cours (porte, grenade) transmis au dessin du personnage.
 const actStyle = a => (a.act ? { act: { type: a.act.type, k: a.act.t / a.act.dur } }
   : a.cooking ? { act: { type: 'grenade', k: 0.55 } } // dégoupillée, bras armé, en attente du lancer
@@ -22,6 +24,8 @@ class Renderer {
     this.miniExpC = document.createElement('canvas');  // masque des cases déjà vues
     this.miniTmpC = document.createElement('canvas');  // composition des deux
     this.miniArrC = document.createElement('canvas');  // pièce où la dernière vague d'assaut est entrée
+    this.noiseC = document.createElement('canvas');    // halo du dernier bruit du joueur (une case = un pixel)
+    this._noiseId = 0;
     this.miniScale = 4;
     this.dpr = 1;
     this.zoom = 2;
@@ -162,7 +166,10 @@ class Renderer {
     this.drawCasings();
     this.drawBodies();
     this.drawDoors();
-    for (const h of g.hostages) if (h.alive && (h.visible || m.isExplored(h.tx, h.ty))) Sprites.hostage(ctx, h);
+    for (const h of g.hostages) {
+      if (!this.hostageShown(h)) continue;
+      if (h.standing) Sprites.hostageStanding(ctx, h); else Sprites.hostage(ctx, h);
+    }
     for (const e of g.enemies) {
       if (!e.visible) continue;
       if (e.dying) Sprites.dying(ctx, e, this.enemyStyle(e), e.dying);
@@ -171,10 +178,11 @@ class Renderer {
     this.drawGrenades();
     ctx.save(); this.clipToVision(); this.drawBullets(); ctx.restore();
     for (const a of [...g.ops, ...g.enemies]) a.walk = (a.walk || 0) + (a.alive && a.moving ? dt * (a.walkMode ? 8 : 13) : 0);
+    for (const h of g.hostages) if (h.moving) h.walk += dt * 10;
     if (g.orderMarker) this.drawOrderMarker(g.orderMarker);
     if (g.orderDrag) this.drawOrderDrag(g.orderDrag);
     for (const mt of g.mates) {
-      const st = { ...mt.style, ...gunStyle(mt.weapon), ...actStyle(mt) };
+      const st = { ...mt.style, ...gunStyle(mt.weapon), ...shieldStyle(mt), ...actStyle(mt) };
       if (mt.dying) Sprites.dying(ctx, mt, st, mt.dying);
       else if (mt.alive) {
         const k = this.kickOffset(mt);
@@ -192,7 +200,7 @@ class Renderer {
         if (mt.stun > 0) { ctx.strokeStyle = 'rgba(255,240,120,0.9)'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(mt.x, mt.y, 15, 0, TAU); ctx.stroke(); }
       }
     }
-    const pst = { ...(g.player.style || STYLE_PLAYER), ...gunStyle(g.player.weapon), ...actStyle(g.player) };
+    const pst = { ...(g.player.style || STYLE_PLAYER), ...gunStyle(g.player.weapon), ...shieldStyle(g.player), ...actStyle(g.player) };
     const p = g.player;
     if (p.dying) Sprites.dying(ctx, p, pst, p.dying);
     else if (p.alive) {
@@ -200,13 +208,15 @@ class Renderer {
       Sprites.character(ctx, p.x + k.x, p.y + k.y, p.angle, pst, p.muzzleT, p.walk, p.moving);
     }
     if (p.fiber) this.drawFiber(p, p.fiber);
-    ctx.save(); this.clipToVision(); this.drawEffects(); ctx.restore();
+    ctx.save(); this.clipToVision(); this.drawLaser(g.laserBeam(p)); this.drawEffects(); ctx.restore();
+    this.drawOwnNoise();
     this.drawFog();
     this.drawFlashes();
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     this.drawVignette();
     this.drawBlind();
+    this.drawHeard();
     this.drawCrosshair();
     if (g.minimap) this.drawMinimap();
     for (const a of [...g.ops, ...g.enemies]) if (a.muzzleT > 0) a.muzzleT -= dt;
@@ -241,9 +251,16 @@ class Renderer {
   drawBodies() {
     const g = this.game;
     for (const e of g.enemies) if (!e.alive && !e.dying && e.bodySeen) Sprites.body(this.ctx, e, this.enemyStyle(e));
-    if (!g.player.alive && !g.player.dying) Sprites.body(this.ctx, g.player, { ...(g.player.style || STYLE_PLAYER), ...gunStyle(g.player.weapon) });
-    for (const mt of g.mates) if (!mt.alive && !mt.dying) Sprites.body(this.ctx, mt, { ...mt.style, ...gunStyle(mt.weapon) });
-    for (const h of g.hostages) if (!h.alive && h.bodySeen) Sprites.body(this.ctx, h, { body: '#8a97a8', sleeve: '#8a97a8', hair: '#3b2a1a', pants: '#3b4250', skin: '#d9b48f' });
+    if (!g.player.alive && !g.player.dying) Sprites.body(this.ctx, g.player, { ...(g.player.style || STYLE_PLAYER), ...gunStyle(g.player.weapon), ...shieldStyle(g.player) });
+    for (const mt of g.mates) if (!mt.alive && !mt.dying) Sprites.body(this.ctx, mt, { ...mt.style, ...gunStyle(mt.weapon), ...shieldStyle(mt) });
+    for (const h of g.hostages) if (!h.alive && h.bodySeen) Sprites.body(this.ctx, h, STYLE_HOSTAGE);
+  }
+
+  // Un otage à genoux reste dessiné là où on l'a vu (il ne bouge pas) ; un otage qui marche ne se
+  // voit que dans le champ de vision, sinon il trahirait son escorte à travers le brouillard.
+  hostageShown(h) {
+    if (!h.alive || h.evacuated) return false;
+    return h.visible || (!h.escort && !h.exiting && this.game.map.isExplored(h.tx, h.ty));
   }
 
   enemyStyle(e) {
@@ -318,6 +335,17 @@ class Renderer {
   drawEnemy(e) {
     const k = this.kickOffset(e);
     Sprites.character(this.ctx, e.x + k.x, e.y + k.y, e.angle, this.enemyStyle(e), e.muzzleT, e.walk, e.moving);
+    // suspect alerté par un bruit : « ? » quand il va voir ou qu'il cherche, plus pâle quand il guette
+    if (!e.target && !(e instanceof Operator) && (e.state === 'investigate' || e.suspicion >= 0.5)) {
+      const ctx = this.ctx, searching = e.state === 'investigate';
+      ctx.save();
+      ctx.font = `bold ${searching ? 12 : 10}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.lineWidth = 2.5; ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+      ctx.strokeText('?', e.x, e.y - 20);
+      ctx.fillStyle = searching ? 'rgba(255,213,79,0.95)' : 'rgba(255,213,79,0.55)';
+      ctx.fillText('?', e.x, e.y - 20);
+      ctx.restore();
+    }
     if (e.stun > 0) {
       const ctx = this.ctx;
       ctx.strokeStyle = 'rgba(255,240,120,0.9)'; ctx.lineWidth = 1.5;
@@ -371,6 +399,24 @@ class Renderer {
       ctx.closePath();
     }
     ctx.clip();
+  }
+
+  // Faisceau du laser : un trait rouge ténu qui pâlit en s'éloignant, et le point là où il touche.
+  drawLaser(b) {
+    if (!b) return;
+    const ctx = this.ctx;
+    ctx.save();
+    const grad = ctx.createLinearGradient(b.x0, b.y0, b.x1, b.y1);
+    grad.addColorStop(0, 'rgba(255,60,50,0.4)'); grad.addColorStop(1, 'rgba(255,60,50,0.12)');
+    ctx.strokeStyle = grad; ctx.lineWidth = 0.7; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(b.x0, b.y0); ctx.lineTo(b.x1, b.y1); ctx.stroke();
+    if (b.hit || b.on) {
+      const glow = ctx.createRadialGradient(b.x1, b.y1, 0, b.x1, b.y1, 4.5);
+      glow.addColorStop(0, 'rgba(255,90,70,0.85)'); glow.addColorStop(1, 'rgba(255,40,30,0)');
+      ctx.fillStyle = glow; ctx.beginPath(); ctx.arc(b.x1, b.y1, 4.5, 0, TAU); ctx.fill();
+      ctx.fillStyle = '#ffd9d2'; ctx.beginPath(); ctx.arc(b.x1, b.y1, 1, 0, TAU); ctx.fill();
+    }
+    ctx.restore();
   }
 
   drawBullets() {
@@ -464,6 +510,60 @@ class Renderer {
     this.ctx.drawImage(this.fogC, 0, 0);
   }
 
+  // Halo de votre dernier bruit : les cases qu'il atteint (murs et portes compris), plus clair là où il
+  // porte le plus fort. Il passe sous le brouillard : il ne révèle rien du plan.
+  drawOwnNoise() {
+    const g = this.game, n = g.ownNoise, m = g.map;
+    if (!n) return;
+    const age = g.time - n.at;
+    if (age < 0 || age > 0.8) return;
+    if (this._noiseId !== n.id) {
+      this._noiseId = n.id;
+      const c = this.noiseC;
+      if (c.width !== m.w || c.height !== m.h) { c.width = m.w; c.height = m.h; }
+      const nc = c.getContext('2d'), img = nc.createImageData(m.w, m.h), d = img.data;
+      for (let j = 0; j < n.cells.length; j += 2) {
+        const o = n.cells[j] * 4;
+        d[o] = 255; d[o + 1] = 236; d[o + 2] = 200; d[o + 3] = Math.round(40 + 140 * n.cells[j + 1]);
+      }
+      nc.putImageData(img, 0, 0);
+    }
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.globalAlpha = 0.28 * (1 - age / 0.8);
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(this.noiseC, 0, 0, m.w * TILE, m.h * TILE);
+    ctx.restore();
+  }
+
+  // Bruits entendus hors de vue : un arc autour du joueur, dans leur direction. Plus le bruit est fort,
+  // plus l'arc est épais, opaque et resserré ; sa couleur dit sa nature (voir NOISE_KINDS).
+  drawHeard() {
+    const g = this.game, p = g.player;
+    if (!p.alive || !g.heard.length) return;
+    const ctx = this.ctx, d = this.dpr;
+    const px = p.x * this.zoom + this.tx, py = p.y * this.zoom + this.ty;
+    const R = 26 * this.zoom;
+    ctx.save();
+    ctx.lineCap = 'round';
+    for (const n of g.heard) {
+      const K = NOISE_KINDS[n.kind];
+      const a = (1 - n.t / K.life) * (0.35 + 0.65 * n.i);
+      const half = (26 - 14 * n.i) * DEG;
+      ctx.strokeStyle = 'rgba(0,0,0,' + (a * 0.5) + ')'; ctx.lineWidth = (4 + 7 * n.i) * d;
+      ctx.beginPath(); ctx.arc(px, py, R, n.a - half, n.a + half); ctx.stroke();
+      ctx.strokeStyle = 'rgba(' + K.col + ',' + a + ')'; ctx.lineWidth = (2 + 5 * n.i) * d;
+      ctx.beginPath(); ctx.arc(px, py, R, n.a - half, n.a + half); ctx.stroke();
+      if (n.kind === 'voice') {
+        // un cri : « ! » au bout de l'arc
+        const gx = px + Math.cos(n.a) * (R + 13 * d), gy = py + Math.sin(n.a) * (R + 13 * d);
+        ctx.font = `bold ${Math.round(13 * d)}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillStyle = 'rgba(' + K.col + ',' + a + ')'; ctx.fillText('!', gx, gy);
+      }
+    }
+    ctx.restore();
+  }
+
   drawVignette() {
     const ctx = this.ctx, W = this.canvas.width, H = this.canvas.height;
     const g = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.35, W / 2, H / 2, Math.max(W, H) * 0.7);
@@ -506,7 +606,17 @@ class Renderer {
     const arr = g.siege && g.siege.arrival;
     if (arr && g.time - arr.at < ARRIVAL_ALERT) this.drawArrival(t, arr, g.time - arr.at);
     const dot = (x, y, r, col) => { t.fillStyle = col; t.beginPath(); t.arc(x / TILE * s, y / TILE * s, r, 0, TAU); t.fill(); };
-    for (const h of g.hostages) if (h.alive && (h.visible || m.isExplored(h.tx, h.ty))) dot(h.x, h.y, 2.2, '#e8eef5');
+    // vous escortez : les sorties (portes extérieures et fenêtres) battent en vert
+    if (g.hostages.some(h => h.escort === g.player && h.alive && !h.evacuated)) {
+      const pulse = 0.5 + 0.5 * Math.sin(g.time * 5);
+      t.strokeStyle = `rgba(110,230,140,${0.55 + 0.4 * pulse})`; t.lineWidth = 1.6;
+      for (const b of m.breaches) { t.beginPath(); t.arc(b.cx / TILE * s, b.cy / TILE * s, 4 + pulse * 2.5, 0, TAU); t.stroke(); }
+    }
+    // otage escorté : vert s'il vous suit, orange si l'intervention l'emmène (siège)
+    for (const h of g.hostages) {
+      if (!this.hostageShown(h)) continue;
+      dot(h.x, h.y, 2.2, !h.escort ? '#e8eef5' : h.escort.team === 'ops' ? '#9be7a6' : '#ffb347');
+    }
     for (const e of g.enemies) if (e.alive && e.visible) dot(e.x, e.y, 2.2, '#ef5350');
     for (const mt of g.mates) if (mt.alive) dot(mt.x, mt.y, 2.2, mt.accent || '#7fd18a');
     const p = g.player;
