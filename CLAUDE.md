@@ -16,6 +16,8 @@ python -m http.server 8000
 
 Then go to http://localhost:8000. Append `#nobrief` to the URL to skip the mission briefing overlay; this is useful when iterating. Run the regression suite by opening `tests/index.html` (see **Tests** below), then check the change by playing in the browser.
 
+The game is deployed on Render as a static site from `render.yaml`. Its build command copies only `index.html`, `css/` and `js/` into `public/` (the published directory, git-ignored), so a new top-level file or folder the game loads must be added to that `cp` command, or it will 404 in production while working locally.
+
 ## Architecture
 
 **No modules.** Each file is a classic `<script>` that declares globals (`Game`, `GameMap`, `Renderer`, `UI`, `Sprites`, `LEVELS`, `WEAPONS`, `TILE`, `U`, etc.). The load order in `index.html` is significant: `util → levels → map → entities → game → sprites → render → ui → main`. A new file must be added there in dependency order.

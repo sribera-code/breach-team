@@ -1,0 +1,19 @@
+# Blueprint Render : le jeu est un site statique, sans dépendance ni compilation.
+# Le « build » se contente de copier les fichiers du jeu dans public/, pour ne pas
+# publier les tests, la doc ni le dépôt git. Un nouveau dossier d'assets doit être
+# ajouté à la commande cp.
+services:
+  - type: web
+    name: breach-team
+    runtime: static
+    buildCommand: rm -rf public && mkdir -p public && cp -r index.html css js public/
+    staticPublishPath: ./public
+    headers:
+      # Les noms de fichiers ne changent pas d'une version à l'autre : le navigateur
+      # revalide à chaque chargement pour voir tout de suite un nouveau déploiement.
+      - path: /*
+        name: Cache-Control
+        value: no-cache
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff

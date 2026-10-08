@@ -12,6 +12,17 @@ python -m http.server 8000
 
 puis aller sur http://localhost:8000.
 
+## Déployer sur Render
+
+Le dépôt contient un Blueprint (`render.yaml`) qui publie le jeu comme site statique gratuit. Sur [Render](https://render.com/) : **New → Blueprint**, choisir ce dépôt, puis **Apply**. Le build se contente de copier `index.html`, `css/` et `js/` dans `public/` (les tests et la doc ne sont pas publiés), et chaque push sur la branche suivie redéploie le site.
+
+Sans Blueprint, **New → Static Site** fonctionne aussi, avec ces réglages :
+
+| Champ | Valeur |
+|---|---|
+| Build Command | `rm -rf public && mkdir -p public && cp -r index.html css js public/` |
+| Publish Directory | `public` |
+
 ## Deux modes
 
 Le briefing propose deux rôles pour chaque mission.
