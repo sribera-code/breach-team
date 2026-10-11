@@ -134,13 +134,16 @@ const WEAPONS = {
   ak74E:   { kind: 'ak', pickup: 'ak74P',    name: 'AK-74',      damage: 15, auto: true, tint: AK74_TINT, rof: 10.8, spread: 3.8 * DEG, moveSpread: 4 * DEG, bloom: 1.6 * DEG, bloomMax: 10 * DEG, effRange: 7 * U, rangeSpread: 3.5 * DEG, mag: Infinity, reserve: 0, reload: 0, pierce: 0.55, speed: 1100, gunLen: 20, heavy: false, burst: 6, pause: 0.9, range: 13 * U, snd: [0.1, 2000] },
   pistolE: { kind: 'pistol', pickup: 'makarovP',  name: 'Makarov PM', damage: 18, rof: 4,   auto: true,  spread: 4 * DEG,   moveSpread: 3 * DEG, bloom: 1.5 * DEG, bloomMax: 9 * DEG, effRange: 4 * U, rangeSpread: 4 * DEG, mag: Infinity, reserve: 0, reload: 0, pierce: 0.3, speed: 900, gunLen: 10, heavy: false, burst: 2, pause: 0.8, range: 8 * U, snd: [0.07, 2400] },
 };
-// Mobilité (multiplicateur de vitesse) tirée de la masse.
-const mobilityOf = weight => (weight ? clamp(1.06 - 0.035 * weight, 0.85, 1.04) : 1);
-// Cadence de jeu tirée de la cadence réelle ; mobilité tirée de la masse ; portée du coup de feu (en
-// cases, en plein air) selon l'arme : les murs et les portes l'atténuent (voir Game.soundField).
+// Vitesse du joueur (multiplicateur) tirée de la charge de toutes les armes qu'il porte, en main ou à la bretelle,
+// accessoires compris (Player.weaponLoad) : chaque kilo coûte 3,5 % de vitesse. Réglée pour qu'un HK416 et un Glock
+// (4,5 kg) gardent la vitesse d'origine ; MOBILITY_MAX pour une arme de poing seule, MOBILITY_MIN au plus chargé.
+// Le gilet et le bouclier ont leur propre multiplicateur (leur mobility).
+const MOBILITY_MAX = 1.04, MOBILITY_MIN = 0.8;
+const loadMobility = kg => clamp(1.09 - 0.035 * kg, MOBILITY_MIN, MOBILITY_MAX);
+// Cadence de jeu tirée de la cadence réelle ; portée du coup de feu (en cases, en plein air) selon l'arme : les
+// murs et les portes l'atténuent (voir Game.soundField).
 for (const w of Object.values(WEAPONS)) {
   if (w.rpm && !w.rof) w.rof = w.rpm / 60;
-  w.mobility = mobilityOf(w.weight);
   if (w.noise === undefined) w.noise = w.kind === 'shotgun' || w.heavy ? 18 : w.kind === 'pistol' ? 13 : w.kind === 'smg' || w.kind === 'pdw' ? 14 : 16;
   if (w.pen === undefined) w.pen = w.kind === 'rifle' || w.kind === 'ak' ? 3 : 1;
 }
@@ -225,7 +228,6 @@ function fittedDef(key, acc) {
     d.weight += m.weight;
     d.tint.extMag = m.drum ? 'drum' : m.tube ? 'tube' : m.mag / w.mag;
   }
-  d.mobility = mobilityOf(d.weight);
   return (FITTED[id] = d);
 }
 // Version silencieuse d'une arme (la même si elle n'en accepte pas).
@@ -259,11 +261,11 @@ const SHIELDS = {
 // vitesse (mobility). Masses de gilets de service courants.
 const VESTS = {
   vestL: {
-    name: 'Gilet souple', short: 'Gilet souple', rating: 'NIJ IIIA', weight: 2.5, soft: 1, plate: 0, arc: 0, blunt: 0.5, plateBlunt: 0.5, mobility: 1,
+    name: 'Gilet souple', short: 'Gilet souple', label: 'Souple', rating: 'NIJ IIIA', weight: 2.5, soft: 1, plate: 0, arc: 0, blunt: 0.5, plateBlunt: 0.5, mobility: 1,
     note: "Arrête les balles d'arme de poing, de pistolet mitrailleur en 9 mm et la chevrotine, tout autour du torse : le choc ne fait plus que la moitié des dégâts. Une balle de fusil le traverse.",
   },
   vestH: {
-    name: 'Gilet lourd à plaques', short: 'Gilet lourd', rating: 'NIJ IV', weight: 11, soft: 1, plate: 3, arc: 55 * DEG, blunt: 0.5, plateBlunt: 0.3, mobility: 0.86,
+    name: 'Gilet lourd à plaques', short: 'Gilet lourd', label: 'Lourd', rating: 'NIJ IV', weight: 11, soft: 1, plate: 3, arc: 55 * DEG, blunt: 0.5, plateBlunt: 0.3, mobility: 0.86,
     note: "Le gilet souple, plus deux plaques de céramique devant et derrière : de face ou de dos, même une balle de fusil s'y arrête. De flanc, seul le gilet souple protège. Onze kilos : on avance nettement moins vite.",
   },
 };
@@ -278,10 +280,12 @@ const SIDEARMS = ['glock17', 'usp45'];
 // avant d'entrer (assaut) ; vest : gilet (VESTS, assaut ; null en siège).
 const DEFAULT_LOADOUT = { primary: 'hk416', sidearm: 'glock17', shield: null, acc: {}, teamSup: false, cutPower: false, vest: 'vestL' };
 
-// Deux modes de jeu : l'assaut (on incarne l'opérateur) et le siège (on incarne le groupe armé).
+// Trois modes de jeu : l'assaut (on incarne l'opérateur), le siège (on incarne le groupe armé) et l'escorte
+// (l'équipe conduit un VIP d'un point A à un point B). levels : les cartes du mode ; pitch : son bouton au briefing.
 const MODES = {
-  assault: { name: 'Assaut', primaries: PRIMARY_WEAPONS, sidearms: SIDEARMS, shields: Object.keys(SHIELDS), vests: Object.keys(VESTS), loadout: DEFAULT_LOADOUT },
-  siege:   { name: 'Siège',  primaries: ['akP', 'ak74P', 'uziP', 'skorpionP', 'm870'], sidearms: ['makarovP', 'tt33', 'glock17'], shields: [], vests: [], loadout: { ...DEFAULT_LOADOUT, primary: 'akP', sidearm: 'makarovP', vest: null } },
+  assault: { name: 'Assaut', pitch: "🛡 Assaut — vous menez l'intervention", levels: LEVELS, primaries: PRIMARY_WEAPONS, sidearms: SIDEARMS, shields: Object.keys(SHIELDS), vests: Object.keys(VESTS), loadout: DEFAULT_LOADOUT },
+  siege:   { name: 'Siège', pitch: '☠ Siège — vous tenez le bâtiment', levels: LEVELS, primaries: ['akP', 'ak74P', 'uziP', 'skorpionP', 'm870'], sidearms: ['makarovP', 'tt33', 'glock17'], shields: [], vests: [], loadout: { ...DEFAULT_LOADOUT, primary: 'akP', sidearm: 'makarovP', vest: null } },
+  escort:  { name: 'Escorte', pitch: '★ Escorte — vous exfiltrez un VIP', levels: ESCORT_LEVELS, primaries: PRIMARY_WEAPONS, sidearms: SIDEARMS, shields: Object.keys(SHIELDS), vests: Object.keys(VESTS), loadout: DEFAULT_LOADOUT },
 };
 
 // acc : accessoires ({ sup, laser, light, grip, mag }), ou true pour un simple silencieux
@@ -344,6 +348,8 @@ class Player extends Agent {
     this.charges = 0;    // charges de brèche (assaut, voir Game.chargeKey)
   }
   get slot() { return this.slots[this.cur]; }
+  // Masse des armes portées (en main ou à la bretelle), accessoires compris : elle règle la vitesse (loadMobility).
+  get weaponLoad() { return this.slots.reduce((t, s) => t + ((s && s.def.weight) || 0), 0); }
   // Avec un bouclier, l'arme de poing est la seule arme, avec des chargeurs en plus.
   equip(loadout) {
     this.shield = SHIELDS[loadout.shield] || null;
@@ -375,6 +381,9 @@ const SIEGE_MATE_DEFS = [
   { name: 'Yuri',  accent: '#8fb0e0', weapon: 'makarovP', slot: [0, 1.6],      sector: 90 * DEG,   militant: true, jacket: '#4a3d4a', pants: '#3a3630' },
 ];
 
+// Flashs de chaque coéquipier de l'intervention : elles servent à l'entrée à la flash (voir Game.orderFlashEntry).
+const MATE_FLASHES = 2;
+
 // Chacun son arme : on tire au sort dans le lot de son camp plutôt que d'armer tout le monde pareil.
 const MATE_POOL = ['hk416', 'scarh', 'mp5', 'mp7', 'm870', 'm4super90'];
 const SIEGE_MATE_POOL = ['akP', 'akP', 'ak74P', 'uziP', 'skorpionP', 'makarovP', 'tt33', 'm870'];
@@ -398,6 +407,8 @@ class Teammate extends Agent {
       ? { ...STYLE_MILITANT, body: def.jacket, shoulder: def.jacket, sleeve: def.jacket, pants: def.pants }
       : { ...STYLE_PLAYER, helmet: def.helmet, vest: def.vest };
     this.slot = { ...makeSlot(def.weapon, def.acc || def.sup), reserve: Infinity };
+    this.nade = 'flash';
+    this.flashbangs = def.militant ? 0 : MATE_FLASHES;
     this.lampOn = true;
     this.fov = 130 * DEG;
     this.viewRange = 13 * U;
@@ -513,4 +524,21 @@ class Hostage {
   get radius() { return this.standing ? 9 : 7; }
   get tx() { return Math.floor(this.x / TILE); }
   get ty() { return Math.floor(this.y / TILE); }
+}
+
+// Points de vie du VIP (mode escorte).
+const VIP_HP = 100;
+// VIP (mode escorte) : un civil que l'équipe conduit du point A au point B. Il suit son escorte comme un otage
+// (H : il vous suit, ou il attend à couvert), mais il encaisse comme un homme : des points de vie, et un gilet
+// souple sous la veste. Les terroristes le cherchent : dès qu'ils le voient, c'est sur lui qu'ils tirent (voir Game.acquireFor).
+class Vip extends Hostage {
+  constructor(x, y) {
+    super(x, y);
+    this.vip = true;
+    this.name = 'VIP';
+    this.hp = this.maxHp = VIP_HP;
+    this.vest = VESTS.vestL;
+    this.style = STYLE_VIP;
+    this.lostEscort = null; // escorte tombée : il suivra celui qui reprend la main (voir Game.takeOver)
+  }
 }

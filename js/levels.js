@@ -6,6 +6,7 @@
 //  Sols : '.' béton   ',' parquet   ':' carrelage   ';' moquette   '=' marbre   '%' tôle striée
 //  'S' départ du joueur   'E' ennemi (orientation aléatoire)   '^' 'v' '<' '>' ennemi orienté
 //  'H' otage   un '#' isolé dans une pièce fait un pilier
+//  Escorte (ESCORT_LEVELS) : 'A' point de départ du VIP et de l'équipe   'Z' zone d'extraction (le point B)
 //  Mobilier (bloque le passage, pas la vue ; une grenade lancée passe par-dessus) :
 //  'c' caisse   'B' baril   'T' table   'p' plante   'b' lit   'k' bureau   'P' palette chargée
 //  's' canapé   'r' rayonnage   'a' armoire   'R' baie de serveurs   'C' comptoir
@@ -178,6 +179,93 @@ const LEVELS = [
       '#..........#.....H..#:T:::H:#p======s#',
       '#rrrrr..rrr#BB..cc.B#ss:::::#=======s#',
       '################################X#####',
+    ],
+  },
+];
+
+// Mode escorte : cartes à part, où l'équipe conduit un VIP du point A ('A') à la zone d'extraction ('Z', le
+// point B), à travers des pièces tenues par les terroristes. Pas d'otage ; les ouvertures sur l'extérieur
+// ('X', 'W') ne servent qu'au décor.
+const ESCORT_LEVELS = [
+  {
+    name: 'Ambassade',
+    briefing: "Un commando a pris l'ambassade pendant une réception. L'ambassadeur s'est enfermé dans la salle forte (A), au nord-ouest : vous venez de l'y rejoindre. La voiture blindée l'attend au garage (B), au sud-est. Salons, grand hall et cuisines vous en séparent : choisissez votre chemin et gardez-le hors des lignes de tir, c'est lui qu'ils cherchent.",
+    enemyWeapons: ['ak', 'ak74E', 'ak', 'pistol', 'uziE', 'sgE'],
+    map: [
+      '###########W#########W##############',
+      '#%%%aa#,ss,,,,,p#;sss;;p;;#,rrrrrr,#',
+      '#%A%%%#,,,kk,,,,#;;;;;;;;;D,,,,,,,,#',
+      '#%%%%%D,,,,,,,,,D;TT;;;;E;#,,,,,E,,#',
+      '#%%%%%#,,,,,,,,,#;;;;;;;;;#,,,,,,,,#',
+      '###########D#########D#########D####',
+      '#;;;;;;;;#===============p#,,,,,,,p#',
+      '#;kk;;;;;#====>===========#,TT,,E,,#',
+      'W;;;;;;;;D==#=========#===#,TT,,TT,W',
+      '#;;;;;kk;#=====CCCCCC=====D,,,,,TT,#',
+      '#;;;;E;;;#============E===#,TT,E,,,#',
+      '#a;;;;;;;#p==============p#,TT,,,,p#',
+      '#####D##########D##############D####',
+      '#CCC:::::::#aaa.....#BB..........E.#',
+      '#::::::::::#........#..............#',
+      'W::TT::TT::D...E....#....PP........#',
+      '#::TT::TT::#........D....PP...ZZZZ.#',
+      '#:::::E::::#........#.........ZZZZ.#',
+      '#CCCC::::::#aaa..ccc#B........ZZZZ.#',
+      '###############################X####',
+    ],
+  },
+  {
+    name: 'Palais de justice',
+    briefing: "Le palais de justice est tombé en pleine audience. Le témoin protégé attend avec vous dans la salle des témoins (A), au nord-est ; le fourgon blindé l'attend dans la cour (B), au sud-ouest. Entre les deux : la salle d'audience et ses bancs, la salle des pas perdus, ou le détour par les archives et le greffe. Ils savent qu'il est là, et ce qu'il sait.",
+    enemyWeapons: ['ak', 'ak74E', 'ak', 'ak', 'pistol', 'uziE', 'sgE'],
+    map: [
+      '##############W########W##############',
+      '#rrrrrrr.#p,,,,CCCCCCCC,,,,p#ss;;;;;p#',
+      '#........#,,,E,,,,,,,,,,,,,,#;;;;;;;;#',
+      '#........D,,,,,,k,,,,k,,,,,,D;;;;A;;;#',
+      '#.rrrrr..#,,,,,,,,,,,,,,E,,,#;TT;;;;;#',
+      '#.......E#,,TTTTT,,,,TTTTT,,#;;;;;;;s#',
+      '#........#,,,,,,,,,,,,,,,,,,#####D####',
+      '####D#####,,TTTTT,,,,TTTTT,,#,,,,,,,r#',
+      '#,,,,,,,,#,,,,,,,,E,,,,,,,,,#,,,,,,,r#',
+      '#,kk,kk,,D,,TTTTT,,,,TTTTT,,D,,kk,,,,#',
+      '#,,,,,,,E#,,,,,,,,,,,,,,,,,,#,,,,,,E,#',
+      '#a,,,,,,a#########D##########p,,,,,,,#',
+      '####D#####==================#####D####',
+      '#BB......#===#=========#====#aa......#',
+      '#....E...#=====E============#........#',
+      '#ZZZ.....#==================D........#',
+      'XZZZ.....D======CCCC========#...E....#',
+      '#ZZZ..cc.#===#=========#====#......cc#',
+      '#......PP#p=========E======p#aaa.....#',
+      '######################################',
+    ],
+  },
+  {
+    name: 'Hôpital',
+    briefing: "Un commando a investi l'hôpital où l'on soigne le ministre. Il est dans sa chambre (A), au bout de l'aile ouest ; l'ambulance l'attend au quai des urgences (B), à l'est. Le long couloir est coupé par deux portes coupe-feu ; les chambres communiquent entre elles, et la salle d'attente et le bloc opératoire offrent un autre chemin, plus abrité.",
+    enemyWeapons: ['ak', 'ak74E', 'pistol', 'pistol', 'uziE', 'sgE'],
+    map: [
+      '###W######W######W######W#############',
+      '#p;bb;;#::bb::#::bb::#::bb::#rrrrrrrr#',
+      '#;;;;;;#::::::#::::::#::::::#........#',
+      '#;;A;;;#::::::D::::::D::::::D......E.#',
+      '#s;;;;;#::::E:#:E::::#::E:::#........#',
+      '#s;;;;;#a:::::#a:::::#a:::::#rr....rr#',
+      '####D######D######D######D######D#####',
+      'W::::::::::::::D::::::::::::D::::::::#',
+      '#::::::::::::::#::::::::E:::#::::::::W',
+      '######D############D###########D######',
+      '#ssss,,,,,,,p#aaa::::::rr#BB.........#',
+      '#,,,,,,,,,,,,#:::::::::::#...........#',
+      '#,,TT,,,,TT,,#::TT:::TT::#...E.cc....#',
+      '#,,,,,,,E,,,,#:::::E:::::#...........#',
+      '#,,,,,,,,,,,,D:::::::::::D...........#',
+      '#s,,,,,,,,,,,#:::::::::::#.......ZZZZ#',
+      '#s,,E,,,,,,,,#::TT:::TT::#.......ZZZZX',
+      '#s,,,,,,,,,,,#::::::E::::#.......ZZZZ#',
+      '#CCCC,,,,,,,p#aa:::::::rr#cc.....B...#',
+      '######################################',
     ],
   },
 ];

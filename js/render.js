@@ -56,6 +56,8 @@ class Renderer {
     for (let y = 0; y < m.h; y++) for (let x = 0; x < m.w; x++) if (m.tile(x, y) === 0) Sprites.paintFloor(ctx, m.floor(x, y), x * TILE, y * TILE);
     Sprites.paintConcreteStains(ctx, m);
     for (let y = 0; y < m.h; y++) for (let x = 0; x < m.w; x++) if (m.tile(x, y) === 0) Sprites.paintShadows(ctx, m, x, y);
+    Sprites.paintGoal(ctx, m);  // escorte : la zone d'extraction (point B)...
+    Sprites.paintStart(ctx, m); // ...et le point A
     for (let y = 0; y < m.h; y++) for (let x = 0; x < m.w; x++) if (m.tile(x, y) === 1) Sprites.paintWall(ctx, m, x, y);
     for (const d of m.doors) Sprites.paintDoorFrame(ctx, d);
     for (const w of m.windows) Sprites.paintWindow(ctx, w);
@@ -87,6 +89,10 @@ class Renderer {
       if (t === 2) continue;
       ctx.fillStyle = t === 1 ? '#6a737f' : MINI_FLOORS[m.floor(x, y)] || MINI_FLOORS[0];
       ctx.fillRect(x * s, y * s, s, s);
+    }
+    if (m.goal) { // zone d'extraction de l'escorte (point B)
+      ctx.fillStyle = 'rgba(111,207,122,0.6)';
+      for (const c of m.goal.cells) ctx.fillRect(c.x * s, c.y * s, s, s);
     }
     ctx.fillStyle = 'rgba(170,180,190,0.3)'; // mobilier : il arrête les pas, pas le regard
     for (const i of m.propAt.keys()) ctx.fillRect((i % m.w) * s, Math.floor(i / m.w) * s, s, s);
@@ -131,6 +137,18 @@ class Renderer {
     t.restore();
   }
 
+  // Point B sur la minimap : la zone bat en vert, avec sa lettre.
+  drawGoalMini(t, goal) {
+    const s = this.miniScale, pulse = 0.5 + 0.5 * Math.sin(this.game.time * 4);
+    t.save();
+    t.fillStyle = `rgba(111,207,122,${0.35 + 0.35 * pulse})`;
+    for (const c of goal.cells) t.fillRect(c.x * s, c.y * s, s, s);
+    t.font = 'bold 11px sans-serif'; t.textAlign = 'center'; t.textBaseline = 'middle';
+    t.lineWidth = 3; t.strokeStyle = 'rgba(0,0,0,0.7)'; t.strokeText('B', goal.cx / TILE * s, goal.cy / TILE * s);
+    t.fillStyle = '#d9ffe0'; t.fillText('B', goal.cx / TILE * s, goal.cy / TILE * s);
+    t.restore();
+  }
+
   toWorld(sx, sy) {
     const px = sx * this.dpr, py = sy * this.dpr;
     return { x: (px - this.tx) / this.zoom, y: (py - this.ty) / this.zoom };
@@ -171,6 +189,7 @@ class Renderer {
     for (const h of g.hostages) {
       if (!this.hostageShown(h)) continue;
       if (h.standing) Sprites.hostageStanding(ctx, h); else Sprites.hostage(ctx, h);
+      if (h.vip) { ctx.fillStyle = '#ffd54f'; ctx.font = 'bold 7px sans-serif'; ctx.textAlign = 'center'; ctx.fillText('VIP', h.x, h.y - 17); }
     }
     for (const e of g.enemies) {
       if (!e.visible) continue;
@@ -348,7 +367,7 @@ class Renderer {
     for (const e of g.enemies) if (!e.alive && !e.dying && e.bodySeen) Sprites.body(this.ctx, e, this.enemyStyle(e));
     if (!g.player.alive && !g.player.dying) Sprites.body(this.ctx, g.player, { ...(g.player.style || STYLE_PLAYER), ...gunStyle(g.player.weapon), ...shieldStyle(g.player), plates: !!(g.player.vest && g.player.vest.plate) });
     for (const mt of g.mates) if (!mt.alive && !mt.dying) Sprites.body(this.ctx, mt, { ...mt.style, ...gunStyle(mt.weapon), ...shieldStyle(mt) });
-    for (const h of g.hostages) if (!h.alive && h.bodySeen) Sprites.body(this.ctx, h, STYLE_HOSTAGE);
+    for (const h of g.hostages) if (!h.alive && h.bodySeen) Sprites.body(this.ctx, h, h.style || STYLE_HOSTAGE);
   }
 
   // Un otage à genoux reste dessiné là où on l'a vu (il ne bouge pas) ; un otage qui marche ne se
@@ -713,16 +732,18 @@ class Renderer {
     const arr = g.siege && g.siege.arrival;
     if (arr && g.time - arr.at < ARRIVAL_ALERT) this.drawArrival(t, arr, g.time - arr.at);
     const dot = (x, y, r, col) => { t.fillStyle = col; t.beginPath(); t.arc(x / TILE * s, y / TILE * s, r, 0, TAU); t.fill(); };
-    // vous escortez : les sorties (portes extérieures et fenêtres) battent en vert
-    if (g.hostages.some(h => h.escort === g.player && h.alive && !h.evacuated)) {
+    // escorte : la zone d'extraction bat en vert, explorée ou non (on sait où l'on va)
+    if (g.escort && m.goal) this.drawGoalMini(t, m.goal);
+    // vous escortez un otage : les sorties (portes extérieures et fenêtres) battent en vert
+    if (g.hostages.some(h => !h.vip && h.escort === g.player && h.alive && !h.evacuated)) {
       const pulse = 0.5 + 0.5 * Math.sin(g.time * 5);
       t.strokeStyle = `rgba(110,230,140,${0.55 + 0.4 * pulse})`; t.lineWidth = 1.6;
       for (const b of m.breaches) { t.beginPath(); t.arc(b.cx / TILE * s, b.cy / TILE * s, 4 + pulse * 2.5, 0, TAU); t.stroke(); }
     }
-    // otage escorté : vert s'il vous suit, orange si l'intervention l'emmène (siège)
+    // otage escorté : vert s'il vous suit, orange si l'intervention l'emmène (siège) ; le VIP en or
     for (const h of g.hostages) {
       if (!this.hostageShown(h)) continue;
-      dot(h.x, h.y, 2.2, !h.escort ? '#e8eef5' : h.escort.team === 'ops' ? '#9be7a6' : '#ffb347');
+      dot(h.x, h.y, h.vip ? 2.8 : 2.2, h.vip ? '#ffd54f' : !h.escort ? '#e8eef5' : h.escort.team === 'ops' ? '#9be7a6' : '#ffb347');
     }
     for (const e of g.enemies) if (e.alive && e.visible) dot(e.x, e.y, 2.2, e.cuffed ? '#9aa4ae' : e.surrender ? '#ffb347' : '#ef5350');
     for (const mt of g.mates) if (mt.alive) dot(mt.x, mt.y, 2.2, mt.accent || '#7fd18a');

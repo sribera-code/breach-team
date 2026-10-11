@@ -820,6 +820,53 @@ const Sprites = {
     ctx.strokeStyle = 'rgba(0,0,0,0.5)'; ctx.lineWidth = 1; ctx.strokeRect(x + 0.5, y + 0.5, ww - 1, hh - 1);
   },
 
+  // ---- Escorte : point A et zone d'extraction (point B), peints au sol ----
+  // La zone : hachures vertes, contour en tirets le long de ses bords, et un grand B.
+  paintGoal(ctx, m) {
+    const g = m.goal;
+    if (!g) return;
+    const xs = g.cells.map(c => c.x * TILE), ys = g.cells.map(c => c.y * TILE);
+    const x0 = Math.min(...xs), x1 = Math.max(...xs) + TILE, y0 = Math.min(...ys), y1 = Math.max(...ys) + TILE;
+    ctx.save();
+    ctx.beginPath();
+    for (const c of g.cells) ctx.rect(c.x * TILE, c.y * TILE, TILE, TILE);
+    ctx.fillStyle = 'rgba(70,170,100,0.18)'; ctx.fill();
+    ctx.clip();
+    ctx.strokeStyle = 'rgba(120,220,150,0.25)'; ctx.lineWidth = 3;
+    ctx.beginPath();
+    for (let k = x0 - (y1 - y0); k < x1; k += 12) { ctx.moveTo(k, y1); ctx.lineTo(k + (y1 - y0), y0); }
+    ctx.stroke();
+    ctx.restore();
+    const has = (x, y) => m.goalAt.has(y * m.w + x);
+    ctx.save();
+    ctx.strokeStyle = 'rgba(140,235,165,0.75)'; ctx.lineWidth = 1.5; ctx.setLineDash([5, 3]);
+    ctx.beginPath();
+    for (const c of g.cells) {
+      const x = c.x * TILE, y = c.y * TILE;
+      if (!has(c.x, c.y - 1)) { ctx.moveTo(x, y); ctx.lineTo(x + TILE, y); }
+      if (!has(c.x, c.y + 1)) { ctx.moveTo(x, y + TILE); ctx.lineTo(x + TILE, y + TILE); }
+      if (!has(c.x - 1, c.y)) { ctx.moveTo(x, y); ctx.lineTo(x, y + TILE); }
+      if (!has(c.x + 1, c.y)) { ctx.moveTo(x + TILE, y); ctx.lineTo(x + TILE, y + TILE); }
+    }
+    ctx.stroke();
+    ctx.font = 'bold 30px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = 'rgba(150,240,175,0.5)'; ctx.fillText('B', g.cx, g.cy + 1);
+    ctx.restore();
+  },
+  // Le point A : un cercle bleu et la lettre, là où le VIP attendait.
+  paintStart(ctx, m) {
+    const a = m.vipStart;
+    if (!a) return;
+    const x = (a.x + 0.5) * TILE, y = (a.y + 0.5) * TILE;
+    ctx.save();
+    ctx.strokeStyle = 'rgba(120,180,240,0.5)'; ctx.lineWidth = 1.5; ctx.setLineDash([4, 3]);
+    circle(ctx, x, y, 15); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.font = 'bold 13px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = 'rgba(140,195,245,0.5)'; ctx.fillText('A', x + 19, y - 15);
+    ctx.restore();
+  },
+
   // ---- Personnages ----
   // Dessin générique d'un personnage à partir d'une pose (voir POSE_STAND / POSE_LIE).
   // st : { body, shoulder, vest, vestLight, plates, pack, sleeve, gloves, skin, boots, helmet | hair/head, band, gun, gunLen, gunTint }
@@ -876,6 +923,11 @@ const Sprites = {
       ctx.strokeStyle = 'rgba(0,0,0,0.45)'; ctx.lineWidth = 2.2;
       ctx.beginPath(); ctx.moveTo(V.x - 1.5, V.y - 0.5); ctx.lineTo(V.x + V.w, V.y + V.h - 0.5); ctx.moveTo(V.x - 1.5, V.y + V.h); ctx.lineTo(V.x + V.w, V.y + 0.5); ctx.stroke();
       ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.fillRect(V.x + V.w - 2.5, V.y + 2.5, 3, 3); ctx.fillRect(V.x + V.w - 2.5, V.y + V.h - 5.5, 3, 3);
+    }
+    // col de chemise (le VIP, en costume) : un V clair sous le menton, que la tête recouvre en partie
+    if (st.collar && pose.side < 0.5) {
+      ctx.strokeStyle = st.collar; ctx.lineWidth = 1.8;
+      ctx.beginPath(); ctx.moveTo(1.5, -8.5); ctx.lineTo(6.2, -2.8); ctx.moveTo(1.5, 8.5); ctx.lineTo(6.2, 2.8); ctx.stroke();
     }
     if (pose.side > 0.5) { ctx.fillStyle = 'rgba(0,0,0,0.12)'; ctx.beginPath(); ctx.ellipse(T.x - 2, T.y, T.rx * 0.78, T.ry * 0.7, 0, 0, TAU); ctx.fill(); }
     // bras
@@ -1084,27 +1136,28 @@ const Sprites = {
     ctx.restore();
   },
 
-  // Otage à genoux, mains sur la tête
+  // Otage à genoux, mains sur la tête (le VIP aussi, quand il attend à couvert : h.style)
   hostage(ctx, h) {
+    const st = h.style || STYLE_HOSTAGE;
     ctx.save();
     ctx.translate(h.x, h.y);
     ctx.fillStyle = 'rgba(0,0,0,0.32)'; ctx.beginPath(); ctx.ellipse(2, 3, 11, 10, 0, 0, TAU); ctx.fill();
     ctx.rotate(h.angle);
     ctx.lineCap = 'round';
-    ctx.lineWidth = 5.5; ctx.strokeStyle = '#3b4250';
+    ctx.lineWidth = 5.5; ctx.strokeStyle = st.pants;
     ctx.beginPath(); ctx.moveTo(-4, -4.5); ctx.lineTo(-14, -5.5); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(-4, 4.5); ctx.lineTo(-14, 5.5); ctx.stroke();
-    ctx.fillStyle = '#17181b'; circle(ctx, -15, -6, 2.8); ctx.fill(); circle(ctx, -15, 6, 2.8); ctx.fill();
-    ctx.fillStyle = '#8a97a8';
+    ctx.fillStyle = st.boots; circle(ctx, -15, -6, 2.8); ctx.fill(); circle(ctx, -15, 6, 2.8); ctx.fill();
+    ctx.fillStyle = st.body;
     ctx.beginPath(); ctx.ellipse(-1, 0, 7.5, 10, 0, 0, TAU); ctx.fill();
     ctx.strokeStyle = 'rgba(0,0,0,0.5)'; ctx.lineWidth = 1.2; ctx.stroke();
-    ctx.lineWidth = 4.6; ctx.strokeStyle = '#8a97a8';
+    ctx.lineWidth = 4.6; ctx.strokeStyle = st.sleeve;
     ctx.beginPath(); ctx.moveTo(-2, -8); ctx.lineTo(5, -9); ctx.lineTo(4, -5.5); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(-2, 8); ctx.lineTo(5, 9); ctx.lineTo(4, 5.5); ctx.stroke();
-    ctx.fillStyle = '#d9b48f'; circle(ctx, 1.5, 0, 5.8); ctx.fill();
+    ctx.fillStyle = st.skin; circle(ctx, 1.5, 0, 5.8); ctx.fill();
     ctx.strokeStyle = 'rgba(0,0,0,0.5)'; ctx.lineWidth = 1; ctx.stroke();
-    ctx.fillStyle = '#3b2a1a'; ctx.beginPath(); ctx.ellipse(-0.5, 0, 4.5, 5.8, 0, 0, TAU); ctx.fill();
-    ctx.fillStyle = '#d9b48f'; circle(ctx, 4, -5.5, 2.7); ctx.fill(); circle(ctx, 4, 5.5, 2.7); ctx.fill();
+    ctx.fillStyle = st.hair; ctx.beginPath(); ctx.ellipse(-0.5, 0, 4.5, 5.8, 0, 0, TAU); ctx.fill();
+    ctx.fillStyle = st.skin; circle(ctx, 4, -5.5, 2.7); ctx.fill(); circle(ctx, 4, 5.5, 2.7); ctx.fill();
     if (h.wounded) {
       // blessé : chemise tachée de sang
       ctx.fillStyle = 'rgba(150,12,14,0.85)';
@@ -1115,12 +1168,14 @@ const Sprites = {
   },
 
   // Otage debout (escorté, ou qui sort) : il marche les mains sur la tête ; il s'efface en franchissant
-  // la façade (h.exiting.alpha).
+  // la façade (h.exiting.alpha). Le VIP, lui, marche les bras le long du corps.
   hostageStanding(ctx, h) {
-    const pose = { ...POSE_STAND, arms: [[[-2.5, -9.5], [1, -13.5], [2.8, -8]], [[-2.5, 9.5], [1, 13.5], [2.8, 8]]] };
+    const arms = h.vip ? [[[-2.5, -9.5], [-0.5, -12.8], [3.5, -11.8]], [[-2.5, 9.5], [-0.5, 12.8], [3.5, 11.8]]]
+      : [[[-2.5, -9.5], [1, -13.5], [2.8, -8]], [[-2.5, 9.5], [1, 13.5], [2.8, 8]]];
+    const pose = { ...POSE_STAND, arms };
     ctx.save();
     if (h.exiting) ctx.globalAlpha = h.exiting.alpha;
-    this.figure(ctx, h.x, h.y, h.angle, STYLE_HOSTAGE, pose, false, h.walk, h.moving);
+    this.figure(ctx, h.x, h.y, h.angle, h.style || STYLE_HOSTAGE, pose, false, h.walk, h.moving);
     if (h.wounded) {
       ctx.translate(h.x, h.y); ctx.rotate(h.angle);
       ctx.fillStyle = 'rgba(150,12,14,0.85)';
@@ -1177,6 +1232,12 @@ const STYLE_BOSS = {
 const STYLE_HOSTAGE = {
   body: '#8a97a8', shoulder: '#8a97a8', sleeve: '#8a97a8', vest: null, pack: null, civil: true,
   pants: '#3b4250', boots: '#17181b', skin: '#d9b48f', hair: '#3b2a1a', head: 'hair',
+};
+
+// VIP (mode escorte) : costume sombre, col de chemise blanc, cheveux gris.
+const STYLE_VIP = {
+  body: '#272c36', shoulder: '#20242c', sleeve: '#272c36', vest: null, pack: null, civil: true, collar: '#e9edf1',
+  pants: '#1e2128', boots: '#0f1012', skin: '#dcb391', hair: '#8e8a84', head: 'hair',
 };
 
 const STYLE_PLAYER = {

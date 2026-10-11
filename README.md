@@ -23,9 +23,9 @@ Sans Blueprint, **New → Static Site** fonctionne aussi, avec ces réglages :
 | Build Command | `rm -rf public && mkdir -p public && cp -r index.html css js public/` |
 | Publish Directory | `public` |
 
-## Deux modes
+## Trois modes
 
-Le briefing propose deux rôles pour chaque mission.
+Le briefing propose trois modes : l'assaut et le siège se jouent sur les mêmes six cartes, dans les deux rôles ; l'escorte a ses trois cartes à elle.
 
 **Assaut** — le mode d'origine : vous menez l'intervention avec Bravo et Charlie et vous neutralisez les suspects (abattus, ou rendus et menottés) sans perdre un seul otage ; les faire sortir les met à l'abri, mais n'est pas exigé. Le point d'entrée est tiré au sort à chaque partie — le briefing ne dit pas lequel est sorti, vous le découvrez sur place — et il vous laisse le fixer si vous préférez : chaque carte a plusieurs portes extérieures et fenêtres, et la pièce par laquelle vous entrez est toujours vide : le premier contact se fait derrière une porte.
 
@@ -35,9 +35,13 @@ Chaque carte a ses otages : trois à l'Entrepôt, quatre aux Bureaux, à l'Hôte
 
 L'équipement suit le camp : AKM, AK-74, Uzi, Škorpion vz. 61 ou Remington 870 en arme principale, Makarov, Tokarev TT-33 ou Glock en arme de poing, et **deux grenades à fragmentation** au lieu des flashs (`Espace`). Elles éclatent au bout de deux secondes et tuent dans un rayon d'environ une case, blessent jusqu'à trois cases et demie, vous et vos otages compris ; un mur ou une porte fermée arrête l'éclat. Pas de fibre optique de ce côté. Les opérateurs sont plus précis et portent un gilet ; vous frappez plus fort et connaissez le terrain. Portes, grenades et tir à travers les battants sont vos meilleurs outils. Les opérateurs, eux, lancent des flashs, mais seulement quand la trajectoire est libre (jamais contre une porte fermée) et jamais sur leurs équipiers ; leur propre camp détourne les yeux et n'est gêné que si l'éclair part à ses pieds.
 
+**Escorte** — vous menez Bravo et Charlie et vous conduisez un VIP du point A, où vous venez de le rejoindre, jusqu'à la zone d'extraction, le point B, à travers des pièces tenues par un commando de dix terroristes. Le VIP vous suit dès le départ, comme un otage escorté ; près de lui, `H` le fait attendre à couvert (accroupi, il fait une petite cible), `H` à nouveau et il repart. Il n'ouvre pas les portes et se jette à terre quand on tire près de lui, mais il porte un gilet souple sous sa veste (les balles d'arme de poing, de 9 mm et la chevrotine n'y font que la moitié de leurs dégâts) et tient quelques balles : 100 points de vie ; à moitié de ses forces, il boite et suit moins vite. Le commando est là pour lui : un terroriste qui le voit lui tire dessus, avant vous, et lâche même l'opérateur avec qui il échangeait des tirs pour se tourner vers lui. Seul votre corps (ou votre bouclier) dans l'axe arrête ses balles : placez-vous entre eux, gardez-le hors des lignes de tir, faites-le attendre derrière une porte le temps de nettoyer la pièce suivante. Si vous tombez, il suit celui qui reprend la main. La mission est accomplie dès qu'il entre, vivant, dans la zone B — hachurée de vert au sol, elle bat sur la minimap même inexplorée, et le HUD donne sa direction —, quels que soient les terroristes encore debout ; elle échoue s'il meurt, ou si toute l'équipe tombe. Personne n'est posté dans la pièce du point A ni à moins de deux cases de la zone B ; ailleurs, les postes sont tirés au sort comme en assaut, avec rondes, portes verrouillées et alerte générale. L'équipement est celui de l'assaut (gilets et boucliers compris), et le courant peut être coupé.
+
 ## Missions
 
-Six cartes : Entrepôt, Bureaux, Villa, Hôtel (chambres sur un long couloir, hall de marbre, restaurant et cuisines), Banque (grand hall à piliers, guichets, salle des coffres, salle informatique) et Centre de données (quai de chargement, salle des serveurs en allées parallèles, supervision). L'écran « Missions » montre le plan de chacune, avec ses portes, ses fenêtres et ses ouvertures sur l'extérieur ; les postes des suspects et des otages, tirés au sort à chaque partie, n'y figurent pas.
+Six cartes pour l'assaut et le siège : Entrepôt, Bureaux, Villa, Hôtel (chambres sur un long couloir, hall de marbre, restaurant et cuisines), Banque (grand hall à piliers, guichets, salle des coffres, salle informatique) et Centre de données (quai de chargement, salle des serveurs en allées parallèles, supervision). L'écran « Missions » montre le plan de chacune, avec ses portes, ses fenêtres et ses ouvertures sur l'extérieur ; les postes des suspects et des otages, tirés au sort à chaque partie, n'y figurent pas.
+
+Trois cartes pour l'escorte, chacune traversée d'un coin à l'autre, avec plusieurs chemins possibles : l'Ambassade (l'ambassadeur, de la salle forte au garage, par les salons et le grand hall ou par le secrétariat et les cuisines), le Palais de justice (le témoin protégé, de la salle des témoins à la cour des fourgons, par la salle d'audience et la salle des pas perdus, ou par les archives et le greffe) et l'Hôpital (le ministre, de sa chambre au quai des urgences, par le long couloir coupé de portes coupe-feu, par les chambres qui communiquent, ou par la salle d'attente et le bloc opératoire). L'écran « Missions » de l'escorte montre le plan de chacune avec ses points A et B.
 
 ## Contrôles
 
@@ -56,8 +60,8 @@ Six cartes : Entrepôt, Bureaux, Villa, Hôtel (chambres sur un long couloir, ha
 | Fibre optique | `F` maintenu devant une porte fermée ou entrouverte |
 | Grenade flash | `Espace` ou `G` maintenu : la mèche part à la fin de l'armement, la grenade au relâchement |
 | Ramasser une arme | `V` près d'un corps (échange avec l'arme de même catégorie) |
-| Otage / menottes | `H` près d'un otage : il se relève et vous suit ; `H` à nouveau : il attend à genoux. Près d'un suspect rendu : le menotter |
-| Équipe | `T` suivre / tenir ; clic droit : aller là (sur soi : suivre ; sur une porte fermée : en colonne, prêts à entrer) |
+| Otage / VIP / menottes | `H` près d'un otage : il se relève et vous suit ; `H` à nouveau : il attend à genoux. Près du VIP (escorte) : il attend à couvert, ou repart. Près d'un suspect rendu : le menotter |
+| Équipe | `T` suivre / tenir ; clic droit : aller là (sur soi : suivre ; sur une porte fermée : en colonne, prêts à entrer ; à nouveau sur la même porte : entrée à la flash) |
 | Direction à couvrir | clic droit **maintenu**, puis tirer vers la direction avant de relâcher |
 | Minimap | `M` (affichée par défaut) |
 | Pause | `Échap` |
@@ -68,7 +72,7 @@ En maintenant le clic droit, une flèche part du point visé : la direction trac
 
 ## Armes
 
-L'équipement se choisit dans l'écran de briefing (le choix est mémorisé), qui tient sur un seul écran : à gauche le plan, où l'on clique l'ouverture par laquelle entrer ; au milieu une arme principale — ou un bouclier — et une arme de poing, chacune avec ses accessoires ; à droite leurs fiches, qui restent à la même place d'une arme à l'autre pour les comparer. Les armes sont réelles ; calibre, cadence, capacité et masse reprennent les données constructeur, les dégâts suivent le calibre et la mobilité découle de la masse.
+L'équipement se choisit dans l'écran de briefing (le choix est mémorisé), qui tient sur un seul écran : à gauche le plan, où l'on clique l'ouverture par laquelle entrer ; au milieu une arme principale — ou un bouclier — et une arme de poing, chacune avec ses accessoires ; à droite leurs fiches, qui restent à la même place d'une arme à l'autre pour les comparer. Les armes sont réelles ; calibre, cadence, capacité et masse reprennent les données constructeur, les dégâts suivent le calibre et la vitesse découle de la masse : celle de toutes les armes que vous portez, en main ou à la bretelle, accessoires compris (3,5 % de vitesse par kilo ; passer à l'arme de poing ne rend pas plus rapide, le fusil pèse toujours dans le dos). Le gilet et le bouclier ralentissent en plus, chacun selon son coefficient.
 
 | Catégorie | Arme | Calibre | Capacité | Cadence | À travers une porte | Bruit (cases) |
 |---|---|---|---|---|---|---|
@@ -85,11 +89,19 @@ L'équipement se choisit dans l'écran de briefing (le choix est mémorisé), qu
 
 Les fusils à pompe se rechargent cartouche par cartouche ; tirer interrompt le rechargement. Recharger s'anime : l'arme s'incline, la main lâche le garde-main, descend chercher un chargeur, le remonte dans le puits et réarme — pour vous comme pour les coéquipiers.
 
+### Bilan de l'équipement
+
+En haut de la colonne des caractéristiques, au briefing, un bilan résume ce qu'on emporte et se met à jour à chaque choix :
+
+- **Charge** : la masse totale, armes et accessoires, gilet et bouclier compris ;
+- **Vitesse** : celle du jeu, rapportée à la plus grande possible (une arme de poing seule) : la masse de toutes les armes portées, accessoires compris, puis le gilet lourd et le bouclier ; la ligne du dessous dit ce qui ralentit (« armes 4,5 kg · gilet lourd ×0,86 ») ;
+- **Dégâts encaissés** (avec un gilet ou un bouclier) : la part des dégâts d'une balle qui vous touche, selon l'arme d'en face (pistolet, Uzi et fusil à pompe d'un côté, AKM et AK-74 de l'autre) et le côté d'où elle vient (face, flanc, dos), du vert au rouge. C'est le calcul même du jeu : plaques de face et de dos, bouclier de face seulement.
+
 ### Accessoires
 
-Ils se choisissent arme par arme, sous la fiche de chacune, et chaque arme garde les siens : un silencieux sur le HK416 ne passe pas au MP5.
+Ils se choisissent arme par arme, sous la fiche de chacune, et chaque arme garde les siens : un silencieux sur le HK416 ne passe pas au MP5. Chaque bouton porte l'icône de son accessoire (silencieux, laser, lampe, poignée, chargeur), coché dans le coin quand il est monté ; la fiche de l'arme reprend les icônes devant l'effet de chacun.
 
-- **Silencieux** (fusils d'assaut, pistolets mitrailleurs, armes de poing ; pas les fusils à pompe) : voir **Bruit et silencieux**. Les coéquipiers ont leur propre bouton, à part.
+- **Silencieux** (fusils d'assaut, pistolets mitrailleurs, armes de poing ; pas les fusils à pompe) : voir **Bruit et silencieux**. Les coéquipiers ont leur propre choix, à part (ligne « Équipe »).
 - **Lampe** (toute arme à rail, comme le laser) : elle éclaire un cône devant l'arme, sur douze cases. Inutile dans un bâtiment éclairé ; courant coupé, c'est elle qui fait voir loin. Prise en face à moins de six cases, elle éblouit un suspect, qui met six dixièmes de seconde de plus à viser. Mais dans le noir, elle se voit de loin. `X` l'éteint ou la rallume, celles de l'équipe avec (voir **Courant coupé**).
 - **Poignée avant** (HK416, SCAR-H, MP5 ; le MP7 a déjà la sienne, repliable) : la main avant tient l'arme en rafale. Chaque tir ouvre la dispersion d'un quart de moins, son plafond baisse de 15 %, le recul de 30 %. Rien ne change au premier coup. 150 g de plus.
 - **Chargeur grande capacité** : PMAG de 40 pour le HK416, chargeur de 33 pour le Glock 17, rallonge de tube de deux cartouches pour le Remington 870 ; en siège, tambour de 75 pour l'AKM, chargeur de 45 du RPK-74 pour l'AK-74, chargeur de 40 pour l'Uzi. On recharge moins souvent, mais la réserve ne change pas : autant de cartouches en tout. L'arme s'alourdit (1,3 kg pour le tambour) et le rechargement s'allonge de 10 % (40 % pour le tambour).
@@ -106,7 +118,7 @@ Un bouclier balistique se prend à la place de l'arme principale (assaut seuleme
 
 ### Gilets
 
-En assaut, on choisit son gilet au briefing (bouton à côté de celui des coéquipiers). Une balle arrêtée par le gilet ne laisse que le choc, et dérange un instant la visée ; une balle qui le perce frappe de tous ses dégâts. Seul le joueur choisit : Bravo et Charlie gardent leur équipement.
+En assaut et en escorte, on choisit son gilet au briefing : les deux sont proposés côte à côte, sous les accessoires, avec leur icône, et celui qu'on porte est en surbrillance ; en jeu, il s'affiche à côté de la santé (« SANTÉ · Gilet lourd »), avec le bouclier s'il y en a un. Une balle arrêtée par le gilet ne laisse que le choc, et dérange un instant la visée ; une balle qui le perce frappe de tous ses dégâts. Seul le joueur choisit : Bravo et Charlie gardent leur équipement.
 
 | Gilet | Niveau | Masse | Arrête | Choc | Vitesse |
 |---|---|---|---|---|---|
@@ -127,7 +139,7 @@ Un suspect qui entend quelque chose se tourne vers le bruit et s'inquiète. Un b
 
 Ce que vous entendez sans le voir s'affiche autour de votre personnage : un arc dans la direction du bruit, d'autant plus épais et opaque que le bruit est fort. Rouge pour un tir, jaune pour une porte, gris pour des pas ou une grenade qui rebondit, orange (avec un « ! ») pour un cri, rose pour un corps qui tombe, blanc pour une explosion. Après chacun de vos propres bruits, un halo clair montre jusqu'où il a porté.
 
-**Silencieux** : au briefing, arme par arme pour vous, et d'un seul bouton pour vos coéquipiers. Un tir ne s'entend plus qu'à 2 à 5 cases selon le calibre ; un silencieux freine les gaz, pas la balle. Le 5,56, le 7,62 et le 4,6 restent donc supersoniques : ni puissance ni portée perdues, mais on entend encore le claquement de près. Le 9 mm ne se tait presque plus qu'avec une munition subsonique, plus lente : 10 % de dégâts en moins, 15 % de portée efficace et 10 % de portée en moins. Le .45 ACP, subsonique d'origine, se tait sans rien perdre. La fiche de l'arme, au briefing, dit ce que chaque accessoire lui change. L'arme s'alourdit (un peu de mobilité en moins) et s'allonge, la flamme de bouche disparaît presque. Pas de silencieux sur un fusil à pompe : les coéquipiers en changent quand on leur en fait monter. Une balle manquée claque toujours contre le mur, et un corps qui tombe s'entend : le silence n'est jamais total.
+**Silencieux** : au briefing, arme par arme pour vous, et pour vos coéquipiers sur la ligne « Équipe », sous le gilet : « Silencieux » ou « Sans », le choix retenu en surbrillance, et dessous l'arme que Bravo et Charlie ont reçue (🔇 quand elle porte un silencieux). Un tir ne s'entend plus qu'à 2 à 5 cases selon le calibre ; un silencieux freine les gaz, pas la balle. Le 5,56, le 7,62 et le 4,6 restent donc supersoniques : ni puissance ni portée perdues, mais on entend encore le claquement de près. Le 9 mm ne se tait presque plus qu'avec une munition subsonique, plus lente : 10 % de dégâts en moins, 15 % de portée efficace et 10 % de portée en moins. Le .45 ACP, subsonique d'origine, se tait sans rien perdre. La fiche de l'arme, au briefing, dit ce que chaque accessoire lui change. L'arme s'alourdit (un peu de mobilité en moins) et s'allonge, la flamme de bouche disparaît presque. Pas de silencieux sur un fusil à pompe : les coéquipiers en changent quand on leur en fait monter. Une balle manquée claque toujours contre le mur, et un corps qui tombe s'entend : le silence n'est jamais total.
 
 ## Gestes
 
@@ -157,7 +169,7 @@ Dégoupiller et armer le bras prend 0,45 s. **La mèche commence à brûler à l
 
 ## Minimap
 
-En haut à droite, un plan réduit du bâtiment montre ce que vous avez déjà exploré : les pièces, le mobilier, les portes (fermée, entrouverte, ouverte) et les fenêtres, votre équipe, les otages connus (en vert ceux qui vous suivent) et les adversaires visibles en ce moment. Tant que vous escortez un otage, les sorties y battent en vert. En siège, le plan est complet dès le départ, puisque vous connaissez les lieux, et la pièce où une vague d'assaut vient d'entrer y clignote en rouge pendant huit secondes. `M` la replie.
+En haut à droite, un plan réduit du bâtiment montre ce que vous avez déjà exploré : les pièces, le mobilier, les portes (fermée, entrouverte, ouverte) et les fenêtres, votre équipe, les otages connus (en vert ceux qui vous suivent) et les adversaires visibles en ce moment. Tant que vous escortez un otage, les sorties y battent en vert ; en escorte, c'est la zone d'extraction (le point B) qui bat, dès le départ, et le VIP y figure en or. En siège, le plan est complet dès le départ, puisque vous connaissez les lieux, et la pièce où une vague d'assaut vient d'entrer y clignote en rouge pendant huit secondes. `M` la replie.
 
 ## Fibre optique
 
@@ -167,6 +179,8 @@ Devant une porte fermée ou entrouverte, maintenir `F` glisse une fibre sous le 
 
 **Entrée coordonnée** : un clic droit sur une porte fermée met Bravo et Charlie en colonne de part et d'autre de l'embrasure, de votre côté (« En colonne » dans le HUD, puis « Équipe en position »). Dès que la porte s'ouvre — vous l'ouvrez, la charge la souffle, la chevrotine fait sauter la serrure —, ils entrent chacun vers l'angle de la pièce de son côté et surveillent le fond. Si une flash est dégoupillée ou en vol, ils attendent qu'elle éclate. Tout autre ordre annule la colonne.
 
+**Entrée à la flash** : un second clic droit sur la porte de la colonne leur laisse tout faire. Celui qui tient le poste d'où une grenade passe par l'entrebâillement entrouvre la porte (il la crochète d'abord si elle est verrouillée), glisse une flash dans la pièce, et, dès l'éclair, l'ouvre en grand : ils entrent sur des suspects aveuglés. Le bon poste dépend du sens du battant : s'il s'ouvre vers la pièce, on lance du côté des gonds, en biais ; s'il s'ouvre vers vous, du côté du bord libre. Chaque coéquipier emporte deux flashs (le HUD de l'équipe les compte) : à la mise en colonne, celui qui en a encore prend le bon poste, et s'il est à court au moment de l'ordre, ils échangent leurs places. Quand le battant, ouvert contre un mur, ne laisse aucun angle, la porte est ouverte en grand avant le lancer, ou le lanceur va se placer là d'où la flash passe. Plus une flash dans l'équipe : on vous le dit, et la colonne attend que vous ouvriez.
+
 Bravo et Charlie ne tirent jamais à travers vous ni à travers un otage, et ils tiennent compte de la gerbe de leur arme : plus elle s'ouvre, plus ils exigent de marge avant de presser la détente. Quand l'axe reste bouché, ils se décalent pour dégager l'angle plutôt que d'attendre, et un ordre de déplacement l'emporte sur un contact : ils rompent et progressent en gardant le suspect en joue.
 
 ## Sommation et arrestation
@@ -175,15 +189,15 @@ Bravo et Charlie ne tirent jamais à travers vous ni à travers un otage, et ils
 
 ## Note de fin de mission
 
-Chaque mission est notée sur 100, de S à D, avec le détail ligne par ligne. En assaut : mission accomplie (25), otages en vie (30, moins 4 par otage blessé), otages évacués (10), suspects arrêtés plutôt qu'abattus (20), équipe indemne (15) ; un suspect abattu après sa reddition coûte 15 points, chaque balle dans un coéquipier 3, l'alerte générale 5. En siège : assaut repoussé (40), otages encore entre vos mains (30), groupe debout (20), opérateurs neutralisés (10). Une mission échouée ne dépasse pas D. Votre meilleure note par mission et par mode est gardée dans le navigateur.
+Chaque mission est notée sur 100, de S à D, avec le détail ligne par ligne. En assaut : mission accomplie (25), otages en vie (30, moins 4 par otage blessé), otages évacués (10), suspects arrêtés plutôt qu'abattus (20), équipe indemne (15) ; un suspect abattu après sa reddition coûte 15 points, chaque balle dans un coéquipier 3, l'alerte générale 5. En siège : assaut repoussé (40), otages encore entre vos mains (30), groupe debout (20), opérateurs neutralisés (10). En escorte : VIP exfiltré (35), santé du VIP (35, au prorata de ses points de vie), équipe indemne (20), discrétion (10 sans alerte générale) ; chaque balle de l'équipe dans le VIP coûte 10 points (une charge de brèche aussi), un suspect abattu après sa reddition 15, une balle dans un coéquipier 3. Nul besoin de tout nettoyer pour avoir S. Une mission échouée ne dépasse pas D. Votre meilleure note par mission et par mode est gardée dans le navigateur.
 
 ## Courant coupé
 
-Au briefing (colonne de gauche, en assaut), vous pouvez couper le courant avant d'entrer. Le bâtiment est alors dans le noir : on ne voit qu'à quatre cases, vous comme les suspects, sauf ce qu'éclaire une lampe. Un tireur sans silencieux se trahit un instant par la flamme de son arme ; un silencieux, lui, ne s'allume pas. Bravo et Charlie reçoivent une lampe et allument ou éteignent la leur avec vous (`X`). Le courant qui tombe inquiète les suspects, sans leur dire d'où viendra la menace. Une lampe allumée fait voir loin, mais se voit de loin : tout l'art est de l'allumer au bon moment.
+Au briefing (colonne de gauche, en assaut), vous pouvez couper le courant avant d'entrer (ligne « Courant » : « Laissé » ou « Coupé », le choix retenu en surbrillance). Le bâtiment est alors dans le noir : on ne voit qu'à quatre cases, vous comme les suspects, sauf ce qu'éclaire une lampe. Un tireur sans silencieux se trahit un instant par la flamme de son arme ; un silencieux, lui, ne s'allume pas. Bravo et Charlie reçoivent une lampe et allument ou éteignent la leur avec vous (`X`). Le courant qui tombe inquiète les suspects, sans leur dire d'où viendra la menace. Une lampe allumée fait voir loin, mais se voit de loin : tout l'art est de l'allumer au bon moment.
 
 ## Dispositions
 
-Rien ne se mémorise d'une partie à l'autre : à chaque chargement, les postes des terroristes et des otages sont tirés au sort parmi les emplacements de la carte et un quadrillage de cases libres, bien répartis. En siège, votre propre poste change aussi. En assaut, aucun poste ne tombe dans la pièce par laquelle vous entrez.
+Rien ne se mémorise d'une partie à l'autre : à chaque chargement, les postes des terroristes et des otages sont tirés au sort parmi les emplacements de la carte et un quadrillage de cases libres, bien répartis. En siège, votre propre poste change aussi. En assaut, aucun poste ne tombe dans la pièce par laquelle vous entrez ; en escorte, ni dans la pièce du point A, ni près du point B.
 
 ## Rondes et alerte générale
 
@@ -226,7 +240,7 @@ chrome --headless --allow-file-access-from-files --dump-dom tests/index.html
 
 ## Ajouter une mission
 
-Ajouter une entrée dans `LEVELS` (`js/levels.js`). Une case ASCII vaut 32 px ; au chargement, la carte est convertie en grille fine de 16 px : les murs n'ont qu'une petite case d'épaisseur, les portes font 48 px de large et les meubles occupent un bloc de 32 px. Légende :
+Ajouter une entrée dans `LEVELS` (`js/levels.js`) pour l'assaut et le siège, ou dans `ESCORT_LEVELS` pour l'escorte. Une case ASCII vaut 32 px ; au chargement, la carte est convertie en grille fine de 16 px : les murs n'ont qu'une petite case d'épaisseur, les portes font 48 px de large et les meubles occupent un bloc de 32 px. Légende :
 
 | Caractère | Sens |
 |---|---|
@@ -240,6 +254,8 @@ Ajouter une entrée dans `LEVELS` (`js/levels.js`). Une case ASCII vaut 32 px ; 
 | `S` | départ du joueur |
 | `E` `^` `v` `<` `>` | ennemi (aléatoire ou orienté) |
 | `H` | otage |
+| `A` | escorte : point de départ du VIP et de l'équipe |
+| `Z` | escorte : zone d'extraction, le point B (plusieurs cases en bloc ; trois rangées au moins, que le VIP qui suit à distance y entre) |
 | `c` `B` `T` `p` `b` `k` | caisse, baril, table, plante, lit, bureau (bloquent le passage, pas la vue ; une grenade lancée passe par-dessus) |
 | `s` `r` `a` `R` `P` `C` | canapé, rayonnage, armoire, baie de serveurs, palette chargée, comptoir (idem) |
 | `#` isolé dans une pièce | pilier |
@@ -247,3 +263,5 @@ Ajouter une entrée dans `LEVELS` (`js/levels.js`). Une case ASCII vaut 32 px ; 
 Lit, canapé, rayonnage, armoire, baie de serveurs et comptoir se mettent dos au mur voisin, et plusieurs cases alignées du même meuble se dessinent d'un seul tenant (`sss` : un canapé trois places).
 
 Ne placez ni ennemi ni otage dans une pièce qui donne sur une ouverture (`X` ou `W`) : c'est la zone d'entrée de l'équipe. Le jeu déplace de toute façon derrière la porte la plus proche quiconque s'y trouverait, et `tests/index.html` signale la carte fautive.
+
+Une carte d'escorte a un `A` et une zone de `Z`, pas d'otage, et ne poste aucun terroriste dans la pièce du point A. Le VIP suit en file : laissez une case libre de tout meuble de part et d'autre de chaque porte intérieure, dans l'axe du passage (`tests/index.html` le vérifie), sinon il s'accroche au coin du meuble.

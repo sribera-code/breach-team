@@ -70,6 +70,10 @@ const LOCK_CHANCE = 0.3, LOCKPICK_TIME = 4;
 const CHARGES = 2, CHARGE_PLACE = 1.4, CHARGE_RADIUS = 2.5 * U;
 // Entrée coordonnée : délai entre l'ouverture de la porte et l'entrée de l'équipe (sans flash en préparation).
 const ENTRY_DELAY = 0.5;
+// Entrée à la flash (second clic droit sur la porte de la colonne) : le coéquipier posté du côté d'où une flash passe
+// par l'entrebâillement (selon le sens du battant, voir Game.flashAimFrom) entrouvre la porte à FLASH_CRACK, glisse
+// dans la pièce une flash dégoupillée depuis MATE_COOK s, et l'ouvre en grand à l'éclair.
+const FLASH_CRACK = DOOR_PASS, MATE_COOK = 0.5;
 // Rondes (assaut) : PATROLS suspects font le tour de deux ou trois points au lieu de tenir leur poste, au pas
 // (PATROL_SPEED de leur vitesse), avec une pause de PATROL_PAUSE s à chaque point ; une étape fait entre
 // PATROL_LEG[0] et PATROL_LEG[1] de chemin.
@@ -78,6 +82,9 @@ const PATROLS = 2, PATROL_SPEED = 0.55, PATROL_PAUSE = [2, 5], PATROL_LEG = [4 *
 // ne compte pas) prévient tout le bâtiment. Les autres réagissent alors plus vite (ALARM_REACT), et les
 // RESPONDERS les plus proches vont voir. Une fois par mission.
 const ALARM_TIME = 3, ALARM_REACT = 0.7;
+// Escorte : un terroriste qui voit le VIP le vise, quoi qu'il fasse (même en plein échange avec l'équipe, il
+// pivote vers lui en VIP_SWITCH s au moins) ; personne n'est posté à moins de GOAL_MARGIN de la zone d'extraction.
+const VIP_SWITCH = 0.2, GOAL_MARGIN = 2 * U;
 
 class Game {
   constructor() {
@@ -94,6 +101,7 @@ class Game {
     this.paused = false;
     this.over = null;
     this.mode = Game.loadSavedMode();
+    this.levelMemo = new Map(); // mission en cours dans chaque liste de cartes, quand on change de mode
     this.loadout = Game.loadSavedLoadout(this.mode);
     this.entryRandom = Game.loadSavedEntry(); // par défaut, le point d'entrée est tiré au sort
     this.lockDoors = true;   // assaut : certaines portes sont fermées à clé (les tests l'écartent)
@@ -119,12 +127,21 @@ class Game {
     return 'assault';
   }
 
-  // Bascule assaut / siège : on recharge la mission dans l'autre rôle.
+  // Cartes du mode en cours : l'assaut et le siège jouent les mêmes, l'escorte a les siennes.
+  get levels() { return (MODES[this.mode] || MODES.assault).levels; }
+
+  // Bascule de mode : on recharge la mission dans l'autre rôle. Passer à une autre liste de cartes (l'escorte)
+  // ramène à la mission où l'on en était dans cette liste.
   setMode(mode) {
     if (!MODES[mode] || mode === this.mode) return;
+    const list = this.levels;
     this.mode = mode;
     try { localStorage.setItem('breach.mode', mode); } catch (e) { /* stockage indisponible */ }
     this.loadout = Game.loadSavedLoadout(mode);
+    if (this.levels !== list) {
+      this.levelMemo.set(list, this.levelIndex);
+      this.levelIndex = this.levelMemo.get(this.levels) || 0;
+    }
     this.loadLevel(this.levelIndex);
   }
 
@@ -175,37 +192,51 @@ class Game {
   emit(evt, data) { (this.listeners[evt] || []).forEach(fn => fn(data)); }
 
   loadLevel(i) {
-    const def = LEVELS[i];
+    const def = this.levels[i];
     this.levelIndex = i;
     this.def = def;
     this.map = new GameMap(def);
     const c = t => ({ x: (t.x + 0.5) * TILE, y: (t.y + 0.5) * TILE });
     const entry = this.map.spawns[0] || { x: 1, y: 1 };
     const siege = this.mode === 'siege';
+    // En escorte, l'équipe part du point A avec le VIP : elle ne passe par aucune ouverture.
+    const escort = this.mode === 'escort';
+    const vipAt = escort ? this.map.vipStart || entry : null;
     // En assaut, l'équipe entre par une ouverture sur l'extérieur (tirée au sort, ou choisie au briefing).
     const breaches = this.map.breaches;
     this.entryIndex = !breaches.length ? 0
       : this.entryRandom ? Math.floor(Math.random() * breaches.length)
       : clamp(this.entryIndex || 0, 0, breaches.length - 1);
-    const entryBreach = !siege && breaches.length ? breaches[this.entryIndex] : null;
+    const entryBreach = !siege && !escort && breaches.length ? breaches[this.entryIndex] : null;
+    // Personne n'attend là où l'équipe commence : la pièce d'entrée de l'assaut, ou en escorte celle du
+    // point A (et les abords du point B).
+    const quiet = entryBreach ? this.map.roomOf(entryBreach.inside.x, entryBreach.inside.y)
+      : escort ? this.escortQuiet(vipAt) : null;
     // Postes tirés au sort à chaque partie : la disposition des terroristes (le chef compris) et
     // des otages ne se mémorise pas d'une partie à l'autre.
     const nFoes = this.map.enemySpawns.length || 1;
     const nHost = this.map.hostageSpawns.length;
-    const free = this.buildPosts(entryBreach, nFoes + nHost);
+    const free = this.buildPosts(quiet, nFoes + nHost);
     const foePosts = free.splice(0, nFoes);
     const hostPosts = free.splice(0, nHost);
     const s = siege ? { x: Math.floor(foePosts[0].x / TILE), y: Math.floor(foePosts[0].y / TILE) }
       : entryBreach ? this.entryStart(entryBreach)
+      : escort ? this.escortStart(vipAt)
       : entry;
     this.player = new Player(c(s).x, c(s).y, this.loadout);
     this.player.style = siege ? { ...STYLE_BOSS } : { ...STYLE_PLAYER };
     this.armGrenades(this.player);
+    const goal = escort && this.map.goal;
     this.player.angle = siege ? rand(0, TAU)
+      : goal ? Math.atan2(goal.cy - this.player.y, goal.cx - this.player.x)
       : Math.atan2(this.map.h * TILE / 2 - this.player.y, this.map.w * TILE / 2 - this.player.x);
     const weps = def.enemyWeapons || ['ak'];
     this.enemies = siege ? [] : foePosts.map(q => new Enemy(q.x, q.y, null, weps[Math.floor(Math.random() * weps.length)]));
     this.hostages = hostPosts.map(q => new Hostage(q.x, q.y));
+    // le VIP, au point A, parmi les civils (balles, éclats, embrasures, discipline de tir) : il suit le joueur
+    // dès le départ (voir plus bas)
+    this.vip = escort ? new Vip(c(vipAt).x, c(vipAt).y) : null;
+    if (this.vip) { this.vip.angle = this.player.angle; this.hostages.push(this.vip); }
     this.player.moveDir = this.player.angle;
     const baseDefs = siege ? SIEGE_MATE_DEFS.slice(0, Math.max(1, Math.min(SIEGE_MATE_DEFS.length, foePosts.length - 1))) : TEAMMATE_DEFS;
     // armes tirées au sort, une par coéquipier ; silencieux pour les coéquipiers (assaut) : chacun en
@@ -228,7 +259,7 @@ class Game {
       });
       this.startSiege(entry, c(entry));
     } else {
-      // En assaut, l'équipe se forme autour du joueur : cases libres les plus proches du départ.
+      // En assaut et en escorte, l'équipe se forme autour du joueur : cases libres les plus proches du départ.
       const near = [];
       for (let dy = -6; dy <= 6; dy++) for (let dx = -6; dx <= 6; dx++) {
         const tx = s.x + dx, ty = s.y + dy;
@@ -238,6 +269,7 @@ class Game {
       }
       near.sort((a, b) => a.d - b.d);
       const taken = [{ x: this.player.x, y: this.player.y }];
+      if (this.vip) taken.push({ x: this.vip.x, y: this.vip.y });
       this.mates = mateDefs.map(d => {
         const t = near.find(f => taken.every(o => dist((f.x + 0.5) * TILE, (f.y + 0.5) * TILE, o.x, o.y) >= 26)) || s;
         taken.push({ x: (t.x + 0.5) * TILE, y: (t.y + 0.5) * TILE });
@@ -245,14 +277,14 @@ class Game {
         m.angle = this.player.angle;
         return m;
       });
-      if (entryBreach) this.clearEntryZone(entryBreach);
+      if (quiet) this.clearZone(quiet);
       this.siege = null;
       this.player.charges = CHARGES;
       // Des portes fermées à clé : il faut crocheter, faire sauter la serrure ou poser une charge.
       if (this.lockDoors) for (const d of this.map.doors) d.locked = Math.random() < LOCK_CHANCE;
       // le courant tombe d'un coup : ils s'inquiètent, sans savoir encore d'où viendra la menace
       if (this.dark) for (const e of this.enemies) e.suspicion = 0.8;
-      if (this.patrols) this.buildPatrols(entryBreach);
+      if (this.patrols) this.buildPatrols(quiet);
     }
     this.bullets = [];
     this.beam = null; // faisceau du laser du joueur, recalculé à chaque pas (voir spotLaser)
@@ -265,7 +297,10 @@ class Game {
     this.over = null;
     this.loseReason = '';
     this.paused = false;
-    this.stats = { kills: 0, shots: 0, hits: 0, flashes: 0, losses: 0, arrests: 0, badKills: 0, friendly: 0 };
+    this.stats = { kills: 0, shots: 0, hits: 0, flashes: 0, losses: 0, arrests: 0, badKills: 0, friendly: 0, vipHits: 0 };
+    // escorte : la zone d'extraction (le point B), et si le VIP l'a atteinte
+    this.escort = escort ? { goal: this.map.goal, safe: false } : null;
+    if (this.vip) this.takeCharge(this.vip, this.player);
     this.charges = [];   // charges de brèche posées, en attente de mise à feu
     this.stack = null;   // équipe en colonne de part et d'autre d'une porte (entrée coordonnée)
     this.shoutT = -9;    // dernière sommation
@@ -289,9 +324,10 @@ class Game {
 
   // Rondes : PATROLS suspects tirés au sort reçoivent un circuit de deux ou trois points, leur poste compris.
   // Chaque étape fait entre PATROL_LEG[0] et PATROL_LEG[1] de chemin (des portes à franchir au besoin : ils ont
-  // les clés), et aucune ne passe par la pièce d'entrée de l'assaut.
-  buildPatrols(entryBreach) {
-    const m = this.map, room = entryBreach ? m.roomOf(entryBreach.inside.x, entryBreach.inside.y) : null;
+  // les clés), et aucune ne passe par la zone où l'équipe commence (room : pièce d'entrée de l'assaut, ou
+  // point A de l'escorte et abords du point B ; voir loadLevel).
+  buildPatrols(room) {
+    const m = this.map;
     const inRoom = q => !!room && room.has(Math.floor(q.y / TILE) * m.w + Math.floor(q.x / TILE));
     const shuffle = a => { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
     const cand = [];
@@ -380,10 +416,9 @@ class Game {
 
   // Postes possibles pour les terroristes et les otages : les emplacements écrits sur la carte,
   // plus un quadrillage de cases libres, le tout mélangé. La disposition change donc à chaque partie,
-  // sans jamais tomber dans la pièce d'entrée de l'assaut ni coller deux personnes l'une à l'autre.
-  buildPosts(entryBreach, needed) {
+  // sans jamais tomber là où l'équipe commence (room, voir loadLevel) ni coller deux personnes l'une à l'autre.
+  buildPosts(room, needed) {
     const m = this.map;
-    const room = entryBreach ? m.roomOf(entryBreach.inside.x, entryBreach.inside.y) : null;
     const cand = [];
     for (const sp of [...m.enemySpawns, ...m.hostageSpawns]) cand.push({ x: sp.x, y: sp.y });
     for (let ty = 2; ty < m.h - 2; ty += 3) for (let tx = 2; tx < m.w - 2; tx += 3) cand.push({ x: tx, y: ty });
@@ -423,15 +458,41 @@ class Game {
     return best;
   }
 
-  // En assaut, personne n'attend dans la pièce d'entrée : un suspect ou un otage placé là par la
-  // carte est reporté sur la case libre la plus proche hors de cette pièce (donc derrière une porte).
-  clearEntryZone(breach) {
-    const room = this.map.roomOf(breach.inside.x, breach.inside.y);
+  // Escorte : personne n'est posté dans la pièce du point A, ni aux abords de la zone d'extraction.
+  escortQuiet(a) {
+    const m = this.map, zone = m.roomOf((a.x + 0.5) * TILE, (a.y + 0.5) * TILE), r = Math.ceil(GOAL_MARGIN / TILE);
+    for (const g of m.goal ? m.goal.cells : []) {
+      for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+        if (m.inBounds(g.x + dx, g.y + dy)) zone.add((g.y + dy) * m.w + g.x + dx);
+      }
+    }
+    return zone;
+  }
+
+  // Case de départ du joueur en escorte : une case de carte devant le VIP, vers le point B (il le suit).
+  escortStart(a) {
+    const m = this.map, ax = (a.x + 0.5) * TILE, ay = (a.y + 0.5) * TILE, room = m.roomOf(ax, ay);
+    const ang = m.goal ? Math.atan2(m.goal.cy - ay, m.goal.cx - ax) : 0;
+    const wx = ax + Math.cos(ang) * U, wy = ay + Math.sin(ang) * U;
+    let best = a, bd = Infinity;
+    for (let dy = -4; dy <= 4; dy++) for (let dx = -4; dx <= 4; dx++) {
+      const tx = a.x + dx, ty = a.y + dy, x = (tx + 0.5) * TILE, y = (ty + 0.5) * TILE;
+      if (!room.has(ty * m.w + tx) || !m.circleFree(x, y, 14, true) || dist(x, y, ax, ay) < 26) continue;
+      const d = dist(x, y, wx, wy);
+      if (d < bd) { bd = d; best = { x: tx, y: ty }; }
+    }
+    return best;
+  }
+
+  // Personne n'attend là où l'équipe commence (room : pièce d'entrée de l'assaut, ou point A de l'escorte) :
+  // un suspect ou un otage placé là par la carte est reporté sur la case libre la plus proche hors de cette
+  // zone (donc derrière une porte). Le VIP, lui, y est chez lui.
+  clearZone(room) {
     if (!room.size) return;
     const all = [...this.enemies, ...this.hostages];
     const key = a => Math.floor(a.y / TILE) * this.map.w + Math.floor(a.x / TILE);
     for (const a of all) {
-      if (!room.has(key(a))) continue;
+      if (a.vip || !room.has(key(a))) continue;
       let best = null, bestD = Infinity;
       for (let ty = 0; ty < this.map.h; ty++) for (let tx = 0; tx < this.map.w; tx++) {
         const i = ty * this.map.w + tx;
@@ -729,6 +790,7 @@ class Game {
     for (const m of this.mates) this.updateMate(m, dt);
     for (const e of this.enemies) (this.siege ? this.updateAssault(e, dt) : this.updateEnemy(e, dt));
     this.updateHostages(dt);
+    if (this.escort) this.updateEscort();
     this.separate();
     this.separateHostages();
     this.updateBullets(dt);
@@ -766,6 +828,12 @@ class Game {
           : "Plus aucun otage vivant entre vos mains : vous ne négociez plus rien.";
       }
       else if (this.siege.wave >= this.siege.waves.length && !this.enemies.some(e => e.alive)) this.over = 'win';
+    } else if (this.escort) {
+      // Escorte : gagné dès que le VIP atteint le point B, quels que soient les terroristes encore debout.
+      if (!this.vip.alive) { this.over = 'lose'; this.loseReason = 'Le VIP a été tué.'; }
+      else if (this.hostages.some(h => !h.alive)) { this.over = 'lose'; this.loseReason = 'Un otage a été tué.'; }
+      else if (!this.ops.some(o => o.alive)) { this.over = 'lose'; this.loseReason = "Toute l'équipe est hors de combat : le VIP reste seul aux mains du commando."; }
+      else if (this.escort.safe) this.over = 'win';
     } else if (!this.ops.some(o => o.alive)) { this.over = 'lose'; this.loseReason = "Toute l'équipe est hors de combat."; }
     else if (this.hostages.some(h => !h.alive)) { this.over = 'lose'; this.loseReason = 'Un otage a été tué.'; }
     // tous les suspects neutralisés (abattus ou menottés) : c'est gagné, que les otages soient déjà dehors ou non
@@ -798,7 +866,8 @@ class Game {
 
   // ---- Note de fin de mission ----
   // Lignes { label, detail, pts } et total sur 100. En assaut, on gagne surtout à garder les otages en vie et
-  // à arrêter plutôt qu'abattre ; abattre un suspect rendu coûte cher. En siège, à tenir avec ses otages.
+  // à arrêter plutôt qu'abattre ; abattre un suspect rendu coûte cher. En siège, à tenir avec ses otages. En
+  // escorte, à amener le VIP indemne, sans perte et sans alerte générale : nul besoin de tout nettoyer.
   scoreReport(result) {
     const win = result === 'win', H = this.hostages.length, size = this.squadSize || 1;
     const lost = this.ops.filter(o => !o.alive).length, s = this.stats, lines = [];
@@ -810,6 +879,15 @@ class Game {
       add('Otages entre vos mains', `${held} / ${H}`, share(held, H, 30));
       add('Groupe debout', `${size - lost} / ${size}`, share(size - lost, size, 20));
       add('Opérateurs neutralisés', `${s.kills} / ${n}`, share(s.kills, n, 10));
+    } else if (this.escort) {
+      const v = this.vip;
+      add('Mission', win ? 'VIP exfiltré' : 'échouée', win ? 35 : 0);
+      add('Santé du VIP', v.alive ? `${Math.round(100 * v.hp / v.maxHp)} %` : 'tué', v.alive ? 35 * v.hp / v.maxHp : 0);
+      add('Équipe indemne', `${size - lost} / ${size}`, share(size - lost, size, 20));
+      add('Discrétion', this.alarm ? 'alerte générale' : 'aucune alerte', this.alarm ? 0 : 10);
+      if (s.vipHits) add("VIP touché par l'équipe", s.vipHits, -10 * s.vipHits);
+      if (s.badKills) add('Suspects abattus après reddition', s.badKills, -15 * s.badKills);
+      if (s.friendly) add("Balles dans l'équipe", s.friendly, -3 * s.friendly);
     } else {
       const alive = this.hostages.filter(h => h.alive).length, hurt = this.hostages.filter(h => h.alive && h.wounded).length;
       const out = this.hostages.filter(h => h.evacuated).length, n = this.enemies.length;
@@ -858,7 +936,8 @@ class Game {
     this.unstick(p);
     if (dx || dy) {
       const l = Math.hypot(dx, dy); dx /= l; dy /= l;
-      const spd = (p.walkMode ? p.walkSpeed : p.runSpeed) * p.weapon.mobility * (p.shield ? p.shield.mobility : 1) * (p.vest ? p.vest.mobility : 1)
+      // toutes les armes portées pèsent, pas seulement celle qu'on a en main
+      const spd = (p.walkMode ? p.walkSpeed : p.runSpeed) * loadMobility(p.weaponLoad) * (p.shield ? p.shield.mobility : 1) * (p.vest ? p.vest.mobility : 1)
         * (p.reloadT > 0 ? 0.8 : 1) * (p.act ? 0.55 : 1);
       const bx = p.x, by = p.y;
       this.tryMove(p, dx * spd * dt, dy * spd * dt);
@@ -922,7 +1001,7 @@ class Game {
       const h = e ? null : this.nearestHostage(p, HOSTAGE_REACH);
       const who = e || (h && !h.escort ? h : null);
       if (!who) this.hostHint = null;
-      else if (who !== this.hostHint && this.message.t <= 0) { this.say(e ? 'H : menotter le suspect' : "H : emmener l'otage", 1.5); this.hostHint = who; }
+      else if (who !== this.hostHint && this.message.t <= 0) { this.say(e ? 'H : menotter le suspect' : who.vip ? 'H : le VIP vous suit' : "H : emmener l'otage", 1.5); this.hostHint = who; }
     }
     // Clic droit : ordre de déplacement. Maintenu puis tiré, il fixe en plus une direction
     // à couvrir, confiée au coéquipier placé de ce côté. En siège, personne ne commande : pas d'ordres.
@@ -939,6 +1018,7 @@ class Game {
       // prête à entrer ; ailleurs : ordre de déplacement
       const door = o.onSelf ? null : this.doorAtPoint(o.x, o.y);
       if (o.onSelf) this.orderFollow();
+      else if (door && this.stack && this.stack.door === door && !door.broken && door.progress < 1) this.orderFlashEntry();
       else if (door && !door.broken && !this.map.doorPassable(door)) this.orderStack(door);
       else this.orderMove(o.x, o.y, o.angle);
     }
@@ -1032,7 +1112,7 @@ class Game {
       target: null, lookAt: null, alertAngle: null, order: null, coverAngle: null, blockedLine: false,
     });
     m.moveDir = m.angle;
-    this.armGrenades(m, 1);
+    this.armGrenades(m, m.flashbangs || 0); // il garde les flashs qui lui restent
     // l'ancien joueur reste au sol, dans la liste de l'équipe (« À terre »)
     old.accent = '#9aa4ae';
     this.mates = [...this.mates.filter(x => x !== m), old];
@@ -1040,7 +1120,10 @@ class Game {
     this.relayT = 0;
     this.orderDrag = null;
     if (this.orderMarker && this.orderMarker.mate === m) this.orderMarker = null;
-    this.say(`${m.name} prend le relais`, 3);
+    // le VIP qui suivait l'ancien joueur suit celui qui reprend la main
+    const v = this.vip, follows = v && v.alive && !v.escort && v.lostEscort === old;
+    if (follows) { this.takeCharge(v, m); v.lostEscort = null; }
+    this.say(follows ? `${m.name} prend le relais — le VIP le suit` : `${m.name} prend le relais`, 3);
     this.emit('weapon');
   }
 
@@ -1104,14 +1187,14 @@ class Game {
     if (p.act) return;
     const h = this.nearestHostage(p, HOSTAGE_REACH);
     if (!h) { this.say('Aucun otage à portée', 1); return; }
-    if (h.escort === p) { this.releaseHostage(h); this.say("L'otage attend ici, à genoux", 1.4); return; }
+    if (h.escort === p) { this.releaseHostage(h); this.say(h.vip ? 'Le VIP attend ici, à couvert' : "L'otage attend ici, à genoux", 1.4); return; }
     if (h.escort) return;
     // une main pour l'aider à se relever : un bref geste, arme basse
     this.startAction(p, 'hostage', 0.5, () => {
       if (!h.alive || h.evacuated || h.escort || !p.alive || dist(p.x, p.y, h.x, h.y) > 2 * U) return;
       this.takeCharge(h, p);
       this.hostHint = h;
-      this.say("L'otage vous suit — conduisez-le à une sortie", 2.2);
+      this.say(h.vip ? 'Le VIP vous suit — conduisez-le au point B' : "L'otage vous suit — conduisez-le à une sortie", 2.2);
     });
   }
 
@@ -1247,11 +1330,13 @@ class Game {
       if (!e) continue;
       if (!e.alive) {
         this.releaseHostage(h);
+        if (h.vip) h.lostEscort = e; // il se met à couvert, et suivra celui qui reprend la main
         if (this.siege) this.say("Son escorte est tombée : l'otage reste à terre", 2.5);
         continue;
       }
       if (h.duckT > 0) continue; // à genoux le temps que ça tire
-      const b = e.team === this.rescueTeam ? this.exitFor(h) : null;
+      // le VIP ne sort pas par la première ouverture venue : seule la zone d'extraction compte (updateEscort)
+      const b = e.team === this.rescueTeam && !h.vip ? this.exitFor(h) : null;
       if (b) this.startExit(h, b);
       else this.followEscort(h, e, dt);
     }
@@ -1279,7 +1364,7 @@ class Game {
       h.blockedT += dt;
       if (e === this.player && h.blockedT > 1.5 && !h.blockedSaid) {
         h.blockedSaid = true;
-        this.say("Un otage ne peut pas vous suivre : ouvrez-lui la porte", 2.2);
+        this.say(h.vip ? 'Le VIP ne peut pas vous suivre : ouvrez-lui la porte' : "Un otage ne peut pas vous suivre : ouvrez-lui la porte", 2.2);
       }
       return;
     }
@@ -1302,7 +1387,17 @@ class Game {
       const moved = dist(bx, by, h.x, h.y);
       turnToward(h, Math.atan2(dy, dx), 8, dt);
       if (moved > 0.05) h.moving = true;
-      if (moved < s * 0.5) { h.repathT = Math.min(h.repathT, 0.1); return; } // accroché : nouveau trajet bientôt
+      if (moved < s * 0.5) {
+        // accroché : son cercle frôle l'angle d'un meuble ou d'un mur. Un écart de côté de quelques pixels qui
+        // libère le pas suivant suffit souvent ; sinon, nouveau trajet bientôt.
+        const ux = dx / d, uy = dy / d, r = h.radius - 1;
+        for (const off of [1, -1, 2, -2, 3, -3]) {
+          const x = h.x - uy * off, y = h.y + ux * off;
+          if (this.map.circleFree(x, y, r, true) && this.map.circleFree(x + ux * s, y + uy * s, r, true)) { h.x = x; h.y = y; break; }
+        }
+        h.repathT = Math.min(h.repathT, 0.1);
+        return;
+      }
       step -= s;
       if (s >= d - 0.01) h.path.shift();
     }
@@ -1369,6 +1464,16 @@ class Game {
     } else {
       this.say(`Otage évacué (${this.hostages.filter(o => o.evacuated).length} / ${this.hostages.length})`, 2.5);
     }
+  }
+
+  // ---- Escorte ----
+  // Le VIP entré dans la zone d'extraction (le point B) est en sécurité : la mission est accomplie (voir checkEnd).
+  updateEscort() {
+    const v = this.vip;
+    if (!v.alive || this.escort.safe || !this.map.inGoal(v.x, v.y)) return;
+    this.escort.safe = true;
+    Sound.tick(0.15);
+    this.say('Le VIP est en sécurité au point B', 3);
   }
 
   // Un otage debout cède toujours le passage : il s'écarte de quiconque il chevauche (deux otages
@@ -1438,7 +1543,7 @@ class Game {
   }
 
   // Jet d'une flash depuis un agent vers un point : la distance règle la force du lancer.
-  spawnFlash(p, mx, my, cooked) {
+  spawnFlash(p, mx, my, cooked, via) {
     const m = { x: mx, y: my };
     // Portée = distance au curseur (plafonnée). Vol en l'air puis roulement avec frottement :
     // distance ≈ v0 * (flight + 1/friction), d'où v0.
@@ -1456,7 +1561,7 @@ class Game {
       kind, team: p.team, thrower: p };
     // Collé à une porte entrouverte et visant l'embrasure : la grenade est glissée par l'entrebâillement
     // (le battant est ignoré le temps de franchir la porte).
-    const door = this.nearestDoor(p, 1.8 * U);
+    const door = via || this.nearestDoor(p, 1.8 * U); // via : la porte visée, quand le lanceur la connaît
     if (door && door.progress >= 0.4 && !door.open) {
       const cross = this.aimCrossesDoor(p.x, p.y, ang, door);
       if (cross) {
@@ -1936,6 +2041,19 @@ class Game {
       const d = rand(4, 22);
       this.addDecal({ type: 'blood', x: target.x + Math.cos(ang + rand(-0.6, 0.6)) * d, y: target.y + Math.sin(ang + rand(-0.6, 0.6)) * d, r: rand(2, 5) });
     }
+    if (target.vip) {
+      // Le VIP encaisse comme un homme (son gilet a déjà pris sa part, voir vestHit) ; à moitié de ses
+      // forces, il boite et suit moins vite. Une balle de l'équipe compte lourd dans la note de fin.
+      target.hp -= dmg;
+      if (shooter && shooter.team === 'ops') this.stats.vipHits++;
+      target.wounded = target.hp <= target.maxHp / 2;
+      if (target.hp > 0) { this.say(target.wounded ? 'Le VIP est grièvement touché !' : 'Le VIP est touché !', 2); return; }
+      target.hp = 0;
+      target.alive = false;
+      this.addDecal({ type: 'pool', x: target.x, y: target.y, rot: target.angle });
+      this.noise(target.x, target.y, 2 * U, target, 'body');
+      return;
+    }
     if (target.team === 'civ') {
       // Un otage survit à une première blessure légère ; une deuxième, ou une blessure grave
       // (HOSTAGE_GRAVE et plus : balle lourde à bout portant, éclat de grenade), le tue.
@@ -2243,8 +2361,10 @@ class Game {
     return this.map.hasLOS(agent.x, agent.y, other.x, other.y);
   }
 
-  // Cible visible la plus proche parmi des candidats.
+  // Cible visible la plus proche parmi des candidats ; le VIP, dès qu'il est en vue, passe avant tout le monde.
   acquireFor(agent, cands) {
+    const vip = cands.find(c => c.vip);
+    if (vip && vip.alive && this.canSee(agent, vip)) return vip;
     let best = null, bd = Infinity;
     for (const c of cands) {
       if (!c.alive || c.surrender) continue; // on ne tire pas sur un suspect rendu
@@ -2262,8 +2382,12 @@ class Game {
       if (t.alive) { e.target = null; this.startBlindFire(e, t.x, t.y); }
       t = null;
     }
+    // en escorte, le VIP aperçu en plein échange : il lâche l'opérateur et pivote vers lui
+    const v = this.vip;
+    if (t && v && t !== v && v.alive && this.canSee(e, v)) { t = v; e.reactT = Math.max(e.reactT, VIP_SWITCH); }
     if (!t) {
-      t = this.acquireFor(e, this.ops);
+      // en escorte, le commando cherche aussi le VIP (et le vise d'abord)
+      t = this.acquireFor(e, this.vip ? [...this.ops, this.vip] : this.ops);
       if (t) {
         e.blind = null;
         e.reactT = e.reaction + (this.dazzles(t, e) ? LAMP_DAZZLE : 0);
@@ -2722,6 +2846,12 @@ class Game {
       && dist(alive[0].x, alive[0].y, spots[1].x, spots[1].y) + dist(alive[1].x, alive[1].y, spots[0].x, spots[0].y)
        < dist(alive[0].x, alive[0].y, spots[0].x, spots[0].y) + dist(alive[1].x, alive[1].y, spots[1].x, spots[1].y)
       ? [spots[1], spots[0]] : spots;
+    // le poste d'où une flash passe par l'entrebâillement (il dépend du sens du battant) revient à qui en a encore une
+    const good = order.findIndex(sp => this.flashAimFrom(sp.x, sp.y, d, side) || this.flashAimFrom(sp.x, sp.y, d, side, 1));
+    if (good >= 0 && !(alive[good] && alive[good].flashbangs > 0)) {
+      const holder = alive.findIndex((m, i) => i < order.length && m.flashbangs > 0);
+      if (holder >= 0) [order[good], order[holder]] = [order[holder], order[good]];
+    }
     alive.forEach((m, i) => {
       const sp = order[i % order.length];
       const look = Math.atan2(d.cy - sp.y, d.cx - sp.x);
@@ -2729,7 +2859,7 @@ class Game {
     });
     this.stack = { door: d, side, ready: false, wait: null };
     this.orderMarker = { x: d.cx + (d.horizontal ? 0 : side * 8), y: d.cy + (d.horizontal ? side * 8 : 0), t: 0, angle: null, mate: null };
-    this.say("Équipe : en colonne sur la porte — ouvrez-la, ils entrent", 1.8);
+    this.say('Équipe : en colonne sur la porte — ouvrez-la, ils entrent (clic droit à nouveau : entrée à la flash)', 2.2);
   }
 
   updateStack(dt) {
@@ -2742,6 +2872,7 @@ class Game {
       s.ready = true;
       this.say('Équipe en position — à votre signal : ouvrez la porte', 2);
     }
+    if (s.flash) { this.updateFlashEntry(s, team); return; }
     if (!d.broken && !this.map.doorPassable(d)) { s.wait = null; return; }
     if (s.wait === null) s.wait = d.broken ? 0.15 : ENTRY_DELAY;
     // une flash dégoupillée ou en vol : on attend qu'elle éclate
@@ -2752,6 +2883,163 @@ class Game {
     if (s.wait > 0) return;
     this.stack = null;
     this.launchEntry(d, s.side, team);
+  }
+
+  // Second clic droit sur la porte de la colonne : entrée à la flash. Celui qui tient le poste d'où une flash passe
+  // par l'entrebâillement entrouvre, la glisse dans la pièce et, l'éclair passé, ouvre en grand : l'équipe entre sur
+  // des suspects aveuglés. S'il n'a plus de flash et que l'autre en a, ils échangent leurs places d'abord. Quand
+  // aucun poste n'a d'angle par l'entrebâillement (battant ouvert contre un mur), on ouvre en grand avant de lancer ;
+  // et si même ainsi aucun n'en a, celui qui a une flash va se placer là d'où elle passe (flashSpot).
+  orderFlashEntry() {
+    const s = this.stack;
+    if (!this.canCommand(true) || !s || s.flash) return;
+    const d = s.door, team = this.mates.filter(m => m.alive && m.order === 'stack');
+    if (!team.some(o => o.flashbangs > 0)) { this.say("Plus de flash dans l'équipe — ouvrez la porte, ils entrent", 2); return; }
+    const crackOf = o => [FLASH_CRACK, 1].find(c => this.flashAimFrom(o.orderPos.x, o.orderPos.y, d, s.side, c)) || 0;
+    const posts = team.map(o => ({ o, crack: crackOf(o) })).filter(q => q.crack).sort((a, b) => a.crack - b.crack);
+    if (!posts.length) {
+      const o = team.find(q => q.flashbangs > 0), sp = this.flashSpot(d, s.side, o, team);
+      if (!sp) { this.say("Pas d'angle pour lancer une flash par cette porte — ouvrez-la, ils entrent", 2); return; }
+      const look = Math.atan2(d.cy - sp.y, d.cx - sp.x);
+      Object.assign(o, { orderPos: { x: sp.x, y: sp.y }, path: [], destTile: null, repathT: 0, coverAngle: look, holdAngle: look });
+      s.flash = { m: o, crack: sp.crack, phase: 'place', g: null, tries: 0 };
+      this.say(`${o.name} : je me place pour la flash, puis on entre`, 1.8);
+      return;
+    }
+    const crack = posts[0].crack;
+    let m = (posts.find(q => q.crack === crack && q.o.flashbangs > 0) || {}).o;
+    if (!m) {
+      const post = posts[0].o, other = team.find(o => o !== post && o.flashbangs > 0);
+      for (const k of ['orderPos', 'stackSide', 'coverAngle', 'holdAngle']) [post[k], other[k]] = [other[k], post[k]];
+      for (const o of [post, other]) Object.assign(o, { path: [], destTile: null, repathT: 0 });
+      m = other;
+    }
+    s.flash = { m, crack, phase: 'place', g: null, tries: 0 };
+    this.say(crack < 1 ? `${m.name} : flash dans la pièce, puis on entre` : `${m.name} : on ouvre, flash, puis on entre`, 1.8);
+  }
+
+  // Les temps de l'entrée à la flash : en place → porte entrouverte (crochetée d'abord si elle est verrouillée)
+  // → flash glissée par l'entrebâillement → éclair → porte ouverte en grand → entrée. Si le lanceur tombe ou que
+  // la porte s'ouvre autrement, on retombe sur l'entrée ordinaire.
+  updateFlashEntry(s, team) {
+    const f = s.flash, m = f.m, d = s.door, eps = 0.01;
+    if (!m.alive || m.order !== 'stack') { s.flash = null; return; }
+    if (f.phase !== 'open' && f.crack < 1 && (d.broken || d.progress >= 1 - eps)) { s.flash = null; return; }
+    if (team.some(o => o.act) || m.stun > 0 || d.opening) return;
+    // la porte, c'est le plus proche qui la manœuvre (le lanceur s'est parfois placé en retrait)
+    const opener = team.filter(o => o.stun <= 0 && dist(o.x, o.y, d.cx, d.cy) < 2 * U)
+      .sort((a, b) => dist(a.x, a.y, d.cx, d.cy) - dist(b.x, b.y, d.cx, d.cy))[0];
+    const work = target => {
+      if (!opener) return false;
+      if (++f.tries > 4) { s.flash = null; this.say("La porte résiste — ouvrez-la, ils entrent", 2); return false; }
+      return this.doorAction(opener, d, target);
+    };
+    switch (f.phase) {
+      case 'place':
+        if (dist(m.x, m.y, m.orderPos.x, m.orderPos.y) > 8) return;
+        if (d.progress < f.crack - eps) { if (work(f.crack)) f.phase = 'crack'; return; }
+        f.phase = 'throw';
+        return;
+      case 'crack':
+        // crochetage puis ouverture : tant que la porte n'est pas au cran voulu, on recommence
+        f.phase = d.progress < f.crack - eps ? 'place' : 'throw';
+        return;
+      case 'throw': {
+        let aim = this.flashAimFrom(m.x, m.y, d, s.side, f.crack);
+        // quelques pixels à côté du poste (bousculé en arrivant) : il s'y recale, l'angle a été pris de là
+        if (!aim && this.map.circleFree(m.orderPos.x, m.orderPos.y, m.radius - 1, true)) {
+          m.x = m.orderPos.x; m.y = m.orderPos.y;
+          aim = this.flashAimFrom(m.x, m.y, d, s.side, f.crack);
+        }
+        if (!aim) { s.flash = null; this.say(`${m.name} : pas d'angle pour la flash — ouvrez, on entre`, 2); return; }
+        m.flashbangs--;
+        m.coverAngle = m.holdAngle = m.angle = Math.atan2(aim.y - m.y, aim.x - m.x);
+        Sound.tick(0.12); // goupille
+        this.startAction(m, 'grenade', 0.45, () => {
+          if (!m.alive) return;
+          this.spawnFlash(m, aim.x, aim.y, MATE_COOK, d);
+          f.g = this.grenades[this.grenades.length - 1];
+        });
+        f.phase = 'boom';
+        this.say(`${m.name} : flash !`, 1.2);
+        return;
+      }
+      case 'boom':
+        if (f.g && this.grenades.includes(f.g)) return;
+        f.phase = 'open';
+        f.tries = 0;
+        if (d.progress < 1 - eps) work(1);
+        return;
+      case 'open':
+        // (personne près de la porte pour finir de l'ouvrir : entrouverte, elle laisse passer, on entre ainsi)
+        if (d.broken || d.progress >= 1 - eps || !opener) { this.stack = null; this.launchEntry(d, s.side, team); return; }
+        work(1);
+    }
+  }
+
+  // Faute de poste qui convienne : une case de votre côté de la porte, libre (personne d'autre dessus, hors de la
+  // course du battant), d'où une flash passe ; la plus proche de m, en préférant la porte seulement entrouverte.
+  flashSpot(d, side, m, team) {
+    const cx = Math.floor(d.cx / TILE), cy = Math.floor(d.cy / TILE), others = [this.player, ...team].filter(o => o !== m);
+    let best = null, bs = Infinity;
+    for (const crack of [FLASH_CRACK, 1]) {
+      const leaf = this.map.leafSeg({ ...d, progress: Math.max(d.progress, crack) });
+      const lx = leaf.x1 - leaf.x0, ly = leaf.y1 - leaf.y0, ll = lx * lx + ly * ly;
+      for (let dy = -6; dy <= 6; dy++) for (let dx = -6; dx <= 6; dx++) {
+        const tx = cx + dx, ty = cy + dy, x = (tx + 0.5) * TILE, y = (ty + 0.5) * TILE;
+        const across = (d.horizontal ? y - d.cy : x - d.cx) * side;
+        if (across < 0.6 * U || across > 3 * U || !this.map.inBounds(tx, ty) || this.map.door(tx, ty)) continue;
+        if (!this.map.circleFree(x, y, 12, true) || others.some(o => o.alive && dist(o.x, o.y, x, y) < 24)) continue;
+        const t = clamp(((x - leaf.x0) * lx + (y - leaf.y0) * ly) / ll, 0, 1);
+        if (dist(x, y, leaf.x0 + lx * t, leaf.y0 + ly * t) < 15) continue;
+        const sc = dist(m.x, m.y, x, y);
+        if (sc < bs && this.flashAimFrom(x, y, d, side, crack)) { bs = sc; best = { x, y, crack }; }
+      }
+      if (best) return best;
+    }
+    return null;
+  }
+
+  // Point de chute d'une flash lancée de (x0, y0), du côté side de la porte, celle-ci ouverte au cran crack : dans la
+  // pièce, à deux ou trois cases, sur une trajectoire qui franchit l'embrasure sans frôler le chambranle, ne touche le
+  // battant ni avant ni après, et qu'aucun mur ni meuble n'arrête ; null s'il n'y en a pas. Le battant s'ouvrant
+  // toujours du même côté, ce n'est pas le même poste qui convient selon qu'il part vers la pièce (on lance alors du
+  // côté des gonds, en biais vers le bord libre) ou vers l'équipe (on lance du bord libre).
+  flashAimFrom(x0, y0, d, side, crack = FLASH_CRACK) {
+    const inX = d.horizontal ? 0 : -side, inY = d.horizontal ? -side : 0, ax = d.horizontal ? 1 : 0, ay = d.horizontal ? 0 : 1;
+    const half = (d.len * TILE) / 2;
+    const leaf = this.map.leafSeg({ ...d, progress: Math.max(d.progress, crack) });
+    const lx = leaf.x1 - leaf.x0, ly = leaf.y1 - leaf.y0, ll = lx * lx + ly * ly;
+    const nearLeaf = (x, y) => {
+      const t = clamp(((x - leaf.x0) * lx + (y - leaf.y0) * ly) / ll, 0, 1);
+      return dist(x, y, leaf.x0 + lx * t, leaf.y0 + ly * t) < 9;
+    };
+    const depthOf = (x, y) => (x - d.cx) * inX + (y - d.cy) * inY; // > 0 dans la pièce
+    // en vol, près de la porte : ni mur ni fenêtre sous la grenade (l'embrasure de cette porte compte ouverte)
+    const solid = (x, y) => this.map.door(Math.floor(x / TILE), Math.floor(y / TILE)) !== d && this.grenadeBlocked(x, y, true);
+    const snag = (x, y) => solid(x - 5, y - 5) || solid(x + 5, y - 5) || solid(x - 5, y + 5) || solid(x + 5, y + 5);
+    const d0 = depthOf(x0, y0);
+    if (d0 >= 0) return null;
+    for (const depth of [3, 2.5, 3.5, 2, 4, 1.5, 5]) for (const lat of [0, -1, 1, -2, 2, -0.5, 0.5, -3, 3]) {
+      const x = d.cx + inX * depth * U + ax * lat * U, y = d.cy + inY * depth * U + ay * lat * U;
+      const tx = Math.floor(x / TILE), ty = Math.floor(y / TILE);
+      if (!this.map.inBounds(tx, ty) || this.map.blocksMove(tx, ty)) continue;
+      const ang = Math.atan2(y - y0, x - x0);
+      if (!this.aimCrossesDoor(x0, y0, ang, d)) continue;
+      // passage de l'embrasure, à distance du chambranle
+      const k = -d0 / (depthOf(x, y) - d0), along = d.horizontal ? x0 + (x - x0) * k - d.cx : y0 + (y - y0) * k - d.cy;
+      if (Math.abs(along) > half - 8) continue;
+      const sx = x0 + Math.cos(ang) * 14, sy = y0 + Math.sin(ang) * 14; // elle part de la main (voir spawnFlash)
+      const len = dist(sx, sy, x, y), n = Math.ceil(len / 3);
+      let ok = true, inside = null;
+      for (let i = 0; i <= n && ok; i++) {
+        const px = sx + (x - sx) * i / n, py = sy + (y - sy) * i / n, dp = depthOf(px, py);
+        if (nearLeaf(px, py) || (dp < 12 && snag(px, py))) ok = false;
+        else if (!inside && dp >= 12) inside = { x: px, y: py };
+      }
+      if (ok && inside && this.clearThrow(inside.x, inside.y, x, y)) return { x, y };
+    }
+    return null;
   }
 
   // Chacun franchit l'embrasure et file vers l'angle de la pièce de son côté, en surveillant le fond.

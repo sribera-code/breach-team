@@ -1,6 +1,6 @@
 # Reste à faire
 
-État des chantiers ouverts au 4 octobre 2026. Les points sont classés par ordre d'intérêt au sein
+État des chantiers ouverts au 10 octobre 2026. Les points sont classés par ordre d'intérêt au sein
 de chaque section.
 
 ## Mode siège
@@ -20,7 +20,25 @@ de chaque section.
 - **Rien n'empêche de camper une seule ouverture** si la carte n'en a que deux. Plus d'entrées par carte,
   ou des vagues qui entrent par deux endroits à la fois, rendraient la défense moins statique.
 
+## Mode escorte
+
+- **Tout est réglé à l'estime** : 100 points de vie et un gilet souple pour le VIP, priorité de tir absolue
+  sur lui dès qu'il est en vue (`VIP_SWITCH`, le temps de pivoter vers lui), deux cases sans terroriste autour du point B (`GOAL_MARGIN`), dix
+  terroristes par carte, barème de la note. Les trois cartes (Ambassade, Palais de justice, Hôpital) n'ont été
+  jouées que par les tests, qui y mènent le VIP de A à B sans adversaire : leur difficulté reste à éprouver à la main.
+- **Le VIP ne fait que suivre ou attendre.** Il ne cherche pas de lui-même un abri sous le feu (il s'accroupit,
+  c'est tout), et les coéquipiers ne se placent pas pour le couvrir : ils restent en formation autour du joueur.
+  Un coéquipier peut s'arrêter sur le VIP accroupi, comme sur un otage à genoux.
+- **Le commando ne change pas de tactique** : mêmes postes, rondes et alerte qu'en assaut, avec la seule priorité
+  de tir. Pas de chasse organisée au VIP, pas d'embuscade au point B, pas de renforts.
+- **Pas de limite de temps**, et la note ne tient pas compte de la durée.
+
 ## Portes, fenêtres et visibilité
+
+- **Meubles collés aux portes sur les anciennes cartes.** Sur les Bureaux (portes 13,4 et 28,4), la Villa (18,5) et
+  le Centre de données (5,10), un bureau ou une rangée bouche l'embrasure d'un côté ; d'autres portes (Entrepôt,
+  Banque, Villa) ont un meuble qui frôle le passage à une case. Les cartes d'escorte sont vérifiées par les tests ;
+  celles-ci non.
 
 - **`E` n'referme pas une porte entrouverte** : il l'ouvre en grand (pour enchaîner après avoir jeté un
   œil), et il faut redescendre les crans à la molette pour fermer. C'est un choix, pas un bug, mais il
@@ -57,6 +75,10 @@ de chaque section.
   ils viennent voir, puis rentrent.
 
 ## Équipement
+
+- **La vitesse suit la masse des armes** (3,5 % par kilo, toutes armes portées) ; le gilet et le bouclier gardent un
+  coefficient à part plutôt que de peser au kilo, et une arme de poing seule (moins de 1,4 kg) donne déjà la vitesse
+  maximale. À unifier si l'on veut que tout pèse pareil.
 
 - **Boucliers à éprouver en jeu.** Arc couvert (±60° et ±66°), vitesse (×0,88 et ×0,74), gêne de la tenue
   d'une main (×1,35 et ×1,5) et champ de vision (110° et 95°) sortent du calcul, pas d'une partie jouée. Les
@@ -103,6 +125,17 @@ de chaque section.
 
 ## Fait depuis la dernière version
 
+Mode escorte : trois cartes (Ambassade, Palais de justice, Hôpital) où l'équipe conduit un VIP du point A à la zone
+d'extraction, à travers les pièces tenues par le commando ; VIP qui suit ou attend à couvert (H), visé en priorité,
+relayé avec le joueur, note de fin propre au mode · un otage accroché à l'angle d'un meuble s'en dégage d'un pas de côté.
+Briefing : icônes des accessoires et des gilets, les deux gilets côte à côte (celui qu'on porte en surbrillance, et
+rappelé en jeu à côté de la santé), bilan de la charge, de la vitesse et des dégâts encaissés selon l'arme et le côté ·
+la vitesse dépend du poids de toutes les armes portées, accessoires compris, et non plus de celle qu'on a en main ·
+entrée à la flash (second clic droit sur la porte de la colonne : entrebâillement, flash, porte grande ouverte, entrée ;
+deux flashs par coéquipier) · en escorte, les terroristes tirent sur le VIP dès qu'ils le voient.
+
+Version précédente :
+
 Les suspects tirent dans la porte derrière laquelle ils vous ont vu disparaître, ou d'où l'on vient de leur tirer dessus · silencieux sans perte sur les balles supersoniques et le .45, munition subsonique plus faible pour le 9 mm, effets des accessoires détaillés au briefing · Neutraliser tous les suspects suffit pour gagner en assaut · boucliers balistiques léger et lourd, avec l'arme
 de poing seule · accessoires choisis arme par arme au briefing : silencieux et laser (`L`), et un silencieux pour
 les coéquipiers à part ·
@@ -115,7 +148,7 @@ les aligne · grenades qui passent par-dessus le mobilier en vol · pièce d'arr
 minimap en siège · plan de chaque carte sur l'écran des missions · ouvertures nommées d'après leur façade, sans
 doublon.
 
-Version précédente :
+Versions antérieures :
 
 Entrées multiples par carte (portes extérieures et fenêtres, avec choix du point d'entrée en assaut et
 vagues qui alternent en siège) · pièce d'entrée toujours vide en assaut (cartes revues, garde dans le code) · siège en

@@ -80,6 +80,9 @@ class GameMap {
     this.spawns = [];
     this.enemySpawns = [];
     this.hostageSpawns = [];
+    this.vipStart = null;     // 'A' : départ du VIP et de l'équipe (mode escorte)
+    this.goal = null;         // 'Z' : zone d'extraction, le point B : { cells, cx, cy }
+    this.goalAt = new Set();  // ses petites cases
 
     // Type de sol des cases ASCII : caractère du sol, sinon majorité des voisins.
     const aFloor = new Uint8Array(AW * AH);
@@ -109,6 +112,13 @@ class GameMap {
       this.tiles[i] = t;
       const fl = contrib.find(k => !wallish(k.c) && k.c !== ' ');
       this.floorType[i] = fl ? aFloor[fl.y * AW + fl.x] : 0;
+      // zone d'extraction : les petites cases tout entières dans des cases 'Z'
+      if (contrib.every(k => k.c === 'Z')) this.goalAt.add(i);
+    }
+    if (this.goalAt.size) {
+      const cells = [...this.goalAt].map(i => ({ x: i % this.w, y: Math.floor(i / this.w) }));
+      const mx = cells.reduce((s, c) => s + c.x, 0) / cells.length, my = cells.reduce((s, c) => s + c.y, 0) / cells.length;
+      this.goal = { cells, cx: (mx + 0.5) * TILE, cy: (my + 0.5) * TILE };
     }
 
     const facing = { '^': -Math.PI / 2, 'v': Math.PI / 2, '<': Math.PI, '>': 0 };
@@ -156,6 +166,7 @@ class GameMap {
           break;
         }
         case 'S': this.spawns.push({ x: sx, y: sy }); break;
+        case 'A': this.vipStart = { x: sx, y: sy }; break;
         case 'E': this.enemySpawns.push({ x: sx, y: sy, angle: null }); break;
         case 'H': this.hostageSpawns.push({ x: sx, y: sy }); break;
         default:
@@ -245,6 +256,8 @@ class GameMap {
     return { t: best, door: hit };
   }
   window(x, y) { return this.inBounds(x, y) ? this.windowAt.get(y * this.w + x) : undefined; }
+  // Le point (en pixels) est dans la zone d'extraction (le point B du mode escorte).
+  inGoal(x, y) { return this.goalAt.has(Math.floor(y / TILE) * this.w + Math.floor(x / TILE)); }
   blocksMove(x, y) { return this.isWall(x, y) || this.propAt.has(y * this.w + x) || this.windowAt.has(y * this.w + x); }
 
   // Point d'entrée depuis l'extérieur : on mémorise le côté intérieur, seul côté praticable.
