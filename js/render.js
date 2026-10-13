@@ -9,7 +9,7 @@ const actStyle = a => (a.act ? { act: { type: a.act.type, k: a.act.t / a.act.dur
   // rechargement : pas un geste à deux mains (on peut marcher), mais il s'anime pareil
   : a.reloadT > 0 && a.reloadDur ? { act: { type: 'reload', k: 1 - a.reloadT / a.reloadDur } } : null);
 // Teinte des sols sur les plans réduits, dans l'ordre de FLOOR (js/map.js).
-const MINI_FLOORS = ['#2f3742', '#3a3327', '#2d3a3d', '#3d2a30', '#403d37', '#343b42'];
+const MINI_FLOORS = ['#2f3742', '#3a3327', '#2d3a3d', '#3d2a30', '#403d37', '#343b42', '#2c3d26', '#46413a', '#3e3b35'];
 // Rendu canvas : calque statique (sols, murs, mobilier), décalques, entités, brouillard, HUD canvas.
 class Renderer {
   constructor(canvas, game) {
@@ -87,7 +87,7 @@ class Renderer {
     for (let y = 0; y < m.h; y++) for (let x = 0; x < m.w; x++) {
       const t = m.tile(x, y);
       if (t === 2) continue;
-      ctx.fillStyle = t === 1 ? '#6a737f' : MINI_FLOORS[m.floor(x, y)] || MINI_FLOORS[0];
+      ctx.fillStyle = t === 1 ? (m.hedgeAt && m.hedgeAt.has(y * m.w + x) ? '#3f6b35' : '#6a737f') : MINI_FLOORS[m.floor(x, y)] || MINI_FLOORS[0];
       ctx.fillRect(x * s, y * s, s, s);
     }
     if (m.goal) { // zone d'extraction de l'escorte (point B)
@@ -212,7 +212,7 @@ class Renderer {
         ctx.fillStyle = mt.accent; ctx.font = 'bold 7px sans-serif'; ctx.textAlign = 'center';
         ctx.fillText(mt.name.toUpperCase(), mt.x, mt.y - 17);
         // rappel discret de la direction imposée, tant qu'il n'a pas de contact
-        if (mt.coverAngle !== null && !mt.target) {
+        if (mt.coverAngle !== null && !mt.target && !mt.hunter) {
           const cs = Math.cos(mt.coverAngle), sn = Math.sin(mt.coverAngle);
           ctx.save();
           ctx.globalAlpha = 0.3; ctx.strokeStyle = mt.accent; ctx.lineWidth = 1; ctx.setLineDash([3, 4]);
@@ -230,7 +230,10 @@ class Renderer {
       Sprites.character(ctx, p.x + k.x, p.y + k.y, p.angle, pst, p.muzzleT, p.walk, p.moving);
     }
     if (p.fiber) this.drawFiber(p, p.fiber);
-    ctx.save(); this.clipToVision(); this.drawLaser(g.laserBeam(p)); this.drawEffects(); ctx.restore();
+    ctx.save(); this.clipToVision();
+    this.drawLaser(g.laserBeam(p));
+    for (const b of g.beams || []) if (b.from !== p) this.drawLaser(b); // ceux de l'IA (trinômes), là où on les voit
+    this.drawEffects(); ctx.restore();
     this.drawLamps();
     if (g.dark) this.drawDark();
     this.drawOwnNoise();
@@ -277,10 +280,12 @@ class Renderer {
     }
   }
 
-  // Charge de brèche posée : un boudin d'explosif collé au battant, une diode qui clignote.
+  // Charge de brèche posée : un boudin d'explosif collé au battant, une diode qui clignote. Celle de l'intervention
+  // (siège) ne se voit que dans le champ de vision.
   drawCharges() {
-    const ctx = this.ctx;
-    for (const c of this.game.charges) {
+    const ctx = this.ctx, g = this.game;
+    for (const c of g.charges) {
+      if (c.team && c.team !== g.player.team && !g.seesPoint(c.x, c.y)) continue;
       const d = c.door;
       ctx.save();
       ctx.translate(c.x, c.y);
@@ -461,7 +466,7 @@ class Renderer {
       ctx.font = 'bold 11px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.fillStyle = '#ef5350'; ctx.fillText('!', e.x, y + 0.5);
       ctx.restore();
-    } else if (!e.target && !(e instanceof Operator) && (e.state === 'investigate' || e.suspicion >= 0.5)) {
+    } else if (!e.target && !e.hunter && (e.state === 'investigate' || e.suspicion >= 0.5)) {
     // suspect alerté par un bruit : « ? » quand il va voir ou qu'il cherche, plus pâle quand il guette
       const ctx = this.ctx, searching = e.state === 'investigate';
       ctx.save();

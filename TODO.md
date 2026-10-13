@@ -9,6 +9,12 @@ de chaque section.
   3 vagues de 3 opérateurs contre 9 défenseurs, 6 s de répit après une vague éliminée, 30 s au plus entre deux
   vagues) et dans les armes `hk416op` / `mp5op`. Aucune de ces valeurs
   n'a été jouée par un humain : elles sortent de parties simulées.
+- **Colonnes de l'intervention réglées à l'estime** (`AI_STACK_*`, `WAVE_CHARGES` en tête de `js/game.js`) : une porte
+  fermée sur deux (85 % quand la menace est derrière), au plus une colonne toutes les 8 s, flash à partir de trois,
+  une charge par vague. En parties simulées de deux minutes : une à trois colonnes par partie. Limites : la charge
+  demande à chacun un poste à plus de 1,4 case de la porte, sinon on entre porte ouverte (une porte sur dix environ) ;
+  charge et flash ne se combinent pas ; un opérateur resté hors de la colonne attend à distance que la porte s'ouvre ;
+  une charge posée par une colonne entièrement abattue reste sur la porte sans jamais sauter.
 - **Grenades à fragmentation à régler** : 200 de dégâts au centre, rayon de 3,5 cases, 2 s de mèche. Les complices
   n'en lancent pas, seul le joueur (ou celui qui reprend la main) en a.
 - **Les otages ne bougent que sous escorte.** L'intervention les relève et les fait sortir, mais ils ne
@@ -19,6 +25,23 @@ de chaque section.
   donc ni les voir approcher, ni les surprendre avant qu'ils ne soient dedans.
 - **Rien n'empêche de camper une seule ouverture** si la carte n'en a que deux. Plus d'entrées par carte,
   ou des vagues qui entrent par deux endroits à la fois, rendraient la défense moins statique.
+
+## Mode trinômes
+
+- **Équilibre à éprouver en jeu.** En parties simulées sans le joueur (il reste immobile au départ, ses deux coéquipiers
+  avec lui, et l'adversaire ne le vise pas), le camp de l'intervention l'emporte 7 fois sur 12, celui du groupe armé
+  1 fois sur 12 : face à des défenseurs immobiles, l'intervention gagne par ses flashs et ses entrées en colonne. En duel
+  de trois contre trois, à découvert, les deux camps font désormais jeu égal. Ces chiffres datent d'avant le
+  13 octobre : depuis, les armes du groupe armé sont plus précises (`akH` / `ak74H`, et celles du joueur), ses hommes
+  portent des accessoires (`MILITANT_KITS` : silencieux, laser, poignée) et l'intervention tire en rafales de trois au
+  lieu de quatre, à la cadence réelle du HK416. Rien de cela n'a été remesuré. Leviers : `SQUAD_MILITANT` (santé,
+  réaction, champ de vision, grenades), les armes `akH` / `ak74H`, `MILITANT_KITS`, `WAVE_CHARGES`, `AI_STACK_*`.
+- **Les lots d'accessoires de l'IA sont tirés au hasard, pas choisis** : un homme ne monte pas un silencieux parce
+  qu'il veut surprendre, ni ne coupe son laser pour se cacher. Les lasers de l'IA restent allumés en permanence.
+- **Les trinômes autonomes ne se répartissent pas le bâtiment** : chacun balaie ses secteurs depuis son entrée, sans
+  savoir ce que l'autre trinôme de son camp a déjà nettoyé, et un contact n'est partagé qu'au sein d'un trinôme.
+- **Le groupe armé ne se met jamais en colonne** et n'entre pas à la grenade : il franchit les portes comme il vient.
+- **Pas de réapparition ni de manches** : une seule manche, à l'élimination.
 
 ## Mode escorte
 
@@ -48,8 +71,8 @@ de chaque section.
   c'est une seule valeur à bouger : `DOOR_STEPS` dans `js/map.js`.
 - **La fibre optique n'est pas réglée finement** : 150° sur 6 cases, 0,7 s de mise en place. Elle est
   peut-être trop généreuse par rapport au coup d'œil par l'entrebâillement.
-- **Les suspects et les opérateurs n'utilisent ni fibre ni entrebâillement.** Ils ouvrent toujours en
-  grand — ils lancent en revanche une flash avant d'entrer quand ils savent où était la menace.
+- **Les suspects et les opérateurs n'utilisent pas la fibre.** Les suspects ouvrent toujours en grand ; les
+  opérateurs aussi, sauf en colonne, où ils entrebâillent pour glisser une flash.
 - **Une fenêtre ne se casse pas.** On voit et on tire au travers, on ne la franchit pas à pied, et elle
   reste intacte quoi qu'il arrive.
 
@@ -119,11 +142,25 @@ de chaque section.
 
 ## Cartes
 
+- **Cartes en plein air jouées seulement par les tests** (Maison de maître, Corps de ferme). La traversée du jardin à
+  découvert est peut-être trop punitive face aux fenêtres : quelques couverts de plus (murets, voitures) aideraient. Les
+  arbres ne cachent rien (comme tout le mobilier) et les haies arrêtent les balles comme un mur. Pas de carte d'escorte
+  en plein air.
+
 - **Hôtel, Banque et Centre de données n'ont été jouées que par les tests.** Leur équilibre (nombre
   d'entrées, longueur des allées entre les baies, couvert du hall de la banque) reste à éprouver à la main,
   dans les deux modes.
 
 ## Fait depuis la dernière version
+
+Deux cartes en plein air, plus grandes (Maison de maître, Corps de ferme) : herbe, gravier, terrasse, haies, arbres,
+bassin, entrées du terrain au bord de la carte · mode trinômes : deux trinômes contre deux, l'intervention contre le groupe armé, dans le camp de son choix ; votre
+trinôme à vos ordres, le second de votre camp autonome, ceux d'en face par les ouvertures hors de vue de la vôtre ;
+trinômes qui partagent leurs contacts et restent groupés ; relais dans votre trinôme puis dans l'autre ·
+siège : l'intervention se met de temps en temps en colonne sur une porte fermée et entre porte ouverte, à la flash
+(à trois, s'il lui en reste) ou à la charge (une par vague), comme l'équipe du joueur au clic droit · le souffle d'une
+charge part de toute l'embrasure : il sonne aussi qui se tient contre le mur à côté du cadre ou derrière le battant ·
+deux agents de front dans une embrasure ne s'y bloquent plus l'un l'autre.
 
 Mode escorte : trois cartes (Ambassade, Palais de justice, Hôpital) où l'équipe conduit un VIP du point A à la zone
 d'extraction, à travers les pièces tenues par le commando ; VIP qui suit ou attend à couvert (H), visé en priorité,

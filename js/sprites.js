@@ -65,8 +65,46 @@ const Sprites = {
       case 3: return this.paintCarpet(ctx, x, y);
       case 4: return this.paintMarble(ctx, x, y);
       case 5: return this.paintMetal(ctx, x, y);
+      case 6: return this.paintGrass(ctx, x, y);
+      case 7: return this.paintGravel(ctx, x, y);
+      case 8: return this.paintPaving(ctx, x, y);
       default: return this.paintConcrete(ctx, x, y);
     }
+  },
+  // Pelouse : un vert qui varie par grandes plaques (calées sur le monde), et des brins.
+  paintGrass(ctx, x, y) {
+    const v = Math.floor((this.hash(Math.floor(x / 48), Math.floor(y / 48)) - 0.5) * 14 + (this.hash(x, y) - 0.5) * 6);
+    ctx.fillStyle = `rgb(${66 + v},${104 + v},${52 + v * 0.6})`;
+    ctx.fillRect(x, y, TILE, TILE);
+    for (let i = 0; i < 14; i++) {
+      const px = x + Math.random() * TILE, py = y + Math.random() * TILE;
+      ctx.fillStyle = Math.random() < 0.5 ? 'rgba(20,45,15,0.30)' : 'rgba(170,210,120,0.20)';
+      ctx.fillRect(px, py, 0.8, rand(1.5, 3));
+    }
+  },
+  // Gravier d'allée : beige semé de petits cailloux clairs et sombres.
+  paintGravel(ctx, x, y) {
+    ctx.fillStyle = 'rgb(150,140,120)';
+    ctx.fillRect(x, y, TILE, TILE);
+    for (let i = 0; i < 26; i++) {
+      const r = rand(0.5, 1.3);
+      ctx.fillStyle = Math.random() < 0.5 ? 'rgba(60,52,40,0.32)' : 'rgba(235,228,210,0.32)';
+      ctx.beginPath(); ctx.arc(x + Math.random() * TILE, y + Math.random() * TILE, r, 0, TAU); ctx.fill();
+    }
+  },
+  // Dallage de terrasse : dalles de pierre de 24 px, joints sombres, teinte propre à chaque dalle.
+  paintPaving(ctx, x, y) {
+    const S = 24;
+    ctx.save();
+    ctx.beginPath(); ctx.rect(x, y, TILE, TILE); ctx.clip();
+    for (let sy = Math.floor(y / S) * S; sy < y + TILE; sy += S) for (let sx = Math.floor(x / S) * S; sx < x + TILE; sx += S) {
+      const v = Math.floor(this.hash(sx, sy) * 16 - 8);
+      ctx.fillStyle = `rgb(${158 + v},${150 + v},${136 + v})`;
+      ctx.fillRect(sx, sy, S, S);
+      ctx.fillStyle = 'rgba(50,44,36,0.4)';
+      ctx.fillRect(sx, sy, S, 1); ctx.fillRect(sx, sy, 1, S);
+    }
+    ctx.restore();
   },
   // Les motifs dépendent des coordonnées monde (pas de la case) : aucun quadrillage visible.
   hash(a, b) {
@@ -220,6 +258,7 @@ const Sprites = {
   paintWall(ctx, map, tx, ty) {
     const x = tx * TILE, y = ty * TILE;
     const open = (dx, dy) => map.tile(tx + dx, ty + dy) === 0;
+    if (map.hedgeAt && map.hedgeAt.has(ty * map.w + tx)) { this.paintHedge(ctx, x, y, open); return; }
     ctx.fillStyle = '#3b424d';
     ctx.fillRect(x, y, TILE, TILE);
     // léger relief au sommet du mur
@@ -233,6 +272,20 @@ const Sprites = {
     ctx.fillStyle = 'rgba(255,255,255,0.09)';
     if (open(0, -1)) ctx.fillRect(x, y + 2, TILE, 1);
     if (open(-1, 0)) ctx.fillRect(x + 2, y, 1, TILE);
+  },
+  // Haie taillée : un bloc de feuillage sombre, des touffes plus claires, un bord plus net côté jardin.
+  paintHedge(ctx, x, y, open) {
+    ctx.fillStyle = '#2c4a26';
+    ctx.fillRect(x, y, TILE, TILE);
+    for (let i = 0; i < 7; i++) {
+      ctx.fillStyle = Math.random() < 0.5 ? 'rgba(120,170,80,0.35)' : 'rgba(10,25,8,0.35)';
+      ctx.beginPath(); ctx.arc(x + Math.random() * TILE, y + Math.random() * TILE, rand(1.5, 3.5), 0, TAU); ctx.fill();
+    }
+    ctx.fillStyle = 'rgba(8,20,6,0.55)';
+    if (open(0, -1)) ctx.fillRect(x, y, TILE, 1.5);
+    if (open(0, 1)) ctx.fillRect(x, y + TILE - 1.5, TILE, 1.5);
+    if (open(-1, 0)) ctx.fillRect(x, y, 1.5, TILE);
+    if (open(1, 0)) ctx.fillRect(x + TILE - 1.5, y, 1.5, TILE);
   },
   paintShadows(ctx, map, tx, ty) {
     const x = tx * TILE, y = ty * TILE;
@@ -273,6 +326,32 @@ const Sprites = {
     const { type, cx, cy } = p;
     ctx.save();
     switch (type) {
+      // Arbre vu d'en haut : son ombre, puis la ramure (le tronc qui arrête le pas est dessous).
+      case 'tree': {
+        const r = 28 + this.hash(cx, cy) * 8; // la ramure déborde largement du tronc : deux cases de large
+        ctx.fillStyle = 'rgba(0,0,0,0.28)'; circle(ctx, cx + 4, cy + 5, r); ctx.fill();
+        ctx.fillStyle = '#5a4128'; circle(ctx, cx, cy, 5); ctx.fill();
+        for (let i = 0; i < 6; i++) {
+          const a = this.hash(cx + i, cy) * TAU, d = r * 0.45;
+          ctx.fillStyle = i % 2 ? '#2f5a28' : '#3a6b2f';
+          circle(ctx, cx + Math.cos(a) * d, cy + Math.sin(a) * d, r * 0.62); ctx.fill();
+        }
+        ctx.fillStyle = 'rgba(160,210,110,0.18)'; circle(ctx, cx - r * 0.25, cy - r * 0.3, r * 0.45); ctx.fill();
+        break;
+      }
+      // Bassin : l'eau, et la margelle de pierre là où le bassin s'arrête.
+      case 'pool': {
+        const e = p.edges || {}, h = TILE;
+        ctx.fillStyle = '#2f7fa8'; ctx.fillRect(cx - h, cy - h, 2 * h, 2 * h);
+        ctx.fillStyle = 'rgba(255,255,255,0.10)';
+        ctx.fillRect(cx - h + this.hash(cx, cy) * 10, cy - h + 6, 14, 1.5);
+        ctx.fillStyle = '#c9c2b2';
+        if (e.n) ctx.fillRect(cx - h, cy - h, 2 * h, 4);
+        if (e.s) ctx.fillRect(cx - h, cy + h - 4, 2 * h, 4);
+        if (e.w) ctx.fillRect(cx - h, cy - h, 4, 2 * h);
+        if (e.e) ctx.fillRect(cx + h - 4, cy - h, 4, 2 * h);
+        break;
+      }
       case 'crate': {
         this.shadow(ctx, cx, cy, 14, 14);
         ctx.translate(cx, cy); ctx.rotate(rand(-0.08, 0.08));
@@ -645,9 +724,17 @@ const Sprites = {
           for (let k = 1; k <= 2; k++) { ctx.beginPath(); ctx.moveTo(8.9 + k * 0.5, A + 1.9 + k * 1.05); ctx.lineTo(11.4 + k * 0.45, A + 1.9 + k * 1.05); ctx.stroke(); }
         }
         part(13.8, 14.8, 3.1, '#23252a', 0, 0.25);             // hausse
-        part(14.8, 20.8, 2.7, t.fore || '#7a4a24', 0, 0.9);    // garde-main bois
-        grain(15.2, 20.4, [-0.8, 0.7]);
-        part(14.8, 22.4, 1.4, '#5e3a1d', 0, 0.4);              // cache du tube à gaz
+        // garde-main : en bois, ou à rails dès qu'on y fixe un laser, une lampe ou une poignée (trinômes)
+        const rails = t.laser || t.light || t.grip;
+        if (rails) {
+          part(14.8, 20.8, 3, '#25282c', 0, 0.5);
+          ribs(15.2, 20.4, 0.8, -1.15, 0.5, 0.45); ribs(15.2, 20.4, 0.8, 1.15, 0.5, 0.45);
+        } else {
+          part(14.8, 20.8, 2.7, t.fore || '#7a4a24', 0, 0.9);  // garde-main bois
+          grain(15.2, 20.4, [-0.8, 0.7]);
+        }
+        part(14.8, 22.4, 1.4, rails ? '#1e2024' : '#5e3a1d', 0, 0.4); // cache du tube à gaz
+        if (t.grip) grip(18.6);
         part(20.8, M - (t.brake74 ? 3.6 : 2.6), 1.2, '#1a1c1f', 0, 0.3); // canon
         part(22.4, 23.6, 1.9, '#1c1e22', 0, 0.25);             // bloc de gaz
         poly([[M - 4.6, -1.2], [M - 3.8, -1.2], [M - 3.5, 0], [M - 4.9, 0]], '#1c1e22'); // guidon

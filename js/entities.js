@@ -76,44 +76,44 @@ const WEAPONS = {
     effRange: 5 * U, rangeSpread: 4 * DEG, mag: 12, reserve: 48, reload: 1.6, pierce: 0.3, speed: 800, gunLen: 11, heavy: false, range: 10 * U,
     snd: [0.1, 1900],
   },
-  // ---- Armes du groupe armé, utilisables par le joueur (mode siège) ----
+  // ---- Armes du groupe armé, utilisables par le joueur (modes siège et trinômes) ----
   akP: {
     kind: 'ak', cat: 'ar', name: 'AKM', maker: 'Kalachnikov', caliber: '7,62×39 mm', mode: 'Auto', rpm: 600, weight: 4.3,
     note: "Le fusil du groupe : brutal, dur à tenir en rafale, mais il perce le bois et les gilets.",
-    damage: 34, auto: true, spread: 1.3 * DEG, moveSpread: 4.5 * DEG, bloom: 2.6 * DEG, bloomMax: 11 * DEG, recoil: 7,
-    effRange: 8 * U, rangeSpread: 3.5 * DEG, mag: 30, reserve: 90, reload: 2.8, pierce: 0.6, speed: 950, gunLen: 20, heavy: true, range: 14 * U,
+    damage: 34, auto: true, spread: 1.1 * DEG, moveSpread: 4.5 * DEG, bloom: 2.4 * DEG, bloomMax: 10.5 * DEG, recoil: 7,
+    effRange: 8.5 * U, rangeSpread: 3.5 * DEG, mag: 30, reserve: 120, reload: 2.6, pierce: 0.6, speed: 950, gunLen: 20, heavy: true, range: 14 * U,
     snd: [0.12, 1700],
   },
   ak74P: {
     kind: 'ak', cat: 'ar', name: 'AK-74', maker: 'Kalachnikov', caliber: '5,45×39 mm', mode: 'Auto', rpm: 650, weight: 3.6,
     note: "Le petit calibre de la famille : moins d'arrêt que l'AKM, mais une balle tendue et un frein de bouche qui tient la rafale.",
     tint: AK74_TINT,
-    damage: 28, auto: true, spread: 1 * DEG, moveSpread: 4 * DEG, bloom: 1.8 * DEG, bloomMax: 9 * DEG, recoil: 5,
-    effRange: 9 * U, rangeSpread: 3 * DEG, mag: 30, reserve: 90, reload: 2.7, pierce: 0.55, speed: 1100, gunLen: 20, heavy: false, range: 15 * U,
+    damage: 28, auto: true, spread: 0.9 * DEG, moveSpread: 4 * DEG, bloom: 1.6 * DEG, bloomMax: 8.5 * DEG, recoil: 5,
+    effRange: 9.5 * U, rangeSpread: 3 * DEG, mag: 30, reserve: 120, reload: 2.5, pierce: 0.55, speed: 1100, gunLen: 20, heavy: false, range: 15 * U,
     snd: [0.1, 2000],
   },
   makarovP: {
     kind: 'pistol', cat: 'hg', name: 'Makarov PM', maker: 'Ijmach', caliber: '9×18 mm', mode: 'Semi', rpm: 300, weight: 0.8,
     note: "Huit coups, sans plus. De quoi finir un chargeur vide, pas de quoi tenir un couloir.",
     tint: { slide: '#3a3d42' },
-    damage: 20, auto: false, spread: 1.1 * DEG, moveSpread: 3 * DEG, bloom: 3 * DEG, bloomMax: 9 * DEG, recoil: 4,
-    effRange: 4 * U, rangeSpread: 4.5 * DEG, mag: 8, reserve: 32, reload: 1.6, pierce: 0.3, speed: 900, gunLen: 10, heavy: false, range: 9 * U,
+    damage: 20, auto: false, spread: 1 * DEG, moveSpread: 3 * DEG, bloom: 3 * DEG, bloomMax: 9 * DEG, recoil: 4,
+    effRange: 4 * U, rangeSpread: 4.5 * DEG, mag: 8, reserve: 40, reload: 1.6, pierce: 0.3, speed: 900, gunLen: 10, heavy: false, range: 9 * U,
     snd: [0.07, 2400],
   },
   uziP: {
     kind: 'smg', cat: 'smg', name: 'IMI Uzi', maker: 'Israel Military Industries', caliber: '9×19 mm Parabellum', mode: 'Auto', rpm: 600, weight: 3.7,
-    note: "Trapue, increvable, increvablement bruyante. Le chargeur dans la crosse tient 32 coups.",
+    note: "Trapue, increvable, increvablement bruyante. Le chargeur dans la crosse tient 32 coups ; sa masse et sa cadence modérée la tiennent en rafale.",
     tint: { body: '#2b2d31', dark: '#1e2024' },
-    damage: 21, auto: true, spread: 1.6 * DEG, moveSpread: 2.6 * DEG, bloom: 1.6 * DEG, bloomMax: 8 * DEG, recoil: 3,
-    effRange: 5 * U, rangeSpread: 4.5 * DEG, mag: 32, reserve: 96, reload: 2.1, pierce: 0.35, speed: 880, gunLen: 13, heavy: false, range: 10 * U,
+    damage: 22, auto: true, spread: 1.3 * DEG, moveSpread: 2.6 * DEG, bloom: 1.3 * DEG, bloomMax: 7 * DEG, recoil: 2.6,
+    effRange: 5.5 * U, rangeSpread: 4.5 * DEG, mag: 32, reserve: 128, reload: 2.1, pierce: 0.35, speed: 880, gunLen: 13, heavy: false, range: 10 * U,
     snd: [0.08, 2300],
   },
   skorpionP: {
     kind: 'pdw', cat: 'smg', name: 'Škorpion vz. 61', maker: 'Zbrojovka Brno', caliber: '7,65×17 mm (.32 ACP)', mode: 'Auto', rpm: 850, weight: 1.6,
     note: "Pistolet mitrailleur de poche : très maniable et très rapide, mais une munition faible.",
     tint: { body: '#3a3a3e', dark: '#26262a' },
-    damage: 14, auto: true, spread: 2.2 * DEG, moveSpread: 2.2 * DEG, bloom: 1.5 * DEG, bloomMax: 9 * DEG, recoil: 2,
-    effRange: 4 * U, rangeSpread: 5 * DEG, mag: 20, reserve: 80, reload: 1.7, pierce: 0.25, speed: 820, gunLen: 9, heavy: false, range: 8 * U,
+    damage: 15, auto: true, spread: 1.9 * DEG, moveSpread: 2.2 * DEG, bloom: 1.4 * DEG, bloomMax: 8 * DEG, recoil: 2,
+    effRange: 4.5 * U, rangeSpread: 5 * DEG, mag: 20, reserve: 100, reload: 1.7, pierce: 0.25, speed: 820, gunLen: 9, heavy: false, range: 8 * U,
     snd: [0.06, 2900],
   },
   tt33: {
@@ -124,15 +124,21 @@ const WEAPONS = {
     effRange: 5 * U, rangeSpread: 4 * DEG, mag: 8, reserve: 32, reload: 1.6, pierce: 0.55, pen: 2, speed: 1100, gunLen: 11, heavy: false, range: 11 * U,
     snd: [0.08, 2200],
   },
-  sgE:     { kind: 'shotgun', pickup: 'm870', name: 'Remington 870 scié', damage: 11, pellets: 7, rof: 0.9, auto: false, spread: 7 * DEG, moveSpread: 4 * DEG, bloom: 3 * DEG, bloomMax: 10 * DEG, effRange: 3 * U, rangeSpread: 3 * DEG, mag: Infinity, reserve: 0, reload: 0, pierce: 0.2, speed: 850, gunLen: 16, heavy: true, burst: 1, pause: 1.3, range: 6 * U, snd: [0.22, 800] },
-  uziE:    { kind: 'smg', pickup: 'uziP', name: 'IMI Uzi', damage: 15, rof: 10, auto: true, spread: 5 * DEG, moveSpread: 4 * DEG, bloom: 2.2 * DEG, bloomMax: 12 * DEG, effRange: 4 * U, rangeSpread: 5 * DEG, mag: Infinity, reserve: 0, reload: 0, pierce: 0.35, speed: 880, gunLen: 13, heavy: false, burst: 6, pause: 1, range: 9 * U, snd: [0.08, 2300] },
-  // ---- Armes de l'équipe d'intervention quand elle donne l'assaut (mode siège) ----
-  hk416op: { kind: 'rifle', pickup: 'hk416', name: 'HK416 A5', damage: 26, rof: 12, auto: true, spread: 1.2 * DEG, moveSpread: 3.5 * DEG, bloom: 1.6 * DEG, bloomMax: 8 * DEG, effRange: 9 * U, rangeSpread: 3 * DEG, mag: Infinity, reserve: 0, reload: 0, pierce: 0.55, speed: 1150, gunLen: 20, heavy: false, burst: 4, pause: 0.75, range: 15 * U, snd: [0.1, 2200] },
-  mp5op:   { kind: 'smg', pickup: 'mp5',   name: 'HK MP5A3', damage: 20, rof: 13, auto: true, spread: 1.4 * DEG, moveSpread: 2 * DEG,   bloom: 1.2 * DEG, bloomMax: 7 * DEG, effRange: 6 * U, rangeSpread: 4 * DEG, mag: Infinity, reserve: 0, reload: 0, pierce: 0.4,  speed: 900,  gunLen: 16, heavy: false, burst: 4, pause: 0.7,  range: 11 * U, snd: [0.08, 2600] },
-  // ---- Armes ennemies (munitions illimitées, tir en rafales) ----
-  ak:      { kind: 'ak', pickup: 'akP',      name: 'AKM',        damage: 18, rof: 10,  auto: true,  spread: 4.5 * DEG,   moveSpread: 4 * DEG, bloom: 2 * DEG, bloomMax: 12 * DEG, effRange: 6 * U, rangeSpread: 4 * DEG, mag: Infinity, reserve: 0, reload: 0, pierce: 0.6, speed: 950, gunLen: 20, heavy: false, burst: 5, pause: 0.9, range: 12 * U, snd: [0.12, 1700] },
-  ak74E:   { kind: 'ak', pickup: 'ak74P',    name: 'AK-74',      damage: 15, auto: true, tint: AK74_TINT, rof: 10.8, spread: 3.8 * DEG, moveSpread: 4 * DEG, bloom: 1.6 * DEG, bloomMax: 10 * DEG, effRange: 7 * U, rangeSpread: 3.5 * DEG, mag: Infinity, reserve: 0, reload: 0, pierce: 0.55, speed: 1100, gunLen: 20, heavy: false, burst: 6, pause: 0.9, range: 13 * U, snd: [0.1, 2000] },
-  pistolE: { kind: 'pistol', pickup: 'makarovP',  name: 'Makarov PM', damage: 18, rof: 4,   auto: true,  spread: 4 * DEG,   moveSpread: 3 * DEG, bloom: 1.5 * DEG, bloomMax: 9 * DEG, effRange: 4 * U, rangeSpread: 4 * DEG, mag: Infinity, reserve: 0, reload: 0, pierce: 0.3, speed: 900, gunLen: 10, heavy: false, burst: 2, pause: 0.8, range: 8 * U, snd: [0.07, 2400] },
+  // ---- Armes tenues par l'IA : chargeur sans fin, tir en rafales de burst coups séparées de pause s. Leur cadence
+  // est celle du modèle réel qu'on ramasse sur le corps (pickup), sauf rof donné.
+  sgE:     { kind: 'shotgun', pickup: 'm870', name: 'Remington 870 scié', damage: 11, pellets: 7, auto: false, spread: 7 * DEG, moveSpread: 4 * DEG, bloom: 3 * DEG, bloomMax: 10 * DEG, effRange: 3 * U, rangeSpread: 3 * DEG, mag: Infinity, reserve: 0, reload: 0, pierce: 0.2, speed: 850, gunLen: 16, heavy: true, burst: 1, pause: 1.3, range: 6 * U, snd: [0.22, 800] },
+  uziE:    { kind: 'smg', pickup: 'uziP', name: 'IMI Uzi', damage: 15, auto: true, spread: 5 * DEG, moveSpread: 4 * DEG, bloom: 2.2 * DEG, bloomMax: 12 * DEG, effRange: 4 * U, rangeSpread: 5 * DEG, mag: Infinity, reserve: 0, reload: 0, pierce: 0.35, speed: 880, gunLen: 13, heavy: false, burst: 6, pause: 1, range: 9 * U, snd: [0.08, 2300] },
+  // ---- Armes de l'équipe d'intervention quand elle donne l'assaut (mode siège) : des tireurs entraînés, en rafales courtes ----
+  hk416op: { kind: 'rifle', pickup: 'hk416', name: 'HK416 A5', damage: 26, auto: true, spread: 1.2 * DEG, moveSpread: 3.5 * DEG, bloom: 1.6 * DEG, bloomMax: 8 * DEG, effRange: 9 * U, rangeSpread: 3 * DEG, mag: Infinity, reserve: 0, reload: 0, pierce: 0.55, speed: 1150, gunLen: 20, heavy: false, burst: 3, pause: 0.6, range: 15 * U, snd: [0.1, 2200] },
+  mp5op:   { kind: 'smg', pickup: 'mp5',   name: 'HK MP5A3', damage: 20, auto: true, spread: 1.4 * DEG, moveSpread: 2 * DEG,   bloom: 1.2 * DEG, bloomMax: 7 * DEG, effRange: 6 * U, rangeSpread: 4 * DEG, mag: Infinity, reserve: 0, reload: 0, pierce: 0.4,  speed: 900,  gunLen: 16, heavy: false, burst: 3, pause: 0.55, range: 11 * U, snd: [0.08, 2600] },
+  // ---- Armes des trinômes autonomes du groupe armé (mode trinômes) : l'AKM et l'AK-74 du joueur, tenus par l'IA ----
+  akH:     { kind: 'ak', pickup: 'akP',   name: 'AKM',   damage: 29, auto: true, spread: 2 * DEG, moveSpread: 4.5 * DEG, bloom: 2 * DEG, bloomMax: 9 * DEG, effRange: 8.5 * U, rangeSpread: 3.5 * DEG, mag: Infinity, reserve: 0, reload: 0, pierce: 0.6,  speed: 950,  gunLen: 20, heavy: true,  burst: 4, pause: 0.8, range: 14 * U, snd: [0.12, 1700] },
+  ak74H:   { kind: 'ak', pickup: 'ak74P', name: 'AK-74', damage: 24, auto: true, tint: AK74_TINT, spread: 1.7 * DEG, moveSpread: 4 * DEG, bloom: 1.4 * DEG, bloomMax: 7.5 * DEG, effRange: 9.5 * U, rangeSpread: 3 * DEG, mag: Infinity, reserve: 0, reload: 0, pierce: 0.55, speed: 1100, gunLen: 20, heavy: false, burst: 4, pause: 0.75, range: 15 * U, snd: [0.1, 2000] },
+  // ---- Armes des suspects (mode assaut) : des rafales longues, peu tenues ----
+  ak:      { kind: 'ak', pickup: 'akP',      name: 'AKM',        damage: 18, auto: true,  spread: 4.5 * DEG,   moveSpread: 4 * DEG, bloom: 2 * DEG, bloomMax: 12 * DEG, effRange: 6 * U, rangeSpread: 4 * DEG, mag: Infinity, reserve: 0, reload: 0, pierce: 0.6, speed: 950, gunLen: 20, heavy: false, burst: 5, pause: 0.9, range: 12 * U, snd: [0.12, 1700] },
+  ak74E:   { kind: 'ak', pickup: 'ak74P',    name: 'AK-74',      damage: 15, auto: true, tint: AK74_TINT, spread: 3.8 * DEG, moveSpread: 4 * DEG, bloom: 1.6 * DEG, bloomMax: 10 * DEG, effRange: 7 * U, rangeSpread: 3.5 * DEG, mag: Infinity, reserve: 0, reload: 0, pierce: 0.55, speed: 1100, gunLen: 20, heavy: false, burst: 6, pause: 0.9, range: 13 * U, snd: [0.1, 2000] },
+  // semi-automatique : deux coups au rythme où il presse la détente (rof), pas à celui de la culasse
+  pistolE: { kind: 'pistol', pickup: 'makarovP',  name: 'Makarov PM', damage: 18, rof: 4, auto: true,  spread: 4 * DEG,   moveSpread: 3 * DEG, bloom: 1.5 * DEG, bloomMax: 9 * DEG, effRange: 4 * U, rangeSpread: 4 * DEG, mag: Infinity, reserve: 0, reload: 0, pierce: 0.3, speed: 900, gunLen: 10, heavy: false, burst: 2, pause: 0.8, range: 8 * U, snd: [0.07, 2400] },
 };
 // Vitesse du joueur (multiplicateur) tirée de la charge de toutes les armes qu'il porte, en main ou à la bretelle,
 // accessoires compris (Player.weaponLoad) : chaque kilo coûte 3,5 % de vitesse. Réglée pour qu'un HK416 et un Glock
@@ -140,10 +146,19 @@ const WEAPONS = {
 // Le gilet et le bouclier ont leur propre multiplicateur (leur mobility).
 const MOBILITY_MAX = 1.04, MOBILITY_MIN = 0.8;
 const loadMobility = kg => clamp(1.09 - 0.035 * kg, MOBILITY_MIN, MOBILITY_MAX);
-// Cadence de jeu tirée de la cadence réelle ; portée du coup de feu (en cases, en plein air) selon l'arme : les
-// murs et les portes l'atténuent (voir Game.soundField).
+// Cadence de jeu tirée de la cadence réelle (celle du modèle ramassé pour une arme de l'IA) ; portée du coup de feu
+// (en cases, en plein air) selon l'arme : les murs et les portes l'atténuent (voir Game.soundField).
+// Rafales de l'IA qui porte une arme du joueur (les coéquipiers) : trois coups en automatique, une paire contrôlée en
+// semi-automatique, un coup au fusil à pompe ; puis le temps de ramener l'arme sur la cible, d'autant plus long que le
+// recul est fort (voir Game.endBurst). La pompe, elle, impose déjà son rythme (rof).
+const BURST_PAUSE = { Auto: 0.25, Semi: 0.2, Pompe: 0.1 }, BURST_RECOIL = 0.035;
 for (const w of Object.values(WEAPONS)) {
   if (w.rpm && !w.rof) w.rof = w.rpm / 60;
+  if (!w.rof && WEAPONS[w.pickup]) w.rof = WEAPONS[w.pickup].rpm / 60;
+  if (w.burst === undefined) {
+    w.burst = w.mode === 'Auto' ? 3 : w.mode === 'Semi' ? 2 : 1;
+    w.pause = (BURST_PAUSE[w.mode] || 0.2) + BURST_RECOIL * (w.recoil || 4);
+  }
   if (w.noise === undefined) w.noise = w.kind === 'shotgun' || w.heavy ? 18 : w.kind === 'pistol' ? 13 : w.kind === 'smg' || w.kind === 'pdw' ? 14 : 16;
   if (w.pen === undefined) w.pen = w.kind === 'rifle' || w.kind === 'ak' ? 3 : 1;
 }
@@ -154,6 +169,9 @@ for (const w of Object.values(WEAPONS)) {
 // cases. Pour qu'un 9 mm se taise, il faut une munition subsonique (subsonic: 'load', 147 gr à 300 m/s au lieu
 // de 124 gr à 360 m/s) : plus lente, elle frappe un peu moins fort et porte moins loin (SUBSONIC). Le .45 ACP
 // est subsonique d'origine (subsonic: 'native') : il se tait sans rien perdre. Pas de silencieux sur un fusil à pompe.
+// Groupe armé, en trinômes seulement (SQUAD_KIT) : PBS-1 sur l'AKM et PBS-4 sur l'AK-74, chacun avec sa munition
+// subsonique (7,62 « US », 5,45 7U1) ; un manchon de 9 mm pour l'Uzi ; celui d'origine du Škorpion, dont le 7,65
+// Browning est subsonique d'origine.
 const SUPPRESSORS = {
   hk416:   { noise: 4,   weight: 0.5,  len: 6 },
   scarh:   { noise: 5,   weight: 0.6,  len: 6 },
@@ -161,24 +179,37 @@ const SUPPRESSORS = {
   mp7:     { noise: 3,   weight: 0.35, len: 5 },
   glock17: { noise: 2.5, weight: 0.2,  len: 5, subsonic: 'load' },
   usp45:   { noise: 2,   weight: 0.25, len: 5, subsonic: 'native' },
+  akP:       { noise: 3,   weight: 0.55, len: 7, subsonic: 'load' },
+  ak74P:     { noise: 3,   weight: 0.45, len: 7, subsonic: 'load' },
+  uziP:      { noise: 2.5, weight: 0.4,  len: 6, subsonic: 'load' },
+  skorpionP: { noise: 2,   weight: 0.25, len: 5, subsonic: 'native' },
 };
 // Munition subsonique : multiplicateurs des dégâts, de la portée efficace, de la portée et de la vitesse de la balle.
 const SUBSONIC = { damage: 0.9, effRange: 0.85, range: 0.9, speed: 0.85 };
-// Module laser (masse en kg) : il lui faut un rail, que n'ont ni l'AKM, ni l'AK-74, ni l'Uzi, ni le Škorpion, ni le
-// Makarov, ni le Tokarev. Le point montre où part la balle sans épauler : la dispersion due au déplacement
-// est multipliée par LASER_MOVE, et la gêne de la tenue d'une main derrière un bouclier réduite de moitié.
-// Mais un faisceau se voit : un suspect qui l'aperçoit se tourne vers sa source (voir Game.spotLaser).
-const LASERS = { hk416: 0.2, scarh: 0.2, mp5: 0.2, mp7: 0.15, m870: 0.2, m4super90: 0.2, glock17: 0.1, usp45: 0.1 };
+// Module laser (masse en kg) : il lui faut un rail, que n'ont ni l'Uzi, ni le Škorpion, ni le Makarov, ni le Tokarev,
+// et les AK seulement en trinômes (garde-main à rails, voir SQUAD_KIT). Le point montre où part la balle sans
+// épauler : la dispersion due au déplacement est multipliée par LASER_MOVE, et la gêne de la tenue d'une main
+// derrière un bouclier réduite de moitié. Mais un faisceau se voit : un adversaire qui l'aperçoit se tourne vers sa
+// source (voir Game.spotLaser).
+const LASERS = { hk416: 0.2, scarh: 0.2, mp5: 0.2, mp7: 0.15, m870: 0.2, m4super90: 0.2, glock17: 0.1, usp45: 0.1, akP: 0.2, ak74P: 0.2 };
 const LASER_MOVE = 0.5;
 // Lampe tactique (masse en kg), sur le même rail que le laser : elle éclaire un cône devant l'arme. Inutile
 // quand le bâtiment est éclairé, décisive quand le courant est coupé ; elle éblouit celui qu'elle prend en
 // face de près, mais elle se voit de loin (voir Game.lampLit).
-const LIGHTS = { hk416: 0.15, scarh: 0.15, mp5: 0.15, mp7: 0.12, m870: 0.15, m4super90: 0.15, glock17: 0.1, usp45: 0.1 };
+const LIGHTS = { hk416: 0.15, scarh: 0.15, mp5: 0.15, mp7: 0.12, m870: 0.15, m4super90: 0.15, glock17: 0.1, usp45: 0.1, akP: 0.15, ak74P: 0.15 };
 // Poignée avant verticale (masse en kg), sous le garde-main d'une arme d'épaule à rail : la main avant tient
-// mieux l'arme en rafale. Le MP7 a déjà la sienne, repliable ; les armes du groupe armé n'ont pas de rail.
-const GRIPS = { hk416: 0.15, scarh: 0.15, mp5: 0.15 };
-// Effet de la poignée : multiplicateurs de l'ouverture à chaque tir, de son plafond et du recul.
-const GRIP = { bloom: 0.75, bloomMax: 0.85, recoil: 0.7 };
+// mieux l'arme en rafale. Le MP7 a déjà la sienne, repliable ; les AK n'en prennent une qu'en trinômes.
+const GRIPS = { hk416: 0.15, scarh: 0.15, mp5: 0.15, akP: 0.15, ak74P: 0.15 };
+// Effet de la poignée : multiplicateurs de l'ouverture à chaque tir, de son plafond, du recul, et de la pause de
+// l'IA entre deux rafales (l'arme revient plus vite sur la cible).
+const GRIP = { bloom: 0.75, bloomMax: 0.85, recoil: 0.7, pause: 0.85 };
+// Trinômes, côté groupe armé : il vient chercher le combat, équipé en conséquence, quand celui du siège tient un
+// bâtiment avec ce qu'il a. Garde-main à rails sur ses AK (laser, lampe, poignée), silencieux et leur munition
+// subsonique. Ces accessoires ne se montent qu'en trinômes (MODES[mode].squads, voir accFits).
+const SQUAD_KIT = { akP: ['sup', 'laser', 'light', 'grip'], ak74P: ['sup', 'laser', 'light', 'grip'], uziP: ['sup'], skorpionP: ['sup'] };
+// Trinômes : les accessoires des hommes du groupe armé que mène l'IA (trinômes autonomes, et vos complices quand vous
+// êtes de ce camp), distribués comme les armes (dealWeapons). Chacun ne garde que ce que son arme accepte.
+const MILITANT_KITS = [{ grip: true, laser: true }, { sup: true, grip: true }, { mag: true, laser: true }, { sup: true }, { grip: true, mag: true }];
 // Chargeur grande capacité : capacité, masse ajoutée (kg, chargé) et multiplicateur du temps de rechargement
 // (plus long à engager, surtout un tambour). La réserve, elle, ne change pas : on emporte autant de cartouches,
 // on recharge moins souvent. Modèles réels : PMAG 40 pour le HK416, chargeur de 33 Glock, tambour de 75
@@ -192,22 +223,33 @@ const MAGS = {
   uziP:    { mag: 40, weight: 0.25, reload: 1.1 },
   m870:    { mag: 8,  weight: 0.25, reload: 1, tube: true },
 };
+const ACC_TABLES = { sup: SUPPRESSORS, laser: LASERS, light: LIGHTS, grip: GRIPS, mag: MAGS };
+// L'arme accepte-t-elle cet accessoire dans ce mode (m : MODES[..]) ? Le matériel des trinômes (SQUAD_KIT) n'y
+// est qu'en trinômes.
+function accFits(key, name, m) {
+  if (!key || !ACC_TABLES[name][key]) return false;
+  return !(SQUAD_KIT[key] || []).includes(name) || !!(m && m.squads);
+}
 const FITTED = {};
 // L'arme équipée de ses accessoires (acc : { sup, laser, light, grip, mag }) ; ceux qu'elle n'accepte pas sont
-// ignorés. Chaque combinaison n'est calculée qu'une fois.
+// ignorés. Une arme de l'IA prend ceux du modèle réel (pickup) ; son chargeur reste sans fin, le chargeur long ne
+// change que son dessin (et l'arme qu'on ramasse sur le corps). Chaque combinaison n'est calculée qu'une fois ;
+// d.acc garde ce qui est monté.
 function fittedDef(key, acc) {
-  const w = WEAPONS[key], s = SUPPRESSORS[key];
-  const sup = !!(acc && acc.sup && s), laser = !!(acc && acc.laser && LASERS[key]), light = !!(acc && acc.light && LIGHTS[key]);
-  const grip = !!(acc && acc.grip && GRIPS[key]), mag = !!(acc && acc.mag && MAGS[key]);
+  const w = WEAPONS[key], base = w.cat ? key : w.pickup || key, s = SUPPRESSORS[base];
+  const sup = !!(acc && acc.sup && s), laser = !!(acc && acc.laser && LASERS[base]), light = !!(acc && acc.light && LIGHTS[base]);
+  const grip = !!(acc && acc.grip && GRIPS[base]), mag = !!(acc && acc.mag && MAGS[base]);
   if (!sup && !laser && !light && !grip && !mag) return w;
   const id = key + (sup ? '+sup' : '') + (laser ? '+laser' : '') + (light ? '+light' : '') + (grip ? '+grip' : '') + (mag ? '+mag' : '');
   if (FITTED[id]) return FITTED[id];
-  const d = { ...w, tint: { ...(w.tint || {}) } };
+  const d = { ...w, tint: { ...(w.tint || {}) }, acc: { sup, laser, light, grip, mag } };
+  const add = kg => { if (d.weight !== undefined) d.weight += kg; }; // l'IA ne compte pas la masse de son arme
   if (sup) {
     Object.assign(d, {
-      suppressed: true, noise: s.noise, weight: d.weight + s.weight, gunLen: w.gunLen + s.len,
+      suppressed: true, noise: s.noise, gunLen: w.gunLen + s.len,
       snd: [w.snd[0] * 0.6, Math.min(900, w.snd[1] * 0.45)],
     });
+    add(s.weight);
     if (s.subsonic === 'load') {
       Object.assign(d, {
         damage: Math.round(w.damage * SUBSONIC.damage), effRange: w.effRange * SUBSONIC.effRange,
@@ -216,17 +258,18 @@ function fittedDef(key, acc) {
     }
     d.tint.sup = s.len;
   }
-  if (laser) { d.laser = true; d.weight += LASERS[key]; d.tint.laser = true; }
-  if (light) { d.light = true; d.weight += LIGHTS[key]; d.tint.light = true; }
+  if (laser) { d.laser = true; add(LASERS[base]); d.tint.laser = true; }
+  if (light) { d.light = true; add(LIGHTS[base]); d.tint.light = true; }
   if (grip) {
-    Object.assign(d, { grip: true, bloom: w.bloom * GRIP.bloom, bloomMax: w.bloomMax * GRIP.bloomMax, recoil: w.recoil * GRIP.recoil });
-    d.weight += GRIPS[key]; d.tint.grip = true;
+    Object.assign(d, { grip: true, bloom: w.bloom * GRIP.bloom, bloomMax: w.bloomMax * GRIP.bloomMax, recoil: (w.recoil || 4) * GRIP.recoil, pause: w.pause * GRIP.pause });
+    add(GRIPS[base]); d.tint.grip = true;
   }
   if (mag) {
-    const m = MAGS[key];
-    Object.assign(d, { extMag: true, mag: m.mag, reload: w.reload * m.reload });
-    d.weight += m.weight;
-    d.tint.extMag = m.drum ? 'drum' : m.tube ? 'tube' : m.mag / w.mag;
+    const m = MAGS[base];
+    if (Number.isFinite(w.mag)) Object.assign(d, { mag: m.mag, reload: w.reload * m.reload });
+    d.extMag = true;
+    add(m.weight);
+    d.tint.extMag = m.drum ? 'drum' : m.tube ? 'tube' : m.mag / WEAPONS[base].mag;
   }
   return (FITTED[id] = d);
 }
@@ -280,12 +323,19 @@ const SIDEARMS = ['glock17', 'usp45'];
 // avant d'entrer (assaut) ; vest : gilet (VESTS, assaut ; null en siège).
 const DEFAULT_LOADOUT = { primary: 'hk416', sidearm: 'glock17', shield: null, acc: {}, teamSup: false, cutPower: false, vest: 'vestL' };
 
-// Trois modes de jeu : l'assaut (on incarne l'opérateur), le siège (on incarne le groupe armé) et l'escorte
-// (l'équipe conduit un VIP d'un point A à un point B). levels : les cartes du mode ; pitch : son bouton au briefing.
+// Quatre modes de jeu : l'assaut (on incarne l'opérateur), le siège (on incarne le groupe armé), l'escorte
+// (l'équipe conduit un VIP d'un point A à un point B) et les trinômes (deux trinômes contre deux, dans le camp de son
+// choix : squads côté intervention, squadsArmed côté groupe armé, un seul bouton au briefing). levels : les cartes du
+// mode ; pitch : son bouton au briefing ; camp : le camp du joueur ; power : le courant peut être coupé ;
+// variantOf : variante d'un autre mode (même bouton, l'autre camp).
+const ARMED_GEAR = { primaries: ['akP', 'ak74P', 'uziP', 'skorpionP', 'm870'], sidearms: ['makarovP', 'tt33', 'glock17'], shields: [], vests: [], loadout: { ...DEFAULT_LOADOUT, primary: 'akP', sidearm: 'makarovP', vest: null } };
+const POLICE_GEAR = { primaries: PRIMARY_WEAPONS, sidearms: SIDEARMS, shields: Object.keys(SHIELDS), vests: Object.keys(VESTS), loadout: DEFAULT_LOADOUT };
 const MODES = {
-  assault: { name: 'Assaut', pitch: "🛡 Assaut — vous menez l'intervention", levels: LEVELS, primaries: PRIMARY_WEAPONS, sidearms: SIDEARMS, shields: Object.keys(SHIELDS), vests: Object.keys(VESTS), loadout: DEFAULT_LOADOUT },
-  siege:   { name: 'Siège', pitch: '☠ Siège — vous tenez le bâtiment', levels: LEVELS, primaries: ['akP', 'ak74P', 'uziP', 'skorpionP', 'm870'], sidearms: ['makarovP', 'tt33', 'glock17'], shields: [], vests: [], loadout: { ...DEFAULT_LOADOUT, primary: 'akP', sidearm: 'makarovP', vest: null } },
-  escort:  { name: 'Escorte', pitch: '★ Escorte — vous exfiltrez un VIP', levels: ESCORT_LEVELS, primaries: PRIMARY_WEAPONS, sidearms: SIDEARMS, shields: Object.keys(SHIELDS), vests: Object.keys(VESTS), loadout: DEFAULT_LOADOUT },
+  assault: { name: 'Assaut', pitch: "🛡 Assaut — vous menez l'intervention", camp: 'police', power: true, levels: LEVELS, ...POLICE_GEAR },
+  siege:   { name: 'Siège', pitch: '☠ Siège — vous tenez le bâtiment', camp: 'armed', levels: LEVELS, ...ARMED_GEAR },
+  escort:  { name: 'Escorte', pitch: '★ Escorte — vous exfiltrez un VIP', camp: 'police', power: true, levels: ESCORT_LEVELS, ...POLICE_GEAR },
+  squads:  { name: 'Trinômes', pitch: '⚔ Trinômes — deux contre deux', camp: 'police', squads: true, levels: LEVELS, ...POLICE_GEAR },
+  squadsArmed: { name: 'Trinômes', pitch: '⚔ Trinômes — deux contre deux', camp: 'armed', squads: true, variantOf: 'squads', levels: LEVELS, ...ARMED_GEAR },
 };
 
 // acc : accessoires ({ sup, laser, light, grip, mag }), ou true pour un simple silencieux
@@ -388,6 +438,17 @@ const MATE_FLASHES = 2;
 const MATE_POOL = ['hk416', 'scarh', 'mp5', 'mp7', 'm870', 'm4super90'];
 const SIEGE_MATE_POOL = ['akP', 'akP', 'ak74P', 'uziP', 'skorpionP', 'makarovP', 'tt33', 'm870'];
 const OPERATOR_POOL = ['hk416op', 'mp5op'];
+// Mode trinômes : armes des trinômes autonomes du groupe armé (celles de l'IA, chargeur sans fin).
+const MILITANT_POOL = ['akH', 'ak74H'];
+// Mode trinômes : le second trinôme de votre camp, autonome (voir Game.spawnSquad), selon le camp.
+const SQUAD_DEFS = {
+  police: [{ name: 'Delta', accent: '#64b5f6' }, { name: 'Echo', accent: '#c792ea' }, { name: 'Fox', accent: '#e6c35c' }],
+  armed: [
+    { name: 'Sacha', accent: '#9a8fc7', jacket: '#4a3d4a', pants: '#2f3a33' },
+    { name: 'Dimitri', accent: '#6fb3a8', jacket: '#575047', pants: '#2b2f38' },
+    { name: 'Goran', accent: '#c98bb0', jacket: '#3b4553', pants: '#3a3630' },
+  ],
+};
 // Tirage sans doublon tant que le lot n'est pas épuisé.
 function dealWeapons(pool, n) {
   const left = pool.slice(), out = [];
@@ -410,6 +471,7 @@ class Teammate extends Agent {
     this.nade = 'flash';
     this.flashbangs = def.militant ? 0 : MATE_FLASHES;
     this.lampOn = true;
+    this.laserOn = true;
     this.fov = 130 * DEG;
     this.viewRange = 13 * U;
     this.reaction = 0.4;
@@ -427,7 +489,8 @@ class Teammate extends Agent {
     this.blockedLine = false;
     this.repathT = 0;
     this.reloadT = 0;
-    this.burst = 0;
+    this.burstLeft = this.slot.def.burst; // coups restants dans la rafale en cours (voir Game.endBurst)
+    this.pauseT = 0;
     this.engaged = false;
     this.visible = true;
     this.destTile = null;
@@ -459,6 +522,7 @@ class Enemy extends Agent {
     this.repathT = 0;
     this.burstLeft = def.burst;
     this.pauseT = 0;
+    this.laserOn = true;  // un laser sur son arme (trinômes) reste allumé
     this.lastKnown = null;
     this.blind = null;    // tir dans une porte : { x, y, t, off } (voir Game.startBlindFire)
     this.surrender = null; // rendu, à genoux : { t, lapse } (voir Game.shout) ; cuffed : menotté
@@ -479,11 +543,14 @@ class Enemy extends Agent {
   }
 }
 
-// Opérateur d'intervention pendant un siège : même moteur que les suspects (Game.updateAssault
-// pilote sa progression), mais plus résistant, plus réactif et bien plus précis.
+// Opérateur d'intervention pendant un siège (ou d'un trinôme autonome, dans un camp comme dans l'autre) : même
+// moteur que les suspects, mais Game.updateAssault pilote sa progression (hunter) ; plus résistant, plus réactif,
+// bien plus précis, et entraîné (drilled) : colonnes, entrée à la flash ou à la charge, discipline de tir.
 class Operator extends Enemy {
   constructor(x, y, angle, weaponKey) {
     super(x, y, angle, weaponKey);
+    this.hunter = true;
+    this.drilled = true;
     this.name = 'Opérateur';
     this.hp = this.maxHp = 110; // gilet
     this.fov = 110 * DEG;
@@ -494,6 +561,9 @@ class Operator extends Enemy {
     this.style = { ...STYLE_PLAYER };
     this.flashbangs = 2; // ils dégoupillent avant d'entrer dans une pièce tenue
     this.flashCd = rand(4, 10);
+    this.charges = 0;    // charges de brèche (WAVE_CHARGES par vague, voir Game.spawnAssault)
+    this.entry = null;   // colonne sur une porte dont il fait partie (voir Game.considerStack)
+    this.clear = null;   // entré : l'angle de la pièce à rejoindre et à tenir { x, y, look, t, left }
   }
 }
 

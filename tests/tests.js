@@ -87,6 +87,51 @@ test('cadence de tir conforme à la fiche', () => {
   }
 });
 
+test('l’IA tire à la cadence du modèle réel, en rafales qui ne se ressemblent pas', () => {
+  for (const [ai, real] of [['hk416op', 'hk416'], ['mp5op', 'mp5'], ['akH', 'akP'], ['ak74H', 'ak74P'], ['ak', 'akP'], ['ak74E', 'ak74P'], ['uziE', 'uziP'], ['sgE', 'm870']]) {
+    eq(WEAPONS[ai].rof, WEAPONS[real].rof, ai + ' : la cadence du ' + WEAPONS[real].name);
+  }
+  const game = mkGame({ alone: true }).game, a = {}, w = WEAPONS.akH;
+  const lens = new Set(), pauses = [];
+  for (let i = 0; i < 300; i++) { game.endBurst(a, w); lens.add(a.burstLeft); pauses.push(a.pauseT); }
+  eq([...lens].sort().join(','), [w.burst - 1, w.burst, w.burst + 1].join(','), 'un coup de plus ou de moins d’une rafale à l’autre');
+  const lo = Math.min(...pauses), hi = Math.max(...pauses);
+  ok(lo >= w.pause * (1 - BURST_JITTER) - 1e-9 && hi <= w.pause * (1 + BURST_JITTER) + 1e-9 && hi - lo > w.pause * 0.3, 'des pauses inégales, dans la marge');
+  game.endBurst(a, WEAPONS.sgE);
+  eq(a.burstLeft, 1, 'le fusil à pompe reste au coup par coup');
+});
+
+test('un coéquipier tire selon son arme : jamais plus vite qu’elle, en rafales courtes, pas en continu', () => {
+  for (const key of ['m870', 'm4super90', 'glock17', 'hk416', 'akP']) {
+    const g = mkGame({ alone: true });
+    const game = g.game, m = game.mates[0], w = WEAPONS[key];
+    m.alive = true;
+    game.player.alive = false; // hors de l'axe de tir, quoi qu'il arrive (on ne fait pas avancer la partie)
+    m.slot = { def: w, mag: 1000, reserve: Infinity };
+    m.burstLeft = w.burst;
+    const spot = freeSpotsAround(game, m, 12).find(q => dist(q.x, q.y, m.x, m.y) > 1.5 * U);
+    ok(spot, key + ' : une cible en vue');
+    const foe = new Enemy(spot.x, spot.y, 0, 'ak');
+    foe.hp = foe.maxHp = 1e9;
+    game.enemies = [foe];
+    m.angle = Math.atan2(foe.y - m.y, foe.x - m.x);
+    const times = [];
+    let t = 0;
+    const fire = game.fireWeapon.bind(game);
+    game.fireWeapon = s => { if (s === m) times.push(t); fire(s); };
+    for (let i = 0; i < 360; i++) { t = i / 60; m.fireT -= 1 / 60; m.pauseT -= 1 / 60; game.mateCombat(m, 1 / 60); }
+    ok(times.length >= 4, key + ' : il tire (' + times.length + ' coups)');
+    const gaps = times.slice(1).map((x, i) => x - times[i]);
+    ok(Math.min(...gaps) >= 1 / w.rof - 1 / 60 - 1e-6, key + ' : jamais plus vite que l’arme (' + Math.min(...gaps).toFixed(2) + ' s entre deux coups)');
+    if (w.burst > 1) {
+      let run = 1, longest = 1;
+      for (const d of gaps) { run = d < 1 / w.rof + 0.05 ? run + 1 : 1; longest = Math.max(longest, run); }
+      ok(longest <= w.burst + 1, key + ' : des rafales de ' + w.burst + ' coups environ, pas plus de ' + (w.burst + 1) + ' (' + longest + ')');
+      ok(gaps.some(d => d >= w.pause * (1 - BURST_JITTER) - 1e-6), key + ' : une pause entre deux rafales');
+    }
+  }
+});
+
 test('collé à un mur, on ne tire pas à travers', () => {
   const g = mkGame({ alone: true, loadout: { primary: 'scarh', sidearm: 'glock17' } });
   const game = g.game, p = game.player, map = game.map;
@@ -721,8 +766,14 @@ test('chaque mission a plusieurs ouvertures sur l’extérieur', () => {
   for (let i = 0; i < LEVELS.length; i++) {
     const map = new GameMap(LEVELS[i]);
     ok(map.breaches.length >= 2, LEVELS[i].name + ' : ' + map.breaches.length + ' ouverture(s)');
-    ok(map.breaches.some(b => b.kind === 'window'), LEVELS[i].name + ' : au moins une fenêtre');
-    ok(map.breaches.some(b => b.kind === 'door'), LEVELS[i].name + ' : au moins une porte extérieure');
+    if (LEVELS[i].outdoor) {
+      // en plein air, on arrive par les entrées du terrain : la maison donne sur le jardin
+      ok(map.breaches.every(b => b.kind === 'gate'), LEVELS[i].name + ' : seules les entrées du terrain mènent dehors');
+      ok(map.breaches.length >= 3, LEVELS[i].name + ' : au moins trois entrées du terrain');
+    } else {
+      ok(map.breaches.some(b => b.kind === 'window'), LEVELS[i].name + ' : au moins une fenêtre');
+      ok(map.breaches.some(b => b.kind === 'door'), LEVELS[i].name + ' : au moins une porte extérieure');
+    }
     for (const b of map.breaches) {
       const t = { x: Math.floor(b.inside.x / TILE), y: Math.floor(b.inside.y / TILE) };
       ok(!map.blocksMove(t.x, t.y), LEVELS[i].name + ' : le côté intérieur de ' + map.breachLabel(b) + ' est praticable');
@@ -807,6 +858,33 @@ test('chaque ouverture a un nom distinct', () => {
     const map = new GameMap(l);
     const names = map.breaches.map(b => map.breachLabel(b));
     eq(new Set(names).size, names.length, l.name + ' : ' + names.join(', '));
+  }
+});
+
+test('plein air : on arrive par le bord du terrain, la haie arrête tout, personne n’attend dehors, et les cartes sont plus grandes', () => {
+  const outdoor = LEVELS.filter(l => l.outdoor);
+  ok(outdoor.length >= 2, 'au moins deux cartes en plein air');
+  const indoor = Math.max(...LEVELS.filter(l => !l.outdoor).map(l => l.map[0].length * l.map.length));
+  for (const l of outdoor) {
+    const map = new GameMap(l);
+    ok(l.map[0].length * l.map.length > 1.5 * indoor, l.name + ' : une fois et demie la plus grande carte d’intérieur, au moins');
+    ok(map.breaches.every(b => {
+      const tx = Math.floor(b.inside.x / TILE), ty = Math.floor(b.inside.y / TILE);
+      return Math.min(b.x, b.y, map.w - 1 - b.x, map.h - 1 - b.y) === 0 && map.tile(tx, ty) === 0 && /^Entrée /.test(map.breachLabel(b));
+    }), l.name + ' : entrées au bord de la carte, nommées « Entrée … »');
+    ok(map.windows.length > 0 && map.doors.length > 0, l.name + ' : la maison a ses portes et ses fenêtres (sur le jardin)');
+    const lawn = map.floorType.some(f => f === FLOOR['"']) && map.floorType.some(f => f === FLOOR['_']);
+    ok(lawn, l.name + ' : de l’herbe et du gravier');
+    ok(map.hedgeAt.size > 0 && [...map.hedgeAt].every(i => map.tiles[i] === 1), l.name + ' : la haie est un mur (pas, regard, balles)');
+    ok(map.props.some(p => p.type === 'tree'), l.name + ' : des arbres');
+    const c = document.createElement('canvas').getContext('2d');
+    for (const p of map.props) Sprites.paintProp(c, p);
+    // personne n'est posté dans le jardin, pas même tiré au sort
+    for (const mode of ['assault', 'siege']) {
+      const g = mkGame({ mode, level: LEVELS.indexOf(l) });
+      const out = [...g.game.enemies, ...g.game.mates, ...g.game.hostages].filter(a => OUTDOOR_FLOORS.has(g.game.map.floor(Math.floor(a.x / TILE), Math.floor(a.y / TILE))));
+      eq(out.length, mode === 'assault' ? 2 : 0, l.name + ' / ' + mode + ' : dehors, seulement ' + (mode === 'assault' ? 'vos coéquipiers' : 'personne'));
+    }
   }
 });
 
@@ -1899,7 +1977,7 @@ test('le briefing propose chaque mode et l’équipement du camp', () => {
   const g = mkGame();
   const ui = g.ui;
   ui.showBriefing();
-  eq(ui.panel.querySelectorAll('.modebtn').length, Object.keys(MODES).length, 'un bouton par mode');
+  eq(ui.panel.querySelectorAll('.modebtn').length, Object.keys(MODES).filter(m => !MODES[m].variantOf).length, 'un bouton par mode (les deux camps des trinômes n’en font qu’un)');
   const A = MODES.assault, cards = [...ui.panel.querySelectorAll('.wcard')].map(b => b.dataset.key);
   eq(cards.length, A.primaries.length + A.shields.length + A.sidearms.length, 'cartes d’armes et de boucliers du mode');
   ok(cards.every(k => A.primaries.includes(k) || A.shields.includes(k) || A.sidearms.includes(k)), 'armes du bon camp');
@@ -2493,6 +2571,41 @@ test('une charge de brèche souffle la porte et sonne ceux qui se tiennent derri
   ok(!g2.game.charges.length && /tombée/.test(g2.game.message.text), 'porte ouverte : la charge tombe');
 });
 
+// Porte intérieure dont l'autre côté (côté -1, celui où le battant se rabat) a de la place contre le mur, de part et
+// d'autre du cadre : d'un côté derrière le battant ouvert, de l'autre loin dans l'angle du mur. null s'il n'y en a pas.
+function doorWithWalls(game) {
+  for (const d of game.map.doors) {
+    if (game.map.breaches.some(b => b.door === d)) continue;
+    const nx = d.horizontal ? 0 : 1, ny = d.horizontal ? 1 : 0, ax = ny, ay = nx, half = d.len * TILE / 2;
+    const at = (lat, across) => ({ x: d.cx + ax * lat + nx * across, y: d.cy + ay * lat + ny * across });
+    const leaf = at(-(half + 16), -21), wall = at(half + 48, -21), me = at(0, 1.5 * U);
+    if ([leaf, wall, me].every(q => game.map.circleFree(q.x, q.y, 12, true))) return { d, leaf, wall, me };
+  }
+  return null;
+}
+
+test('le souffle d’une charge part de toute l’embrasure : derrière le battant ou contre le mur, on est sonné', () => {
+  let w = null, g = null;
+  for (let i = 0; i < LEVELS.length && !w; i++) { g = mkGame({ alone: true, level: i }); w = doorWithWalls(g.game); }
+  ok(w, 'une porte de test');
+  const game = g.game, p = game.player;
+  // ce que voyait l'ancien souffle (une ligne de vue depuis le milieu de la porte grande ouverte) : ni l'un ni l'autre
+  setDoor(w.d, 1);
+  ok(!game.map.hasLOS(w.d.cx, w.d.cy, w.leaf.x, w.leaf.y) && !game.map.hasLOS(w.d.cx, w.d.cy, w.wall.x, w.wall.y), 'le battant et le mur les cachaient');
+  setDoor(w.d, 0);
+  const foes = [w.leaf, w.wall].map(q => { const e = new Enemy(q.x, q.y, 0, 'ak'); e.hp = e.maxHp = 1e6; return e; });
+  game.enemies = foes;
+  game.updateEnemy = () => {};
+  p.x = w.me.x; p.y = w.me.y;
+  g.press('KeyB');
+  g.step(Math.ceil(CHARGE_PLACE * 60) + 2);
+  eq(game.charges.length, 1, 'charge posée');
+  g.press('KeyB');
+  ok(w.d.broken, 'porte soufflée');
+  ok(foes[0].stun > 1, 'derrière le battant rabattu : sonné (' + foes[0].stun.toFixed(2) + ')');
+  ok(foes[1].stun > 1, 'contre le mur, loin du cadre : sonné (' + foes[1].stun.toFixed(2) + ')');
+});
+
 // ---------------------------------------------------------------- entrée coordonnée
 test('clic droit sur une porte fermée : l’équipe se met en colonne, puis entre quand elle s’ouvre', () => {
   const g = mkGame({ noEnemyAI: true });
@@ -2646,6 +2759,208 @@ test('un clic droit sur une porte ouverte reste un ordre de déplacement', () =>
   ok(!game.stack && game.mates.every(m => m.order === 'move'), 'déplacement ordinaire');
 });
 
+// ---------------------------------------------------------------- entrée coordonnée de l'intervention (siège)
+// La première vague (trois opérateurs aveugles : ni combat ni flash d'eux-mêmes) à deux cases de la porte d, côté side,
+// leur dernier contact deux cases derrière elle ; la colonne est forcée (stackOdds), de la manière demandée (pickEntry).
+// Plus de vague ensuite, ni otage ni complice ; le joueur, increvable, attend loin de là. null si la place manque.
+function aiStack(g, d, side, tactic) {
+  const game = g.game, s = game.siege, nx = d.horizontal ? 0 : 1, ny = d.horizontal ? 1 : 0;
+  const across = o => Math.sign(d.horizontal ? o.y - d.cy : o.x - d.cx);
+  s.prep = 0.01; g.step(2);
+  s.wave = s.waves.length;
+  game.hostages = [];
+  game.mates.forEach(m => { m.alive = false; });
+  const start = { x: d.cx + nx * side * 2 * U, y: d.cy + ny * side * 2 * U };
+  if (!game.map.circleFree(start.x, start.y, 12, true)) return null;
+  const spots = [start, ...freeSpotsAround(game, start, 4).filter(q => across(q) === side)].slice(0, 3);
+  if (spots.length < 3) return null;
+  const ops = game.enemies.slice(0, 3);
+  game.enemies = ops;
+  ops.forEach((o, i) => Object.assign(o, { x: spots[i].x, y: spots[i].y, act: null, waitDoor: null, path: [], viewRange: 0, flashCd: 1e9, target: null, alertAngle: null,
+    hp: 1e9, maxHp: 1e9, lastKnown: { x: d.cx - nx * side * 2 * U, y: d.cy - ny * side * 2 * U } }));
+  const p = game.player;
+  p.hp = p.maxHp = 1e9;
+  for (let ty = 2; ty < game.map.h - 2; ty++) for (let tx = 2; tx < game.map.w - 2; tx++) {
+    const x = (tx + 0.5) * TILE, y = (ty + 0.5) * TILE;
+    if (dist(x, y, d.cx, d.cy) > 10 * U && game.map.circleFree(x, y, 12, true)) { p.x = x; p.y = y; ty = tx = 1e9; }
+  }
+  game.stackOdds = () => 1;
+  game.pickEntry = () => tactic;
+  return { game, ops, across };
+}
+
+test('siège : l’intervention se met en colonne sur une porte fermée, l’ouvre et entre', () => {
+  const g = mkGame({ mode: 'siege' });
+  const w = doorWithRoom(g.game);
+  ok(w, 'une porte de test');
+  const r = aiStack(g, w.d, -1, 'plain');
+  ok(r, 'la place pour trois');
+  const { game, ops, across } = r, s = game.hunt;
+  let formed = null;
+  for (let i = 0; i < 120 && !formed; i++) { game.update(1 / 60); formed = s.stacks[0]; }
+  ok(formed && formed.door === w.d, 'une colonne se forme devant la porte');
+  ok(formed.team.length === 3 && ops.every(o => o.entry === formed), 'les trois en sont');
+  let ready = false, opener = null;
+  const doorAction = game.doorAction.bind(game);
+  game.doorAction = (a, d, t) => {
+    if (d === w.d && t > 0 && !opener) {
+      opener = a;
+      ready = w.d.progress === 0 && ops.every(o => across(o) === -1 && dist(o.x, o.y, o.orderPos.x, o.orderPos.y) < 10);
+    }
+    return doorAction(a, d, t);
+  };
+  for (let i = 0; i < 900 && s.stacks.length; i++) game.update(1 / 60);
+  ok(ready, 'chacun à son poste, de son côté, quand la porte s’ouvre');
+  ok(!s.stacks.length && ops.includes(opener), 'l’un d’eux a ouvert la porte (' + who(opener) + ')');
+  ok(ops.every(o => o.clear), 'chacun a un angle de la pièce à tenir');
+  for (let i = 0; i < 300 && !ops.every(o => across(o) === 1); i++) game.update(1 / 60);
+  ok(ops.every(o => across(o) === 1), 'tous sont entrés dans la pièce');
+});
+
+test('siège : à trois avec une flash, l’intervention la glisse dans la pièce, puis entre', () => {
+  const g = mkGame({ mode: 'siege' });
+  const w = doorWithRoom(g.game);
+  const r = aiStack(g, w.d, -1, 'flash');
+  ok(r, 'la place pour trois');
+  const { game, ops, across } = r, s = game.hunt;
+  // un complice (aveugle lui aussi : il ne tire pas) attend dans la pièce
+  const m = game.mates[0];
+  Object.assign(m, { alive: true, x: w.b.x, y: w.b.y, viewRange: 0, stun: 0 });
+  const flashes = ops.reduce((n, o) => n + o.flashbangs, 0);
+  let thrown = null, boom = null, formed = null;
+  const spawn = game.spawnFlash.bind(game), det = game.detonateFlash.bind(game);
+  game.spawnFlash = (a, x, y, c, via) => { thrown = { by: a, progress: w.d.progress }; spawn(a, x, y, c, via); };
+  game.detonateFlash = (x, y, gr) => { det(x, y, gr); boom = { across: across({ x, y }), stunned: m.stun > 0, progress: w.d.progress }; };
+  for (let i = 0; i < 1200 && (!formed || s.stacks.length); i++) { game.update(1 / 60); formed = formed || s.stacks[0]; }
+  ok(formed && formed.tactic === 'flash', 'colonne pour une entrée à la flash');
+  ok(thrown && ops.includes(thrown.by) && thrown.progress > 0, 'un opérateur la lance par la porte entrouverte ou ouverte (' + (thrown && thrown.progress) + ')');
+  eq(ops.reduce((n, o) => n + o.flashbangs, 0), flashes - 1, 'une flash de moins dans l’équipe');
+  ok(boom && boom.across === 1, 'elle éclate de l’autre côté de la porte');
+  ok(boom.stunned, 'le complice qui attendait là est sonné');
+  ok(!s.stacks.length && ops.every(o => o.clear || across(o) === 1), 'puis ils entrent');
+  for (let i = 0; i < 300 && !ops.every(o => across(o) === 1); i++) game.update(1 / 60);
+  ok(ops.every(o => across(o) === 1), 'tous sont dans la pièce');
+});
+
+test('siège : l’intervention pose une charge, s’écarte, la fait sauter et entre sur des défenseurs sonnés', () => {
+  const g = mkGame({ mode: 'siege' });
+  const w = doorWithRoom(g.game);
+  const r = aiStack(g, w.d, -1, 'charge');
+  ok(r, 'la place pour trois');
+  const { game, ops, across } = r, s = game.hunt, p = game.player;
+  const nx = w.nx, ny = w.ny;
+  const m = game.mates[0];
+  Object.assign(m, { alive: true, x: w.b.x, y: w.b.y, viewRange: 0, stun: 0 });
+  // le joueur aussi, juste derrière la porte, un peu de côté
+  const side = [1, -1].map(k => ({ x: w.b.x + ny * k * U - nx * 0.4 * U, y: w.b.y + nx * k * U - ny * 0.4 * U })).find(q => game.map.circleFree(q.x, q.y, 12, true));
+  if (side) { p.x = side.x; p.y = side.y; }
+  const carrier = ops.find(o => o.charges > 0);
+  ok(carrier, 'un opérateur de la vague porte une charge');
+  let placed = null, blast = null, formed = null;
+  const det = game.detonateCharge.bind(game);
+  game.detonateCharge = c => {
+    const near = Math.min(...ops.map(o => dist(o.x, o.y, w.d.cx, w.d.cy)));
+    det(c);
+    blast = { near, mate: m.stun, player: p.stun, msg: game.message.text, hp: ops.map(o => o.hp) };
+  };
+  for (let i = 0; i < 1500 && (!formed || s.stacks.length); i++) {
+    game.update(1 / 60);
+    formed = formed || s.stacks[0];
+    placed = placed || game.charges.find(c => c.door === w.d);
+  }
+  ok(formed && formed.tactic === 'charge', 'colonne pour une entrée à la charge');
+  ok(placed && placed.by === carrier && placed.team === 'enemy' && carrier.charges === 0, 'le porteur l’a posée (' + who(placed && placed.by) + ')');
+  ok(Math.sign(placed.x - w.d.cx || placed.y - w.d.cy) === -1, 'de leur côté du battant');
+  ok(blast, 'mise à feu');
+  ok(blast.near > CHARGE_NEAR, 'personne de leur côté à portée du souffle (' + (blast.near / U).toFixed(2) + ' case)');
+  ok(blast.hp.every(h => h === 1e9), 'aucun opérateur blessé');
+  ok(w.d.broken && w.d.open, 'la porte a sauté');
+  ok(blast.mate > 1, 'le complice derrière la porte est sonné');
+  if (side) ok(blast.player > 1 && /sonné/.test(blast.msg), 'le joueur aussi, et il le sait');
+  ok(!s.stacks.length, 'ils entrent');
+  for (let i = 0; i < 300 && !ops.every(o => across(o) === 1); i++) game.update(1 / 60);
+  ok(ops.every(o => across(o) === 1), 'tous sont dans la pièce');
+});
+
+test('siège : la colonne de l’intervention aboutit par chaque porte intérieure, d’un côté comme de l’autre', () => {
+  const fails = [], seen = { plain: 0, flash: 0, charge: 0 };
+  let runs = 0;
+  LEVELS.forEach((lvl, li) => {
+    const probe = mkGame({ mode: 'siege', level: li }).game;
+    probe.map.doors.forEach((d0, di) => {
+      if (probe.map.breaches.some(b => b.door === d0)) return;
+      [-1, 1].forEach((side, k) => {
+        // une manière par porte et par côté, à tour de rôle
+        const tactic = ['plain', 'flash', 'charge'][(di * 2 + k) % 3];
+        const g = mkGame({ mode: 'siege', level: li });
+        const d = g.game.map.doors[di];
+        const r = aiStack(g, d, side, tactic);
+        if (!r) return; // pas la place pour trois
+        const { game, ops, across } = r, s = game.hunt;
+        let formed = null, blown = false, thrown = false;
+        const det = game.detonateCharge.bind(game), sp = game.spawnFlash.bind(game);
+        game.detonateCharge = c => { blown = true; det(c); };
+        game.spawnFlash = (...a) => { thrown = true; sp(...a); };
+        for (let i = 0; i < 2400 && (!formed || s.stacks.includes(formed)); i++) { game.update(1 / 60); formed = formed || s.stacks[0]; }
+        if (formed && formed.door !== d) return; // leur chemin passait par une autre porte
+        runs++;
+        const how = formed && formed.tactic, team = formed ? formed.team : [], inside = new Set();
+        for (let j = 0; j < 600 && inside.size < team.length; j++) { game.update(1 / 60); team.forEach(o => { if (across(o) === -side) inside.add(o); }); }
+        const why = !formed ? 'pas de colonne' : s.stacks.includes(formed) ? 'colonne bloquée (' + how + ')'
+          : how === 'charge' && !blown ? 'charge jamais mise à feu' : how === 'flash' && !thrown ? 'flash jamais lancée'
+          : inside.size < team.length ? (team.length - inside.size) + ' resté(s) dehors' : ops.some(o => o.hp < 1e9) ? 'un opérateur blessé' : null;
+        if (why) fails.push(`${lvl.name} porte ${di} (${Math.round(d.cx / U)},${Math.round(d.cy / U)}) côté ${side}, ${tactic} : ${why}`);
+        else seen[how]++;
+      });
+    });
+  });
+  ok(runs > 60, runs + ' colonnes essayées');
+  ok(seen.plain && seen.flash && seen.charge, 'les trois manières ont abouti (' + JSON.stringify(seen) + ')');
+  ok(!fails.length, fails.length + ' échecs : ' + fails.join(' ; '));
+});
+
+test('siège : la colonne reste occasionnelle, et la manière d’entrer dépend des effectifs et du matériel', () => {
+  ok(AI_STACK_CHANCE < 1 && AI_STACK_THREAT < 1, 'pas à chaque porte');
+  const g = mkGame({ mode: 'siege' });
+  const game = g.game, w = doorWithRoom(game), d = w.d;
+  ok(game.stackOdds(true) > game.stackOdds(false), 'plus souvent quand la menace est derrière la porte');
+  game.siege.prep = 0.01; g.step(2);
+  const hostages = game.hostages;
+  game.hostages = [];
+  const ops = game.enemies.slice(0, 3);
+  eq(ops.filter(o => o.charges > 0).length, WAVE_CHARGES, 'chaque vague porte ses charges');
+  const draws = (team, n) => {
+    const c = { plain: 0, flash: 0, charge: 0 };
+    for (let i = 0; i < n; i++) c[game.pickEntry(team, d, false)]++;
+    return c;
+  };
+  ops.forEach((o, i) => { o.flashbangs = 2; o.charges = i ? 0 : 1; });
+  const all = draws(ops, 400);
+  ok(all.plain && all.flash && all.charge, 'à trois, avec flashs et charge : les trois manières (' + JSON.stringify(all) + ')');
+  eq(draws(ops.slice(0, 2), 300).flash, 0, 'à deux : jamais de flash');
+  setDoor(d, 0.3);
+  eq(draws(ops, 300).charge, 0, 'porte entrebâillée : pas de charge');
+  setDoor(d, 0);
+  const h = hostages[0];
+  Object.assign(h, { x: w.b.x, y: w.b.y, found: true });
+  game.hostages = [h];
+  eq(draws(ops, 300).charge, 0, 'un otage repéré derrière la porte : pas de charge');
+  game.hostages = [];
+  ops.forEach(o => { o.charges = 0; });
+  eq(draws(ops, 300).charge, 0, 'plus de charge : pas d’entrée à la charge');
+  ops.forEach(o => { o.flashbangs = 0; });
+  eq(draws(ops, 300).flash, 0, 'plus de flash : pas d’entrée à la flash');
+  // seul devant la porte, un opérateur l'ouvre en passant
+  const g2 = mkGame({ mode: 'siege' });
+  const w2 = doorWithRoom(g2.game);
+  const r = aiStack(g2, w2.d, -1, 'plain');
+  ok(r, 'la place');
+  r.ops.slice(1).forEach(o => { o.alive = false; });
+  let formed = false;
+  for (let i = 0; i < 240 && w2.d.progress === 0; i++) { r.game.update(1 / 60); formed = formed || r.game.hunt.stacks.length > 0; }
+  ok(!formed && w2.d.progress > 0, 'seul : pas de colonne, il ouvre lui-même');
+});
+
 // ---------------------------------------------------------------- poignée, chargeur, gilet
 test('poignée avant : la rafale s’ouvre moins ; chargeur long : plus de coups avant de recharger', () => {
   ok(fittedDef('mp7', { grip: true }) === WEAPONS.mp7 && fittedDef('usp45', { mag: true }) === WEAPONS.usp45, 'refusés là où ils ne vont pas');
@@ -2785,6 +3100,269 @@ test('alerte générale : abattu ou sonné à temps, il ne prévient personne', 
   ok(!sc2.game.alarm, 'sonné, le temps ne compte pas');
   for (let i = 0; i < (ALARM_TIME + 1) * 60 && !sc2.game.alarm; i++) sc2.game.update(1 / 60);
   ok(sc2.game.alarm, 'revenu à lui, il finit par la donner');
+});
+
+// ---------------------------------------------------------------- trinômes
+test('trinômes : deux trinômes par camp ; le vôtre par l’ouverture choisie, ceux d’en face par des ouvertures hors de vue', () => {
+  for (const mode of ['squads', 'squadsArmed']) for (let lvl = 0; lvl < LEVELS.length; lvl++) {
+    const g = mkGame({ mode, level: lvl });
+    const game = g.game, map = game.map, tag = mode + ' / ' + LEVELS[lvl].name, police = mode === 'squads';
+    const b0 = map.breaches[game.entryIndex];
+    const crew = game.mates.filter(m => !m.hunter), auto = game.mates.filter(m => m.hunter);
+    ok(crew.length === 2 && crew.every(m => m instanceof Teammate && m.order === 'follow'), tag + ' : deux coéquipiers à vos ordres');
+    ok(auto.length === 3 && auto.every(m => m.team === 'ops' && m.group === auto[0].group && m.name), tag + ' : un second trinôme autonome, nommé');
+    eq(game.enemies.length, 6, tag + ' : six en face');
+    const groups = [...new Set(game.enemies.map(e => e.group))];
+    ok(groups.length === 2 && groups.every(gr => gr && gr.members.length === 3 && gr.team === 'enemy'), tag + ' : en deux trinômes');
+    eq(game.hostages.length, 0, tag + ' : pas d’otage');
+    eq(game.squadSize, 6, tag + ' : six de votre côté');
+    ok(police ? game.enemies.every(e => !(e instanceof Operator) && e.nade === 'frag') : game.enemies.every(e => e instanceof Operator && e.flashbangs > 0),
+      tag + ' : l’autre camp en face');
+    ok(police ? auto.every(m => m instanceof Operator) : auto.every(m => !(m instanceof Operator) && m.nade === 'frag' && m.style), tag + ' : votre second trinôme est de votre camp');
+    eq(game.player.nade, police ? 'flash' : 'frag', tag + ' : vos grenades');
+    eq(game.player.charges, police ? CHARGES : 0, tag + ' : vos charges');
+    const hidden = b => !map.hasLOS(b.inside.x, b.inside.y, b0.inside.x, b0.inside.y) || dist(b.inside.x, b.inside.y, b0.inside.x, b0.inside.y) > SQUAD_APART;
+    ok(groups.every(gr => gr.breach !== b0 && hidden(gr.breach)), tag + ' : l’adversaire n’entre pas en vue de votre ouverture');
+    // (le joueur et ses coéquipiers partent comme en assaut ; les trinômes autonomes, eux, sont placés ici)
+    const all = [...game.ops, ...game.enemies], placed = all.filter(a => a.group);
+    ok(placed.every(a => map.circleFree(a.x, a.y, 10, false)), tag + ' : chacun à une place libre');
+    ok(all.every((a, i) => all.every((b, j) => j <= i || dist(a.x, a.y, b.x, b.y) >= 18)), tag + ' : personne l’un sur l’autre');
+  }
+});
+
+test('trinômes : vos ordres ne vont qu’à votre trinôme ; l’autre progresse seul, et le HUD le montre', () => {
+  const g = mkGame({ mode: 'squads' });
+  const game = g.game;
+  game.enemies = [];
+  const auto = game.mates.filter(m => m.hunter), crew = game.crew;
+  const start = auto.map(m => ({ x: m.x, y: m.y }));
+  g.press('KeyT');
+  ok(crew.every(m => m.order === 'hold'), 'T : votre trinôme tient');
+  ok(auto.every(m => m.order === undefined), 'le second trinôme ne prend pas d’ordre');
+  let far = 0;
+  const reach = auto.map(() => 0);
+  for (let i = 0; i < 60 * 20; i++) {
+    game.update(1 / 60);
+    const spread = Math.max(...auto.map(a => Math.max(...auto.map(b => dist(a.x, a.y, b.x, b.y)))));
+    if (spread > SQUAD_SPREAD + 2 * U) far++;
+    auto.forEach((m, k) => { reach[k] = Math.max(reach[k], dist(m.x, m.y, start[k].x, start[k].y)); });
+  }
+  ok(reach.every(d => d > 4 * U), 'il a progressé dans le bâtiment (' + reach.map(d => (d / U).toFixed(1)).join(', ') + ' cases)');
+  ok(far < 60 * 4, 'il reste groupé (dispersé ' + (far / 60).toFixed(1) + ' s sur 20)');
+  g.step(1);
+  const rows = [...document.querySelectorAll('#squad .mate')];
+  eq(rows.length, 5, 'cinq lignes dans le HUD de l’équipe');
+  eq(rows.filter(r => r.classList.contains('auto')).length, 3, 'le second trinôme à part');
+  ok(/Adversaires : 0 \/ 0 · Votre camp : 6 \/ 6/.test(document.getElementById('objective').textContent), 'objectif : qui reste debout de chaque côté');
+});
+
+test('trinômes : le second trinôme de votre camp tire sur l’adversaire et partage ce qu’il apprend', () => {
+  const g = mkGame({ mode: 'squads' });
+  const game = g.game;
+  const [a, b] = game.mates.filter(m => m.hunter), grp = a.group;
+  const foe = game.enemies[0];
+  game.enemies = [foe];
+  Object.assign(foe, { viewRange: 0, hp: 1e6, maxHp: 1e6 });
+  const spot = freeSpotsAround(game, a, 16).find(q => dist(q.x, q.y, a.x, a.y) > 2 * U);
+  ok(spot, 'une place en vue');
+  foe.x = spot.x; foe.y = spot.y;
+  a.angle = Math.atan2(foe.y - a.y, foe.x - a.x);
+  let shots = 0;
+  const fire = game.fireWeapon.bind(game);
+  game.fireWeapon = s => { if (s === a) shots++; fire(s); };
+  for (let i = 0; i < 120 && !shots; i++) game.update(1 / 60);
+  ok(shots > 0, 'il tire sur l’homme d’en face');
+  ok(grp.contact && dist(grp.contact.x, grp.contact.y, foe.x, foe.y) < U, 'son trinôme sait où il est');
+  // ce qu'il entend de l'adversaire, son trinôme le sait ; ce qu'il entend des siens ne l'égare pas
+  grp.contact = null;
+  for (const o of grp.members) { o.lastKnown = null; o.target = null; o.stun = 0; }
+  game.noise(game.player.x, game.player.y, 14 * U, game.player, 'shot');
+  eq(grp.contact, null, 'vos coups de feu ne les trompent pas');
+  game.noise(foe.x, foe.y, 14 * U, foe, 'shot');
+  ok(grp.contact && b.group === grp, 'un coup de feu d’en face entendu : le trinôme sait d’où');
+});
+
+test('trinômes : en face aussi, une balle touche qui se trouve sur sa trajectoire, ami ou ennemi', () => {
+  const shoot = mode => {
+    const g = mkGame({ mode });
+    const game = g.game;
+    const [e1, e2] = game.enemies;
+    game.enemies = [e1, e2]; // personne d'autre sur la trajectoire
+    game.ops.forEach(o => { o.x = e1.x - 6 * U; o.y = e1.y; });
+    const s = freeSpotsAround(game, e1, 12).find(q => dist(q.x, q.y, e1.x, e1.y) > 1.5 * U);
+    e2.x = s.x; e2.y = s.y; e2.hp = e2.maxHp = 1e6;
+    const a = Math.atan2(e2.y - e1.y, e2.x - e1.x);
+    game.bullets = [{ x: e1.x + Math.cos(a) * 14, y: e1.y + Math.sin(a) * 14, vx: Math.cos(a) * 900, vy: Math.sin(a) * 900, team: 'enemy', damage: 20, life: 1, shooter: e1, ox: e1.x, oy: e1.y, trail: 10, pierce: 0.4, pierced: 0, breach: 0, pen: 1 }];
+    for (let i = 0; i < 10; i++) game.updateBullets(1 / 60);
+    return e2.hp < e2.maxHp;
+  };
+  ok(shoot('squads'), 'trinômes : la balle d’en face touche l’un des siens');
+  ok(!shoot('assault'), 'assaut : les suspects ne se touchent pas entre eux (inchangé)');
+});
+
+test('trinômes : à votre mort, la main passe à votre trinôme puis à l’autre ; le dernier camp debout l’emporte', () => {
+  const g = mkGame({ mode: 'squads', noEnd: false });
+  const game = g.game;
+  game.enemies.forEach(e => { Object.assign(e, { viewRange: 0, hp: 1e9, maxHp: 1e9 }); });
+  const foe = game.enemies[0];
+  const kill = (a, by) => game.damage(a, 1e10, by || foe, 0);
+  const crew = game.crew, auto = game.mates.filter(m => m.hunter), grp = auto[0].group;
+  for (let k = 0; k < 2; k++) {
+    kill(game.player);
+    g.step(Math.ceil(RELAY_DELAY * 60) + 2);
+    ok(crew.includes(game.player), 'relais ' + (k + 1) + ' : un coéquipier de votre trinôme (' + who(game.player) + ')');
+  }
+  kill(game.player);
+  g.step(Math.ceil(RELAY_DELAY * 60) + 2);
+  const p = game.player;
+  ok(auto.includes(p) && !p.hunter && !p.group, 'votre trinôme tombé, un homme de l’autre prend la main (' + who(p) + ')');
+  ok(!grp.members.includes(p), 'il quitte la manœuvre autonome');
+  ok(p.weapon.name === 'HK416 A5' || p.weapon.name === 'HK MP5A3', 'avec son arme');
+  ok(Number.isFinite(p.slot.mag), 'chargeur fini, comme une arme ramassée');
+  ok(!game.over, 'la partie continue');
+  game.enemies.forEach(e => kill(e, p));
+  g.step(2);
+  eq(game.over, 'win', 'plus personne en face : c’est gagné');
+  g.ui.showEnd('win');
+  ok(/Engagement remporté/.test(g.ui.panel.textContent) && /Adversaires neutralisés/.test(g.ui.panel.textContent), 'écran de fin du mode');
+  const g2 = mkGame({ mode: 'squadsArmed', noEnd: false });
+  g2.game.ops.forEach(o => g2.game.damage(o, 1e10, g2.game.enemies[0], 0));
+  g2.step(2);
+  eq(g2.game.over, 'lose', 'tout votre camp à terre : c’est perdu');
+  ok(/trinômes/.test(g2.game.loseReason), 'raison affichée');
+  ok(g2.game.score.lines.some(l => /Engagement/.test(l.label)) && g2.game.score.total <= 49, 'note de fin du mode');
+});
+
+test('trinômes : le groupe armé ne se met pas en colonne, et sa grenade ne part jamais près des siens', () => {
+  const g = mkGame({ mode: 'squads' });
+  const game = g.game, map = game.map;
+  const [mil, bud] = game.enemies;
+  ok(mil.hunter && !mil.drilled && mil.flashbangs === 2, 'un homme du groupe armé : autonome, pas entraîné à la colonne, deux grenades');
+  ok(game.ops.filter(o => o.hunter).every(o => o.drilled), 'l’intervention, si');
+  // un lancer dégagé de cinq cases
+  let s = null;
+  for (let ty = 2; ty < map.h - 2 && !s; ty++) for (let tx = 2; tx < map.w - 2 && !s; tx++) {
+    const x = (tx + 0.5) * TILE, y = (ty + 0.5) * TILE;
+    if (map.circleFree(x, y, 12, true) && map.circleFree(x + 5 * U, y, 12, true) && game.clearThrow(x, y, x + 5 * U, y)) s = { x, y };
+  }
+  ok(s, 'un lancer dégagé');
+  game.enemies = [mil, bud];
+  game.ops.forEach(o => { o.alive = false; }); // personne pour l'abattre pendant le geste
+  Object.assign(mil, { x: s.x, y: s.y, act: null, flashCd: 0, lastKnown: { x: s.x + 5 * U, y: s.y } });
+  Object.assign(bud, { x: s.x + 5 * U, y: s.y + U });
+  ok(!game.maybeFlash(mil, 1 / 60) && !mil.act, 'un équipier près du point visé : pas de grenade');
+  bud.alive = false; mil.flashCd = 0;
+  mil.lastKnown = { x: s.x + 3 * U, y: s.y };
+  ok(!game.maybeFlash(mil, 1 / 60) && !mil.act, 'trop près de lui : pas de grenade non plus');
+  mil.lastKnown = { x: s.x + 5 * U, y: s.y }; mil.flashCd = 0;
+  ok(game.maybeFlash(mil, 1 / 60) && mil.act && mil.act.type === 'grenade', 'voie libre, à bonne distance : il dégoupille');
+  for (let i = 0; i < 40; i++) game.update(1 / 60);
+  ok(game.grenades.some(gr => gr.kind === 'frag' && gr.thrower === mil), 'une grenade à fragmentation');
+});
+
+test('trinômes : le groupe armé vient équipé — silencieux, laser, poignée, chargeur long —, pas celui du siège', () => {
+  ok(!accFits('akP', 'sup', MODES.siege) && accFits('akP', 'sup', MODES.squadsArmed), 'AKM : silencieux en trinômes seulement');
+  ok(accFits('akP', 'mag', MODES.siege), 'le tambour reste en siège');
+  ok(accFits('skorpionP', 'sup', MODES.squadsArmed) && !accFits('skorpionP', 'laser', MODES.squadsArmed), 'Škorpion : un silencieux, pas de rail');
+  const kit = { primary: 'akP', sidearm: 'makarovP', acc: { akP: { sup: true, grip: true, mag: true } } };
+  const ls = Game.normLoadout(kit, MODES.siege).acc.akP, lt = Game.normLoadout(kit, MODES.squadsArmed).acc.akP;
+  ok(!ls.sup && !ls.grip && ls.mag, 'en siège, seul le tambour reste monté');
+  ok(lt.sup && lt.grip && lt.mag, 'en trinômes, tout reste');
+  const pbs = fittedDef('akP', { sup: true, laser: true, grip: true });
+  ok(pbs.suppressed && pbs.noise <= WEAPONS.akP.noise / 4 && pbs.damage < WEAPONS.akP.damage, 'PBS-1 : munition subsonique, presque muette, un peu moins forte');
+  ok(pbs.laser && pbs.grip && pbs.bloom < WEAPONS.akP.bloom && pbs.weight > WEAPONS.akP.weight + 0.8, 'garde-main à rails : laser et poignée, qui pèsent');
+  eq(fittedDef('skorpionP', { sup: true }).damage, WEAPONS.skorpionP.damage, 'le 7,65 Browning est subsonique d’origine : rien de perdu');
+  // les hommes du groupe armé que mène l'IA en portent, dans un camp comme dans l'autre ; l'intervention, non
+  for (const mode of ['squads', 'squadsArmed']) {
+    const game = mkGame({ mode }).game;
+    const armed = mode === 'squads' ? game.enemies : game.mates.filter(m => m.hunter);
+    const police = mode === 'squads' ? game.mates.filter(m => m.hunter) : game.enemies;
+    ok(armed.every(a => a.weapon.acc && Object.values(a.weapon.acc).some(Boolean)), mode + ' : chacun au moins un accessoire');
+    ok(armed.every(a => a.weapon.mag === Infinity && a.slot.mag === Infinity && a.burstLeft === a.weapon.burst), mode + ' : chargeur sans fin, rafale prête');
+    ok(police.every(a => !a.weapon.acc), mode + ' : les opérateurs n’en ont pas de plus');
+  }
+  // ramassée sur un corps, l'arme garde ce qu'elle porte, avec un vrai chargeur
+  const got = mkGame({ alone: true }).game.pickupSlot({ def: fittedDef('akH', { sup: true, mag: true }), mag: Infinity, reserve: 0 });
+  eq(got.def, fittedDef('akP', { sup: true, mag: true }), 'un AKM au PBS-1 et au tambour');
+  eq(got.mag, 75, 'tambour plein');
+  // un laser de l'IA aide à tirer en marchant, mais il se voit
+  const g = mkGame({ mode: 'squads' });
+  const game = g.game, e = game.enemies[0];
+  const far = a => freeSpotsAround(game, a, 16).find(q => dist(q.x, q.y, a.x, a.y) > 1.5 * U);
+  const o = game.mates.find(m => m.hunter && far(m));
+  ok(o, 'un opérateur avec de la place autour de lui');
+  game.enemies = [e];
+  game.ops.forEach(a => { if (a !== o) a.alive = false; }); // personne d'autre dans le faisceau
+  e.slot = { def: fittedDef('akH', { laser: true }), mag: Infinity, reserve: 0 };
+  e.moving = true;
+  const lit = game.spreadOf(e);
+  e.laserOn = false;
+  const off = game.spreadOf(e);
+  e.laserOn = true; e.moving = false;
+  ok(lit < off, 'laser allumé : moins de dispersion en marchant');
+  const spot = far(o);
+  e.x = spot.x; e.y = spot.y;
+  e.angle = Math.atan2(o.y - e.y, o.x - e.x);
+  o.angle = Math.atan2(e.y - o.y, e.x - o.x);
+  o.alertAngle = null; o.laserT = 0;
+  game.beams = [e, o].map(a => game.laserBeam(a)).filter(Boolean);
+  ok(game.beams.length === 1 && game.beams[0].from === e && game.beams[0].on === o, 'son faisceau va jusqu’à l’opérateur');
+  game.spotLaser(o, 1 / 60);
+  ok(o.alertAngle !== null && Math.abs(angleDiff(o.alertAngle, o.angle)) < 0.05, 'l’opérateur qui le voit se tourne vers sa source');
+  g.step(1);
+  ok(game.beams.some(b => b.from === e), 'il compte parmi les faisceaux de la partie (dessinés là où on les voit)');
+});
+
+test('trinômes : au briefing, le groupe armé monte silencieux, laser et poignée sur ses AK ; en siège, non', () => {
+  // le briefing enregistre l'équipement : on remet celui du joueur en sortant
+  const KEYS = ['breach.loadout.siege', 'breach.loadout.squadsArmed'], sauve = {};
+  try { KEYS.forEach(k => { sauve[k] = localStorage.getItem(k); }); } catch (e) { /* stockage indisponible */ }
+  try {
+    const acc = (ui, k, a) => ui.panel.querySelector('.accbtn[data-key="' + k + '"][data-acc="' + a + '"]');
+    const gs = mkGame({ mode: 'siege', loadout: { primary: 'akP', sidearm: 'makarovP' } });
+    gs.ui.showBriefing();
+    ok(['sup', 'laser', 'light', 'grip'].every(a => acc(gs.ui, 'akP', a).disabled), 'siège : ni silencieux ni rails sur l’AKM');
+    ok(/trinômes/.test(acc(gs.ui, 'akP', 'sup').title), 'et la bulle dit pourquoi');
+    ok(!acc(gs.ui, 'akP', 'mag').disabled, 'le tambour, si');
+    gs.ui.hideOverlay();
+    const gt = mkGame({ mode: 'squadsArmed', loadout: { primary: 'akP', sidearm: 'makarovP' } });
+    gt.ui.showBriefing();
+    for (const a of ['sup', 'laser', 'grip']) acc(gt.ui, 'akP', a).click();
+    const w = gt.game.player.slots[0].def;
+    ok(w.suppressed && w.laser && w.grip, 'trinômes : l’AKM au silencieux, au laser et à la poignée');
+    ok(/subsonique/.test(gt.ui.$('wdetail').textContent), 'la fiche annonce la munition subsonique');
+    const txt = gt.ui.panel.textContent;
+    ok(/Complices/.test(txt) && gt.game.crew.every(m => txt.includes(m.name + ' : ' + m.weapon.name)), 'l’arme de chaque complice, et ce qu’elle porte');
+    gt.ui.hideOverlay();
+  } finally {
+    try { KEYS.forEach(k => { if (sauve[k] === null) localStorage.removeItem(k); else localStorage.setItem(k, sauve[k]); }); } catch (e) { /* idem */ }
+  }
+});
+
+test('trinômes : un seul bouton de mode ; le camp se choisit au briefing, avec son équipement', () => {
+  const saved = localStorage.getItem('breach.mode');
+  try {
+    const g = mkGame({ mode: 'squads' });
+    const ui = g.ui, game = g.game;
+    ui.showBriefing();
+    const btn = ui.panel.querySelector('.modebtn[data-mode="squads"]');
+    ok(btn && btn.classList.contains('sel'), 'le bouton des trinômes');
+    ok(!ui.panel.querySelector('.modebtn[data-mode="squadsArmed"]'), 'pas de second bouton pour l’autre camp');
+    const camps = [...ui.panel.querySelectorAll('.campbtn')];
+    ok(camps.length === 2 && camps.find(b => b.dataset.mode === 'squads').classList.contains('sel'), 'les deux camps, l’intervention retenue');
+    ok(ui.panel.querySelectorAll('.entrybtn').length > 1, 'le choix de l’ouverture');
+    ok(ui.panel.querySelectorAll('.vestbtn').length === 2 && /Engager/.test(ui.panel.querySelector('#ovGo').textContent), 'gilets, et « Engager »');
+    camps.find(b => b.dataset.mode === 'squadsArmed').click();
+    eq(game.mode, 'squadsArmed', 'groupe armé');
+    ok(ui.panel.querySelector('.modebtn[data-mode="squads"]').classList.contains('sel'), 'toujours le même bouton de mode');
+    const cards = [...ui.panel.querySelectorAll('.wcard')].map(b => b.dataset.key);
+    ok(cards.length && cards.every(k => MODES.squadsArmed.primaries.includes(k) || MODES.squadsArmed.sidearms.includes(k)), 'l’équipement du groupe armé');
+    eq(ui.panel.querySelectorAll('.vestbtn').length, 0, 'pas de gilet de ce côté');
+    eq(game.player.nade, 'frag', 'des grenades à fragmentation');
+    ok(game.enemies.every(e => e instanceof Operator), 'l’intervention en face');
+  } finally {
+    if (saved === null) localStorage.removeItem('breach.mode'); else localStorage.setItem('breach.mode', saved);
+  }
 });
 
 // ---------------------------------------------------------------- escorte
@@ -3035,7 +3613,7 @@ test('escorte : HUD, briefing et missions montrent le VIP et le chemin de A à B
   eq(UI.compass(U, 0), 'tout près', 'boussole');
   ui.showBriefing();
   const modes = [...ui.panel.querySelectorAll('.modebtn')];
-  eq(modes.length, 3, 'trois modes');
+  eq(modes.length, 4, 'quatre modes');
   ok(modes.find(b => b.dataset.mode === 'escort').classList.contains('sel'), 'escorte sélectionnée');
   eq(ui.panel.querySelectorAll('.entrybtn').length, 0, 'pas de choix d’entrée : on part du point A');
   ok(/exfiltration/.test(ui.panel.querySelector('#ovGo').textContent), 'bouton de départ');
@@ -3074,8 +3652,8 @@ test('passer en escorte charge ses propres cartes ; revenir retrouve la mission 
 });
 
 // ---------------------------------------------------------------- rendu
-test('chaque mission se joue sans exception, dans les deux modes', () => {
-  for (const mode of ['assault', 'siege']) {
+test('chaque mission se joue sans exception, en assaut, en siège et en trinômes (des deux côtés)', () => {
+  for (const mode of ['assault', 'siege', 'squads', 'squadsArmed']) {
     for (let lvl = 0; lvl < LEVELS.length; lvl++) {
       // en assaut, une mission sur deux dans le noir, portes verrouillées, rondes, alerte générale, lampe en
       // main, poignée, chargeur long et gilet lourd
@@ -3088,6 +3666,7 @@ test('chaque mission se joue sans exception, dans les deux modes', () => {
         const inp = g.game.input;
         inp.mouse.x = p.x + Math.cos(i / 40) * 120; inp.mouse.y = p.y + Math.sin(i / 40) * 120;
         inp.mouse.down = i % 90 < 8;
+        inp.keys.KeyD = g.game.squads && i % 120 < 30; // en trinômes, on avance un peu vers l'adversaire
         if (i % 150 === 40) inp.pressed.KeyE = true;
         if (i % 150 === 90) inp.pressed.Space = true;
         if (i % 150 === 120) inp.pressed.KeyH = true;

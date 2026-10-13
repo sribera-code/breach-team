@@ -5,12 +5,15 @@
 // (une case = TILE = 16 px) : chaque case ASCII (x,y) correspond à la petite case (2x,2y), et les petites
 // cases intermédiaires relient les murs voisins. Les murs n'ont donc plus qu'une petite case d'épaisseur,
 // les portes font trois petites cases de large.
-// béton, parquet, carrelage, moquette, dallage de marbre, tôle striée
-const FLOOR = { '.': 0, ',': 1, ':': 2, ';': 3, '=': 4, '%': 5 };
+// béton, parquet, carrelage, moquette, dallage de marbre, tôle striée ; dehors : herbe, gravier, dallage de terrasse
+const FLOOR = { '.': 0, ',': 1, ':': 2, ';': 3, '=': 4, '%': 5, '"': 6, '_': 7, '+': 8 };
+// Sols du dehors (cartes en plein air) : on n'y poste personne d'office (voir Game.buildPosts).
+const OUTDOOR_FLOORS = new Set([6, 7, 8]);
 const WINDOW_LEN = 3; // largeur d'une fenêtre, en petites cases
 const PROPS = {
   c: 'crate', B: 'barrel', T: 'table', p: 'plant', b: 'bed', k: 'desk',
   s: 'sofa', r: 'shelf', a: 'locker', R: 'server', P: 'pallet', C: 'counter',
+  t: 'tree', '~': 'pool',
 };
 // Meubles qui se posent dos au mur (et se prolongent d'une case à l'autre quand on les aligne).
 const PROP_AGAINST_WALL = new Set(['bed', 'sofa', 'shelf', 'locker', 'server', 'counter']);
@@ -60,7 +63,8 @@ class GameMap {
     const AH = rows.length;
     const AW = Math.max(...rows.map(r => r.length));
     const ch = (x, y) => (rows[y] && rows[y][x]) || ' ';
-    const wallish = c => c === '#' || c === 'D' || c === 'X' || c === 'W';
+    // une haie (h) est un mur de verdure : elle arrête le pas, le regard et les balles comme un mur
+    const wallish = c => c === '#' || c === 'D' || c === 'X' || c === 'W' || c === 'h';
 
     this.w = AW * 2 - 1;
     this.h = AH * 2 - 1;
@@ -74,7 +78,8 @@ class GameMap {
     this.doorAt = new Map();
     this.windows = [];
     this.windowAt = new Map();
-    this.breaches = []; // points d'entrée depuis l'extérieur (portes extérieures et fenêtres)
+    this.breaches = []; // points d'entrée depuis l'extérieur (portes extérieures, fenêtres, entrées du terrain)
+    this.hedgeAt = new Set(); // petites cases de mur qui sont des haies (dessin et plan)
     this.props = [];
     this.propAt = new Map();
     this.spawns = [];
@@ -110,6 +115,7 @@ class GameMap {
       else t = 0;
       const i = sy * this.w + sx;
       this.tiles[i] = t;
+      if (t === 1 && contrib.some(k => k.c === 'h') && !contrib.some(k => k.c === '#')) this.hedgeAt.add(i);
       const fl = contrib.find(k => !wallish(k.c) && k.c !== ' ');
       this.floorType[i] = fl ? aFloor[fl.y * AW + fl.x] : 0;
       // zone d'extraction : les petites cases tout entières dans des cases 'Z'
@@ -165,6 +171,8 @@ class GameMap {
           this.addBreach('window', sx, sy, horizontal, null);
           break;
         }
+        // entrée du terrain, au bord de la carte (cartes en plein air) : par là qu'on arrive de la rue
+        case 'O': this.addBreach('gate', sx, sy, null, null); break;
         case 'S': this.spawns.push({ x: sx, y: sy }); break;
         case 'A': this.vipStart = { x: sx, y: sy }; break;
         case 'E': this.enemySpawns.push({ x: sx, y: sy, angle: null }); break;
@@ -175,6 +183,8 @@ class GameMap {
             // un meuble occupe un bloc 2×2 de petites cases
             const p = { x: sx, y: sy, cx: (sx + 1) * TILE, cy: (sy + 1) * TILE, type: PROPS[c], rot: 0, link: { l: false, r: false } };
             if (PROP_AGAINST_WALL.has(p.type)) this.fitProp(p, ch, x, y, wallish);
+            // bassin : la margelle ne court que là où l'eau s'arrête
+            if (p.type === 'pool') p.edges = { n: ch(x, y - 1) !== c, s: ch(x, y + 1) !== c, w: ch(x - 1, y) !== c, e: ch(x + 1, y) !== c };
             this.props.push(p);
             for (const [dx, dy] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
               const px = sx + dx, py = sy + dy;
@@ -183,6 +193,9 @@ class GameMap {
           }
       }
     }
+
+    // (un portillon percé dans une haie n'est plus de la haie)
+    for (const i of this.hedgeAt) if (this.tiles[i] !== 1) this.hedgeAt.delete(i);
 
     // Cases collées à un obstacle : pénalisées par l'A* pour garder les trajets centrés.
     for (let y = 0; y < this.h; y++) for (let x = 0; x < this.w; x++) {
@@ -237,11 +250,12 @@ class GameMap {
   }
 
   // Distance à laquelle un battant coupe le rayon (maxT si aucun). Les portes fermées sont déjà
-  // traitées par les cases ; ici on ne regarde que celles qui ont commencé à s'ouvrir.
-  leafBlock(x, y, dx, dy, maxT) {
+  // traitées par les cases ; ici on ne regarde que celles qui ont commencé à s'ouvrir. skip : une porte
+  // dont on ignore le battant (soufflé par une charge, voir Game.blastReaches).
+  leafBlock(x, y, dx, dy, maxT, skip) {
     let best = maxT, hit = null;
     for (const d of this.doors) {
-      if (d.progress <= 0) continue;
+      if (d.progress <= 0 || d === skip) continue;
       const rx = d.cx - x, ry = d.cy - y, reach = best + d.len * TILE;
       if (rx * rx + ry * ry > reach * reach) continue;
       const s = this.leafSeg(d);
@@ -260,9 +274,16 @@ class GameMap {
   inGoal(x, y) { return this.goalAt.has(Math.floor(y / TILE) * this.w + Math.floor(x / TILE)); }
   blocksMove(x, y) { return this.isWall(x, y) || this.propAt.has(y * this.w + x) || this.windowAt.has(y * this.w + x); }
 
-  // Point d'entrée depuis l'extérieur : on mémorise le côté intérieur, seul côté praticable.
+  // Point d'entrée depuis l'extérieur : on mémorise le côté intérieur, seul côté praticable. Une entrée du terrain
+  // (gate, au bord d'une carte en plein air) donne vers l'intérieur de la carte ; une porte ou une fenêtre de façade
+  // qui ouvre sur un jardin (du sol des deux côtés) n'est pas une ouverture sur l'extérieur.
   addBreach(kind, sx, sy, horizontal, door) {
-    const inside = [[0, 2], [0, -2], [2, 0], [-2, 0]]
+    let dirs = [[0, 2], [0, -2], [2, 0], [-2, 0]];
+    if (kind === 'gate') {
+      const edges = [[sy, [0, 2]], [this.h - 1 - sy, [0, -2]], [sx, [2, 0]], [this.w - 1 - sx, [-2, 0]]].sort((a, b) => a[0] - b[0]);
+      dirs = [edges[0][1]];
+    } else if ((horizontal ? [[0, 2], [0, -2]] : [[2, 0], [-2, 0]]).every(([dx, dy]) => this.tile(sx + dx, sy + dy) === 0)) return;
+    const inside = dirs
       .map(([dx, dy]) => ({ x: sx + dx, y: sy + dy }))
       .find(t => this.inBounds(t.x, t.y) && this.tiles[t.y * this.w + t.x] === 0 && !this.blocksMove(t.x, t.y));
     if (!inside) return;
@@ -282,7 +303,7 @@ class GameMap {
       return iy > 0 ? 'nord' : iy < 0 ? 'sud' : ix > 0 ? 'ouest' : 'est';
     };
     const s = side(b);
-    let label = (b.kind === 'window' ? 'Fenêtre ' : 'Porte ') + s;
+    let label = (b.kind === 'window' ? 'Fenêtre ' : b.kind === 'gate' ? 'Entrée ' : 'Porte ') + s;
     if (this.breaches.some(o => o !== b && o.kind === b.kind && side(o) === s)) {
       const ns = s === 'nord' || s === 'sud';
       const t = ns ? b.cx / (this.w * TILE) : b.cy / (this.h * TILE);
@@ -329,9 +350,9 @@ class GameMap {
   }
 
   // Lance un rayon (DDA) et s'arrête au premier obstacle visuel ou à maxDist.
-  castRay(x, y, angle, maxDist, mark) {
+  castRay(x, y, angle, maxDist, mark, skip) {
     const dx = Math.cos(angle), dy = Math.sin(angle);
-    const lb = this.leafBlock(x, y, dx, dy, maxDist); // arrêté par un battant ?
+    const lb = this.leafBlock(x, y, dx, dy, maxDist, skip); // arrêté par un battant ?
     const lim = lb.t, leafHit = lim < maxDist;
     let door = null;
     let tx = Math.floor(x / TILE), ty = Math.floor(y / TILE);
@@ -353,10 +374,10 @@ class GameMap {
     return { x: x + dx * t, y: y + dy * t, dist: t, hit, tx, ty, door };
   }
 
-  hasLOS(x0, y0, x1, y1) {
+  hasLOS(x0, y0, x1, y1, skip) {
     const d = dist(x0, y0, x1, y1);
     if (d < 1) return true;
-    const r = this.castRay(x0, y0, Math.atan2(y1 - y0, x1 - x0), d, false);
+    const r = this.castRay(x0, y0, Math.atan2(y1 - y0, x1 - x0), d, false, skip);
     return r.dist >= d - 0.01;
   }
 
