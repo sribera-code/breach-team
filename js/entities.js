@@ -205,7 +205,7 @@ const GRIPS = { hk416: 0.15, scarh: 0.15, mp5: 0.15, akP: 0.15, ak74P: 0.15 };
 const GRIP = { bloom: 0.75, bloomMax: 0.85, recoil: 0.7, pause: 0.85 };
 // Trinômes, côté groupe armé : il vient chercher le combat, équipé en conséquence, quand celui du siège tient un
 // bâtiment avec ce qu'il a. Garde-main à rails sur ses AK (laser, lampe, poignée), silencieux et leur munition
-// subsonique. Ces accessoires ne se montent qu'en trinômes (MODES[mode].squads, voir accFits).
+// subsonique. Ces accessoires ne se montent qu'en trinômes et en guerre totale (MODES[mode].squads, voir accFits).
 const SQUAD_KIT = { akP: ['sup', 'laser', 'light', 'grip'], ak74P: ['sup', 'laser', 'light', 'grip'], uziP: ['sup'], skorpionP: ['sup'] };
 // Trinômes : les accessoires des hommes du groupe armé que mène l'IA (trinômes autonomes, et vos complices quand vous
 // êtes de ce camp), distribués comme les armes (dealWeapons). Chacun ne garde que ce que son arme accepte.
@@ -223,26 +223,43 @@ const MAGS = {
   uziP:    { mag: 40, weight: 0.25, reload: 1.1 },
   m870:    { mag: 8,  weight: 0.25, reload: 1, tube: true },
 };
-const ACC_TABLES = { sup: SUPPRESSORS, laser: LASERS, light: LIGHTS, grip: GRIPS, mag: MAGS };
+// Lunette grossissante (modèle, masse en kg avec son montage) : un 4× sur le rail supérieur des fusils et du MP5, la
+// PSO-1 sur le rail latéral des AK (side). Le MP7 garde son point rouge, les fusils à pompe et les armes de poing
+// n'en prennent pas. Elle ne sert qu'à l'arrêt, arme épaulée, l'œil posé (voir SCOPE et Game.scoped) : le moindre pas
+// la fait quitter l'œil, et en mouvement il ne reste que sa masse.
+const SCOPES = {
+  hk416: { name: 'Trijicon ACOG 4×32', weight: 0.45 },
+  scarh: { name: 'ELCAN SpecterDR 1-4×', weight: 0.65 },
+  mp5:   { name: 'Hensoldt ZF 4×24', weight: 0.4 },
+  akP:   { name: 'PSO-1 4×24', weight: 0.6, side: true },
+  ak74P: { name: 'PSO-1 4×24', weight: 0.6, side: true },
+};
+// Effet de la lunette en service : délai pour poser l'œil après s'être arrêté (s), multiplicateur de la dispersion de
+// base, de la portée efficace et de la portée de la balle (reach), et de la vue dans l'axe de l'arme (sight, sur ±half).
+// Pour viser plus loin, la vue glisse vers le point visé, qui ne bouge pas : elle se centre à lead du chemin entre le
+// tireur et lui, sans s'écarter du tireur de plus de look de la demi-largeur (ou demi-hauteur) de l'écran
+// (voir Renderer.updateCamera).
+const SCOPE = { settle: 0.4, spread: 0.5, reach: 1.5, sight: 1.6, half: 12 * DEG, lead: 0.5, look: 0.75 };
+const ACC_TABLES = { sup: SUPPRESSORS, laser: LASERS, light: LIGHTS, grip: GRIPS, mag: MAGS, scope: SCOPES };
 // L'arme accepte-t-elle cet accessoire dans ce mode (m : MODES[..]) ? Le matériel des trinômes (SQUAD_KIT) n'y
-// est qu'en trinômes.
+// est qu'en trinômes et en guerre totale (les modes squads).
 function accFits(key, name, m) {
   if (!key || !ACC_TABLES[name][key]) return false;
   return !(SQUAD_KIT[key] || []).includes(name) || !!(m && m.squads);
 }
 const FITTED = {};
-// L'arme équipée de ses accessoires (acc : { sup, laser, light, grip, mag }) ; ceux qu'elle n'accepte pas sont
+// L'arme équipée de ses accessoires (acc : { sup, laser, light, grip, mag, scope }) ; ceux qu'elle n'accepte pas sont
 // ignorés. Une arme de l'IA prend ceux du modèle réel (pickup) ; son chargeur reste sans fin, le chargeur long ne
 // change que son dessin (et l'arme qu'on ramasse sur le corps). Chaque combinaison n'est calculée qu'une fois ;
 // d.acc garde ce qui est monté.
 function fittedDef(key, acc) {
   const w = WEAPONS[key], base = w.cat ? key : w.pickup || key, s = SUPPRESSORS[base];
   const sup = !!(acc && acc.sup && s), laser = !!(acc && acc.laser && LASERS[base]), light = !!(acc && acc.light && LIGHTS[base]);
-  const grip = !!(acc && acc.grip && GRIPS[base]), mag = !!(acc && acc.mag && MAGS[base]);
-  if (!sup && !laser && !light && !grip && !mag) return w;
-  const id = key + (sup ? '+sup' : '') + (laser ? '+laser' : '') + (light ? '+light' : '') + (grip ? '+grip' : '') + (mag ? '+mag' : '');
+  const grip = !!(acc && acc.grip && GRIPS[base]), mag = !!(acc && acc.mag && MAGS[base]), scope = !!(acc && acc.scope && SCOPES[base]);
+  if (!sup && !laser && !light && !grip && !mag && !scope) return w;
+  const id = key + (sup ? '+sup' : '') + (laser ? '+laser' : '') + (light ? '+light' : '') + (grip ? '+grip' : '') + (mag ? '+mag' : '') + (scope ? '+scope' : '');
   if (FITTED[id]) return FITTED[id];
-  const d = { ...w, tint: { ...(w.tint || {}) }, acc: { sup, laser, light, grip, mag } };
+  const d = { ...w, tint: { ...(w.tint || {}) }, acc: { sup, laser, light, grip, mag, scope } };
   const add = kg => { if (d.weight !== undefined) d.weight += kg; }; // l'IA ne compte pas la masse de son arme
   if (sup) {
     Object.assign(d, {
@@ -271,6 +288,7 @@ function fittedDef(key, acc) {
     add(m.weight);
     d.tint.extMag = m.drum ? 'drum' : m.tube ? 'tube' : m.mag / WEAPONS[base].mag;
   }
+  if (scope) { d.scope = true; add(SCOPES[base].weight); d.tint.scope = SCOPES[base].side ? 'side' : 'top'; }
   return (FITTED[id] = d);
 }
 // Version silencieuse d'une arme (la même si elle n'en accepte pas).
@@ -323,22 +341,33 @@ const SIDEARMS = ['glock17', 'usp45'];
 // avant d'entrer (assaut) ; vest : gilet (VESTS, assaut ; null en siège).
 const DEFAULT_LOADOUT = { primary: 'hk416', sidearm: 'glock17', shield: null, acc: {}, teamSup: false, cutPower: false, vest: 'vestL' };
 
-// Quatre modes de jeu : l'assaut (on incarne l'opérateur), le siège (on incarne le groupe armé), l'escorte
-// (l'équipe conduit un VIP d'un point A à un point B) et les trinômes (deux trinômes contre deux, dans le camp de son
-// choix : squads côté intervention, squadsArmed côté groupe armé, un seul bouton au briefing). levels : les cartes du
-// mode ; pitch : son bouton au briefing ; camp : le camp du joueur ; power : le courant peut être coupé ;
-// variantOf : variante d'un autre mode (même bouton, l'autre camp).
+// Cinq modes de jeu : l'assaut (on incarne l'opérateur), le siège (on incarne le groupe armé), l'escorte (l'équipe
+// conduit un VIP d'un point A à un point B), les trinômes (deux trinômes contre deux) et la guerre totale (deux armées de
+// trois trinômes, cinq minutes de combat avec réapparitions). Les deux derniers se jouent dans le camp de son choix :
+// squads / war côté intervention, squadsArmed / warArmed côté groupe armé, un seul bouton par mode. levels : les cartes
+// du mode (chacun a les siennes, voir js/levels.js) ; pitch : son bouton ; desc : ce qu'on y fait (écran des modes) ;
+// camp : le camp du joueur ; power : le courant peut être coupé ; squads : des trinômes autonomes des deux côtés ; war :
+// la guerre totale ; variantOf : variante d'un autre mode (même bouton, l'autre camp).
 const ARMED_GEAR = { primaries: ['akP', 'ak74P', 'uziP', 'skorpionP', 'm870'], sidearms: ['makarovP', 'tt33', 'glock17'], shields: [], vests: [], loadout: { ...DEFAULT_LOADOUT, primary: 'akP', sidearm: 'makarovP', vest: null } };
 const POLICE_GEAR = { primaries: PRIMARY_WEAPONS, sidearms: SIDEARMS, shields: Object.keys(SHIELDS), vests: Object.keys(VESTS), loadout: DEFAULT_LOADOUT };
+const MODE_DESC = {
+  assault: "Vous menez l'équipe d'intervention : neutraliser les suspects pièce par pièce, sans perdre un otage.",
+  siege: 'Vous tenez le bâtiment avec vos complices et vos otages : repoussez les vagues d\'assaut de l\'intervention.',
+  escort: "Vous conduisez un VIP du point A au point B, à travers un bâtiment tenu par un commando qui le cherche.",
+  squads: "Deux trinômes contre deux, l'intervention contre le groupe armé, dans le camp de votre choix. Une seule vie.",
+  war: "Deux armées de trois trinômes, cinq minutes de combat : chaque trinôme anéanti revient à sa base. L'armée qui abat le plus d'adversaires l'emporte.",
+};
 const MODES = {
-  assault: { name: 'Assaut', pitch: "🛡 Assaut — vous menez l'intervention", camp: 'police', power: true, levels: LEVELS, ...POLICE_GEAR },
-  siege:   { name: 'Siège', pitch: '☠ Siège — vous tenez le bâtiment', camp: 'armed', levels: LEVELS, ...ARMED_GEAR },
-  escort:  { name: 'Escorte', pitch: '★ Escorte — vous exfiltrez un VIP', camp: 'police', power: true, levels: ESCORT_LEVELS, ...POLICE_GEAR },
-  squads:  { name: 'Trinômes', pitch: '⚔ Trinômes — deux contre deux', camp: 'police', squads: true, levels: LEVELS, ...POLICE_GEAR },
-  squadsArmed: { name: 'Trinômes', pitch: '⚔ Trinômes — deux contre deux', camp: 'armed', squads: true, variantOf: 'squads', levels: LEVELS, ...ARMED_GEAR },
+  assault: { name: 'Assaut', pitch: "🛡 Assaut — vous menez l'intervention", desc: MODE_DESC.assault, camp: 'police', power: true, levels: ASSAULT_LEVELS, ...POLICE_GEAR },
+  siege:   { name: 'Siège', pitch: '☠ Siège — vous tenez le bâtiment', desc: MODE_DESC.siege, camp: 'armed', levels: SIEGE_LEVELS, ...ARMED_GEAR },
+  escort:  { name: 'Escorte', pitch: '★ Escorte — vous exfiltrez un VIP', desc: MODE_DESC.escort, camp: 'police', power: true, levels: ESCORT_LEVELS, ...POLICE_GEAR },
+  squads:  { name: 'Trinômes', pitch: '⚔ Trinômes — deux contre deux', desc: MODE_DESC.squads, camp: 'police', squads: true, levels: SQUAD_LEVELS, ...POLICE_GEAR },
+  squadsArmed: { name: 'Trinômes', pitch: '⚔ Trinômes — deux contre deux', desc: MODE_DESC.squads, camp: 'armed', squads: true, variantOf: 'squads', levels: SQUAD_LEVELS, ...ARMED_GEAR },
+  war:     { name: 'Guerre totale', pitch: '✠ Guerre totale — trois trinômes contre trois', desc: MODE_DESC.war, camp: 'police', squads: true, war: true, levels: WAR_LEVELS, ...POLICE_GEAR },
+  warArmed: { name: 'Guerre totale', pitch: '✠ Guerre totale — trois trinômes contre trois', desc: MODE_DESC.war, camp: 'armed', squads: true, war: true, variantOf: 'war', levels: WAR_LEVELS, ...ARMED_GEAR },
 };
 
-// acc : accessoires ({ sup, laser, light, grip, mag }), ou true pour un simple silencieux
+// acc : accessoires ({ sup, laser, light, grip, mag, scope }), ou true pour un simple silencieux
 const makeSlot = (key, acc) => {
   const def = fittedDef(key, acc === true ? { sup: true } : acc);
   return { def, mag: def.mag, reserve: def.reserve };
@@ -448,6 +477,12 @@ const SQUAD_DEFS = {
     { name: 'Dimitri', accent: '#6fb3a8', jacket: '#575047', pants: '#2b2f38' },
     { name: 'Goran', accent: '#c98bb0', jacket: '#3b4553', pants: '#3a3630' },
   ],
+};
+// Guerre totale : les deux trinômes autonomes de votre armée (le premier comme le second trinôme des trinômes), selon le
+// camp. Un trinôme qui revient de la base garde les noms de celui qu'il remplace.
+const WAR_DEFS = {
+  police: [SQUAD_DEFS.police, [{ name: 'Golf', accent: '#81c784' }, { name: 'Hotel', accent: '#ff8a65' }, { name: 'India', accent: '#4dd0e1' }]],
+  armed: [SQUAD_DEFS.armed, SIEGE_MATE_DEFS.slice(5, 8)],
 };
 // Tirage sans doublon tant que le lot n'est pas épuisé.
 function dealWeapons(pool, n) {

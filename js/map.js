@@ -5,16 +5,19 @@
 // (une case = TILE = 16 px) : chaque case ASCII (x,y) correspond à la petite case (2x,2y), et les petites
 // cases intermédiaires relient les murs voisins. Les murs n'ont donc plus qu'une petite case d'épaisseur,
 // les portes font trois petites cases de large.
-// béton, parquet, carrelage, moquette, dallage de marbre, tôle striée ; dehors : herbe, gravier, dallage de terrasse
-const FLOOR = { '.': 0, ',': 1, ':': 2, ';': 3, '=': 4, '%': 5, '"': 6, '_': 7, '+': 8 };
+// béton, parquet, carrelage, moquette, dallage de marbre, tôle striée ; dehors : herbe, gravier, dallage de terrasse,
+// asphalte
+const FLOOR = { '.': 0, ',': 1, ':': 2, ';': 3, '=': 4, '%': 5, '"': 6, '_': 7, '+': 8, '-': 9 };
 // Sols du dehors (cartes en plein air) : on n'y poste personne d'office (voir Game.buildPosts).
-const OUTDOOR_FLOORS = new Set([6, 7, 8]);
+const OUTDOOR_FLOORS = new Set([6, 7, 8, 9]);
 const WINDOW_LEN = 3; // largeur d'une fenêtre, en petites cases
 const PROPS = {
   c: 'crate', B: 'barrel', T: 'table', p: 'plant', b: 'bed', k: 'desk',
   s: 'sofa', r: 'shelf', a: 'locker', R: 'server', P: 'pallet', C: 'counter',
-  t: 'tree', '~': 'pool',
+  t: 'tree', '~': 'pool', g: 'sandbag',
 };
+// Guerre totale : bases des deux armées ('1' et '2'), là où chaque trinôme apparaît et réapparaît.
+const BASE_CHARS = ['1', '2'];
 // Meubles qui se posent dos au mur (et se prolongent d'une case à l'autre quand on les aligne).
 const PROP_AGAINST_WALL = new Set(['bed', 'sofa', 'shelf', 'locker', 'server', 'counter']);
 const DOOR_LEN = 3; // largeur d'une porte, en petites cases
@@ -88,18 +91,32 @@ class GameMap {
     this.vipStart = null;     // 'A' : départ du VIP et de l'équipe (mode escorte)
     this.goal = null;         // 'Z' : zone d'extraction, le point B : { cells, cx, cy }
     this.goalAt = new Set();  // ses petites cases
+    this.bases = [];          // '1', '2' : bases des armées (guerre totale) : { id, cells, cx, cy, angle }
+    const baseAt = BASE_CHARS.map(() => new Set());
 
-    // Type de sol des cases ASCII : caractère du sol, sinon majorité des voisins.
-    const aFloor = new Uint8Array(AW * AH);
+    // Type de sol des cases ASCII : caractère du sol, sinon majorité des voisins qui en ont un. Au milieu d'un bloc
+    // sans sol (une base, une zone d'extraction), il gagne de proche en proche depuis les bords.
+    const aFloor = new Uint8Array(AW * AH), known = new Uint8Array(AW * AH);
     for (let y = 0; y < AH; y++) for (let x = 0; x < AW; x++) {
       const c = ch(x, y);
-      if (c in FLOOR) { aFloor[y * AW + x] = FLOOR[c]; continue; }
-      const votes = Object.values(FLOOR).map(() => 0);
-      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, -1], [1, -1], [-1, 1]]) {
-        const n = ch(x + dx, y + dy);
-        if (n in FLOOR) votes[FLOOR[n]]++;
+      if (c in FLOOR) { aFloor[y * AW + x] = FLOOR[c]; known[y * AW + x] = 1; }
+    }
+    for (let left = true; left;) {
+      left = false;
+      const next = known.slice();
+      for (let y = 0; y < AH; y++) for (let x = 0; x < AW; x++) {
+        if (known[y * AW + x]) continue;
+        const votes = Object.values(FLOOR).map(() => 0);
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, -1], [1, -1], [-1, 1]]) {
+          const nx = x + dx, ny = y + dy;
+          if (nx >= 0 && ny >= 0 && nx < AW && ny < AH && known[ny * AW + nx]) votes[aFloor[ny * AW + nx]]++;
+        }
+        if (!Math.max(...votes)) { left = true; continue; }
+        aFloor[y * AW + x] = votes.indexOf(Math.max(...votes));
+        next[y * AW + x] = 1;
       }
-      aFloor[y * AW + x] = votes.indexOf(Math.max(...votes));
+      if (next.every((v, i) => v === known[i])) break; // plus rien ne gagne (pas de sol du tout) : béton
+      known.set(next);
     }
 
     // Conversion en grille fine.
@@ -118,13 +135,22 @@ class GameMap {
       if (t === 1 && contrib.some(k => k.c === 'h') && !contrib.some(k => k.c === '#')) this.hedgeAt.add(i);
       const fl = contrib.find(k => !wallish(k.c) && k.c !== ' ');
       this.floorType[i] = fl ? aFloor[fl.y * AW + fl.x] : 0;
-      // zone d'extraction : les petites cases tout entières dans des cases 'Z'
+      // zone d'extraction : les petites cases tout entières dans des cases 'Z' (de même pour les bases)
       if (contrib.every(k => k.c === 'Z')) this.goalAt.add(i);
+      BASE_CHARS.forEach((b, n) => { if (contrib.every(k => k.c === b)) baseAt[n].add(i); });
     }
-    if (this.goalAt.size) {
-      const cells = [...this.goalAt].map(i => ({ x: i % this.w, y: Math.floor(i / this.w) }));
+    // une zone de petites cases : la liste, et son centre en pixels
+    const zone = set => {
+      const cells = [...set].map(i => ({ x: i % this.w, y: Math.floor(i / this.w) }));
       const mx = cells.reduce((s, c) => s + c.x, 0) / cells.length, my = cells.reduce((s, c) => s + c.y, 0) / cells.length;
-      this.goal = { cells, cx: (mx + 0.5) * TILE, cy: (my + 0.5) * TILE };
+      return { cells, cx: (mx + 0.5) * TILE, cy: (my + 0.5) * TILE };
+    };
+    if (this.goalAt.size) this.goal = zone(this.goalAt);
+    baseAt.forEach((set, n) => { if (set.size) this.bases.push({ id: n + 1, at: set, ...zone(set) }); });
+    // chaque base regarde l'autre : c'est de là que viendra l'adversaire
+    for (const b of this.bases) {
+      const o = this.bases.find(x => x !== b) || { cx: this.w * TILE / 2, cy: this.h * TILE / 2 };
+      b.angle = Math.atan2(o.cy - b.cy, o.cx - b.cx);
     }
 
     const facing = { '^': -Math.PI / 2, 'v': Math.PI / 2, '<': Math.PI, '>': 0 };
@@ -183,8 +209,9 @@ class GameMap {
             // un meuble occupe un bloc 2×2 de petites cases
             const p = { x: sx, y: sy, cx: (sx + 1) * TILE, cy: (sy + 1) * TILE, type: PROPS[c], rot: 0, link: { l: false, r: false } };
             if (PROP_AGAINST_WALL.has(p.type)) this.fitProp(p, ch, x, y, wallish);
-            // bassin : la margelle ne court que là où l'eau s'arrête
+            // bassin : la margelle ne court que là où l'eau s'arrête ; sacs de sable : le muret suit ses voisins
             if (p.type === 'pool') p.edges = { n: ch(x, y - 1) !== c, s: ch(x, y + 1) !== c, w: ch(x - 1, y) !== c, e: ch(x + 1, y) !== c };
+            if (p.type === 'sandbag') p.nb = { n: ch(x, y - 1) === c, s: ch(x, y + 1) === c, w: ch(x - 1, y) === c, e: ch(x + 1, y) === c };
             this.props.push(p);
             for (const [dx, dy] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
               const px = sx + dx, py = sy + dy;
@@ -310,6 +337,12 @@ class GameMap {
       label += t < 0.4 ? (ns ? ' (ouest)' : ' (nord)') : t > 0.6 ? (ns ? ' (est)' : ' (sud)') : ' (centre)';
     }
     return label;
+  }
+
+  // Nom d'une base (guerre totale) : le côté de la carte où elle se trouve.
+  baseLabel(b) {
+    const dx = b.cx / (this.w * TILE) - 0.5, dy = b.cy / (this.h * TILE) - 0.5;
+    return 'Base ' + (Math.abs(dx) >= Math.abs(dy) ? (dx < 0 ? 'ouest' : 'est') : (dy < 0 ? 'nord' : 'sud'));
   }
 
   // Pièce contenant le point (x,y) en pixels : cases fines reliées sans franchir mur, porte ni fenêtre.

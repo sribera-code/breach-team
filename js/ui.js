@@ -12,6 +12,7 @@ const ICONS = {
   laser: '<rect x="1.5" y="5" width="8" height="6" rx="1.2" class="f"/><path d="M9.5 8h8.5" stroke="#ff6a5a" stroke-width="1.3" stroke-dasharray="2 1.4"/><circle cx="20.5" cy="8" r="2.2" fill="#ff6a5a"/>',
   light: '<path d="M10.5 5.2 23 2v12l-12.5-3.2z" fill="#ffd27a" opacity=".5"/><rect x="1.5" y="5.5" width="6" height="5" rx="1" class="f"/><rect x="7.5" y="4.5" width="3.5" height="7" rx=".8" class="f"/>',
   grip: '<path d="M2 3.2h20" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><path d="M9 4.5h6l-.5 10a1 1 0 0 1-1 1h-3a1 1 0 0 1-1-1z" class="f"/><path d="M9.5 8h5M9.5 11h5" class="t"/>',
+  scope: '<rect x="6" y="6" width="11" height="4" rx="1" class="f"/><path d="M2 5h4v6H2zM17 3.8h5v8.4h-5z" class="f"/><path d="M11.5 3.5v9" class="t"/>',
   mag: '<path d="M8 1.5h8l1.5 12.5a1 1 0 0 1-1 1.1h-7a1 1 0 0 1-1-1z" class="f"/><path d="M9 4.5h7M9.4 7.5h7.2M9.8 10.5h7.4" class="t"/>',
   // canon nu et départ de coup : sans silencieux
   loud: '<rect x="1.5" y="6" width="11" height="4" rx="1" class="f"/><path d="M15 8h6.5M14.5 4.8l5-2.6M14.5 11.2l5 2.6" class="f"/>',
@@ -24,17 +25,24 @@ class UI {
     this.$ = id => document.getElementById(id);
     this.overlay = this.$('overlay');
     this.panel = this.$('overlayPanel');
-    game.on('level', () => { this.hideOverlay(); this.$('levelName').textContent = `Mission ${game.levelIndex + 1} — ${game.def.name}`; this.update(); });
+    game.on('level', () => { this.hideOverlay(); this.$('levelName').textContent = `${MODES[game.mode].name} — ${game.def.name}`; this.update(); });
     game.on('over', r => setTimeout(() => this.showEnd(r), 900));
     game.on('pause', () => { if (game.paused) this.showPause(); else this.hideOverlay(); });
   }
 
   update() {
     const g = this.game, p = g.player;
-    this.$('timer').textContent = fmtTime(g.time);
+    // guerre totale : le temps qui reste, pas celui qui passe
+    this.$('timer').textContent = fmtTime(g.war ? Math.max(0, WAR_TIME - g.time) : g.time);
     const alive = g.enemies.filter(e => e.alive).length;
     const held = g.hostages.filter(h => h.alive && !h.evacuated).length;
-    if (g.siege) {
+    if (g.war) {
+      // guerre totale : le décompte des deux armées, et quand revient votre trinôme s'il est anéanti
+      const W = g.war, back = W.respawn.ops[0];
+      const mine = g.ops.filter(o => o.alive).length;
+      this.$('objective').textContent = `Score : ${W.kills.ops} – ${W.kills.enemy} · Votre armée : ${mine} debout · En face : ${alive}`
+        + (back !== null ? ` · Renforts dans ${Math.max(0, Math.ceil(back - g.time))} s` : '');
+    } else if (g.siege) {
       const s = g.siege;
       this.$('objective').textContent = s.prep > 0
         ? `Préparation : ${fmtTime(Math.max(0, s.prep)).slice(0, 5)} — prenez position`
@@ -93,9 +101,12 @@ class UI {
     if (las) { las.classList.toggle('on', !!w.laser); las.classList.toggle('off', !p.laserOn); }
     const lamp = this.$('lampMode');
     if (lamp) { lamp.classList.toggle('on', !!w.light); lamp.classList.toggle('off', !p.lampOn); }
+    // lunette de l'arme en main : vive à l'œil (à l'arrêt), barrée en mouvement
+    const sc = this.$('scopeMode');
+    if (sc) { sc.classList.toggle('on', !!w.scope); sc.classList.toggle('off', !this.game.scoped(p)); }
     if (this._weaponShown !== w || this._shieldShown !== p.shield) {
       this._weaponShown = w; this._shieldShown = p.shield;
-      const tags = [w.caliber, w.mode, w.suppressed && 'silencieux', w.laser && 'laser', w.light && 'lampe', p.shield && p.shield.name.toLowerCase()].filter(Boolean);
+      const tags = [w.caliber, w.mode, w.suppressed && 'silencieux', w.laser && 'laser', w.light && 'lampe', w.scope && 'lunette', p.shield && p.shield.name.toLowerCase()].filter(Boolean);
       this.$('weaponName').innerHTML = `${w.name} <small>${tags.join(' · ')}</small>`;
     }
     const ammo = this.$('ammo');
@@ -115,19 +126,28 @@ class UI {
     return names[(Math.round(Math.atan2(dy, dx) / (Math.PI / 4)) + 8) % 8];
   }
 
+  // Lignes de l'équipe : vos coéquipiers (en escorte, le VIP en plus) ; en guerre totale, les trois trinômes de votre
+  // armée tels qu'ils sont en ce moment (pas les corps des précédents).
+  squadRows() {
+    const g = this.game;
+    if (g.war) return g.war.slots.ops.flatMap(s => (s ? s.members : [])).filter(m => m !== g.player);
+    return g.vip ? [...g.mates, g.vip] : g.mates;
+  }
+
   updateSquad() {
     const g = this.game, box = this.$('squad');
     // en escorte, le VIP a sa ligne sous l'équipe : sa santé et ce qu'il fait
-    const rows = g.vip ? [...g.mates, g.vip] : g.mates;
-    if (!this._squadFor || this._squadFor !== g.mates || this._squadVip !== g.vip) {
-      this._squadFor = g.mates;
-      this._squadVip = g.vip;
+    const rows = this.squadRows();
+    const same = this._squadRows && this._squadRows.length === rows.length && rows.every((r, i) => r === this._squadRows[i]);
+    if (!same) {
+      this._squadRows = rows;
       box.classList.toggle('many', rows.length > 4);
       // en siège, pas d'ordres : l'aide sur les commandes d'équipe n'a pas lieu d'être
       const hint = this.$('squadHint');
       if (hint) {
         if (!this._squadHint) this._squadHint = hint.textContent;
         hint.textContent = g.siege ? "Vos complices tiennent leur poste : vous ne leur donnez pas d'ordres"
+          : g.war ? `${this._squadHint} — les deux autres trinômes (en italique) tiennent les flancs seuls`
           : g.squads ? `${this._squadHint} — le second trinôme (en italique) progresse seul` : this._squadHint;
       }
       // en trinômes, le second trinôme de votre camp, autonome, en italique sous le vôtre
@@ -177,25 +197,64 @@ class UI {
         sommation : le premier camp entièrement hors de combat a perdu.`;
   }
 
+  // Texte d'ambiance de la guerre totale, selon le camp ; la carte ajoute le sien.
+  warBriefing() {
+    const g = this.game, min = Math.round(WAR_TIME / 60);
+    return (g.camp === 'armed'
+      ? `Deux armées de trois trinômes : la vôtre, celle du groupe armé, contre l'intervention. Vous menez un trinôme — vous et
+        deux complices, à vos ordres — au centre ; deux autres tiennent les flancs seuls.`
+      : `Deux armées de trois trinômes : la vôtre, celle de l'intervention, contre le groupe armé. Vous menez un trinôme — vous,
+        Bravo et Charlie, à vos ordres — au centre ; deux autres tiennent les flancs seuls.`)
+      + ` Un trinôme anéanti revient de sa base ${WAR_RESPAWN} s plus tard, le vôtre comme les autres. Au bout de ${min} minutes, l'armée qui a abattu
+        le plus d'adversaires l'emporte. ${g.def.briefing || ''}`;
+  }
+
   // Ce que le briefing (et la pause) raconte de la mission.
   briefText() {
     const g = this.game;
-    return g.mode === 'siege' ? (g.def.siegeBriefing || this.siegeBriefing()) : g.squads ? this.squadsBriefing() : g.def.briefing;
+    return g.mode === 'siege' ? (g.def.siegeBriefing || this.siegeBriefing()) : g.war ? this.warBriefing()
+      : g.squads ? `${this.squadsBriefing()} ${g.def.briefing || ''}` : g.def.briefing;
   }
 
-  // Briefing sur un seul écran, sans défilement : à gauche le plan et le point d'entrée, au milieu
-  // l'équipement et ses accessoires, à droite les fiches de ce qu'on emporte, toujours à la même place.
-  // Les variantes d'un mode (l'autre camp des trinômes) partagent son bouton et se choisissent à gauche.
+  // Où l'on en est des trois écrans de départ : le mode, la carte, l'équipement. Les deux premiers se rouvrent d'un clic.
+  static steps(at, mode, map) {
+    const s = (n, label, id) => (n === at ? `<b>${n}. ${label}</b>` : id ? `<button class="crumb" id="${id}">${n}. ${label}</button>` : `<span>${n}. ${label}</span>`);
+    return `<div class="steps">${s(1, mode ? `Mode : ${mode}` : 'Mode', at > 1 ? 'ovModes' : null)}<i>›</i>${s(2, map ? `Carte : ${map}` : 'Carte', at > 2 ? 'ovLevels' : null)}<i>›</i>${s(3, 'Équipement')}</div>`;
+  }
+
+  // Premier écran : le mode de jeu, puis la carte (showLevels), puis l'équipement (showBriefing). Les deux camps d'un
+  // mode n'ont qu'une carte de mode : le camp se choisit au briefing. back : écran à rouvrir avec « Retour ».
+  showModes(back) {
+    const g = this.game;
+    g.paused = true;
+    const shown = MODES[g.mode].variantOf || g.mode;
+    const cards = Object.keys(MODES).filter(m => !MODES[m].variantOf).map(m => {
+      const M = MODES[m], n = M.levels.length;
+      return `<button class="modebtn${m === shown ? ' sel' : ''}" data-mode="${m}"><span class="mtitle">${M.pitch}</span><small>${M.desc}</small><span class="mcount">${n} carte${n > 1 ? 's' : ''}</span></button>`;
+    }).join('');
+    this.showOverlay(`<h1>Breach Team</h1>${UI.steps(1)}<div class="modecards">${cards}</div>
+      <div class="row">${back ? '<button id="ovClose">Retour</button>' : ''}<button id="ovHelp">Commandes</button></div>`);
+    this.panel.classList.add('wide');
+    this.panel.querySelectorAll('.modebtn').forEach(b => {
+      b.onclick = () => { if (b.dataset.mode !== shown) g.setMode(b.dataset.mode); this.showLevels(back); };
+    });
+    const close = this.panel.querySelector('#ovClose');
+    if (close) close.onclick = back;
+    this.panel.querySelector('#ovHelp').onclick = () => this.showHelp(() => this.showModes(back));
+  }
+
+  // Briefing sur un seul écran, sans défilement : à gauche le plan et le point d'entrée (la base en guerre totale), au
+  // milieu l'équipement et ses accessoires, à droite les fiches de ce qu'on emporte, toujours à la même place. Les
+  // variantes d'un mode (l'autre camp des trinômes et de la guerre totale) se choisissent à gauche.
   showBriefing() {
     const g = this.game;
     g.paused = true;
-    const siege = g.mode === 'siege', escort = g.mode === 'escort', squads = !!g.squads, armed = g.camp === 'armed';
-    const shown = MODES[g.mode].variantOf || g.mode;
-    this.showOverlay(`<div class="brief-head"><h1>Mission ${g.levelIndex + 1} — ${g.def.name}</h1>
-        <div class="modes">${Object.keys(MODES).filter(m => !MODES[m].variantOf).map(m => `<button class="modebtn${m === shown ? ' sel' : ''}" data-mode="${m}">${MODES[m].pitch}</button>`).join('')}</div></div>
+    const siege = g.mode === 'siege', escort = g.mode === 'escort', squads = !!g.squads, war = !!g.war, armed = g.camp === 'armed';
+    const M = MODES[g.mode];
+    this.showOverlay(`<div class="brief-head"><h1>${g.def.name} <small>${M.name}</small></h1>${UI.steps(3, M.name, g.def.name)}</div>
       <p class="brief-text">${this.briefText()}</p>
       <div class="brief-cols">
-        <section class="brief-col">${siege ? this.buildingPlan() : escort ? this.routePlan() : this.entryPicker(squads ? this.campRow() : this.powerRow())}</section>
+        <section class="brief-col">${siege ? this.buildingPlan() : escort ? this.routePlan() : war ? this.basePicker(this.campRow()) : this.entryPicker(squads ? this.campRow() : this.powerRow())}</section>
         <section class="brief-col">
           <h2>Équipement</h2>
           <div class="loadout">
@@ -209,12 +268,10 @@ class UI {
         </section>
         <section class="brief-col brief-specs"><div class="brief-specs-in"><h2>Caractéristiques</h2><div id="wsum" class="wsum"></div><div id="wdetail"></div></div></section>
       </div>
-      <div class="row"><button class="primary" id="ovGo">${siege ? 'Prendre position' : escort ? "Lancer l'exfiltration" : squads ? 'Engager' : "Lancer l'assaut"}</button><button id="ovLevels">Missions</button><button id="ovHelp">Commandes</button></div>`);
+      <div class="row"><button class="primary" id="ovGo">${siege ? 'Prendre position' : escort ? "Lancer l'exfiltration" : war ? 'Au combat' : squads ? 'Engager' : "Lancer l'assaut"}</button><button id="ovHelp">Commandes</button></div>`);
     this.panel.classList.add('wide', 'brief');
-    this.panel.querySelectorAll('.modebtn').forEach(b => {
-      b.onclick = () => { if (b.dataset.mode !== shown) g.setMode(b.dataset.mode); this.showBriefing(); };
-    });
-    // camp des trinômes : l'autre variante du mode, avec son équipement
+    this.panel.querySelector('#ovModes').onclick = () => this.showModes(() => this.showBriefing());
+    // camp des trinômes et de la guerre totale : l'autre variante du mode, avec son équipement
     this.panel.querySelectorAll('.campbtn').forEach(b => {
       b.onclick = () => { if (b.dataset.mode !== g.mode) { g.setMode(b.dataset.mode); this.showBriefing(); } };
     });
@@ -251,6 +308,17 @@ class UI {
     this.panel.querySelector('#ovHelp').onclick = () => this.showHelp(() => this.showBriefing());
   }
 
+  // Guerre totale : la base d'où part votre armée, sur le plan ou par son nom (l'autre revient à l'adversaire). extra :
+  // ce qui suit (le camp).
+  basePicker(extra) {
+    const g = this.game, bs = g.map.bases;
+    const hasard = `<button class="entrybtn${g.entryRandom ? ' sel' : ''}" data-entry="random">Au hasard</button>`;
+    const btns = bs.map((b, i) => `<button class="entrybtn${!g.entryRandom && i === g.entryIndex ? ' sel' : ''}" data-entry="${i}">${g.map.baseLabel(b)}</button>`).join('');
+    return `<h2>Votre base</h2><canvas class="plan pick" id="ovPlan" title="Cliquez une base pour en partir"></canvas>
+      <p class="planlegend"><i class="lg-door"></i> porte <i class="lg-win"></i> fenêtre <i class="lg-home"></i> votre base <i class="lg-foe"></i> la leur</p>
+      <div class="entries">${hasard}${btns}</div>${extra}`;
+  }
+
   // Point d'entrée : l'équipe choisit par où elle pénètre dans le bâtiment, sur le plan ou par son nom. extra : ce qui
   // suit (le courant en assaut, le camp en trinômes).
   entryPicker(extra) {
@@ -264,12 +332,13 @@ class UI {
     return `<h2>Point d'entrée</h2><canvas class="plan pick" id="ovPlan" title="Cliquez une ouverture pour entrer par là"></canvas>${legend}<div class="entries">${hasard}${btns}</div>${extra}`;
   }
 
-  // Trinômes : le camp que l'on mène (chacun son équipement, gardé à part), et d'où viennent les autres.
+  // Trinômes et guerre totale : le camp que l'on mène (chacun son équipement, gardé à part), et d'où viennent les autres.
   campRow() {
-    const g = this.game;
+    const g = this.game, police = MODES[g.mode].variantOf || g.mode, armed = Object.keys(MODES).find(m => MODES[m].variantOf === police);
     const btn = (mode, label, tip) => `<button class="supbtn campbtn${g.mode === mode ? ' sel' : ''}" data-mode="${mode}" title="${tip}">${label}</button>`;
-    return `<div class="powerrow"><div class="suprow"><span class="rowlabel">Camp</span>${btn('squads', '🛡 Intervention', 'Flashs, charges de brèche, fibre, gilet ; en face, le groupe armé et ses grenades à fragmentation.')}${btn('squadsArmed', '☠ Groupe armé', "Grenades à fragmentation ; en face, l'intervention, ses flashs, ses charges et ses colonnes.")}</div>
-      <small>Votre second trinôme entre par l'ouverture la plus proche de la vôtre, les deux d'en face par les plus éloignées.</small></div>`;
+    return `<div class="powerrow"><div class="suprow"><span class="rowlabel">Camp</span>${btn(police, '🛡 Intervention', 'Flashs, charges de brèche, fibre, gilet ; en face, le groupe armé et ses grenades à fragmentation.')}${btn(armed, '☠ Groupe armé', "Grenades à fragmentation ; en face, l'intervention, ses flashs, ses charges et ses colonnes.")}</div>
+      <small>${g.war ? 'Vos deux autres trinômes partent de votre base, sur les flancs ; l\'armée d\'en face, de l\'autre base.'
+        : "Votre second trinôme entre par l'ouverture la plus proche de la vôtre, les deux d'en face par les plus éloignées."}</small></div>`;
   }
 
   // Gilet pare-balles : tous ceux du mode côte à côte, celui qu'on porte en surbrillance ; ce qu'il arrête en
@@ -298,7 +367,7 @@ class UI {
 
   // Trinômes, côté groupe armé : l'arme de chacun de vos complices et ce qu'elle porte (tiré au sort, MILITANT_KITS).
   crewKit() {
-    const names = { sup: 'silencieux', laser: 'laser', light: 'lampe', grip: 'poignée', mag: 'chargeur long' };
+    const names = { sup: 'silencieux', laser: 'laser', light: 'lampe', grip: 'poignée', mag: 'chargeur long', scope: 'lunette' };
     const arms = this.game.crew.map(m => {
       const w = m.weapon, on = Object.keys(names).filter(n => w.acc && w.acc[n]).map(n => names[n]);
       return `${m.name} : ${w.name}${on.length ? ` (${on.join(', ')})` : ''}`;
@@ -374,19 +443,21 @@ class UI {
     this._planHover = null;
     this.drawBriefPlan();
     if (!c.classList.contains('pick')) return;
-    // l'ouverture la plus proche du pointeur, à deux cases au plus
+    // l'ouverture la plus proche du pointeur, à deux cases au plus (une base : à quatre cases de son centre)
+    const war = !!g.war, spots = war ? g.map.bases : g.map.breaches, label = i => (war ? g.map.baseLabel(spots[i]) : g.map.breachLabel(spots[i]));
+    const tip = war ? 'Cliquez une base pour en partir' : 'Cliquez une ouverture pour entrer par là';
     const at = ev => {
       const r = c.getBoundingClientRect(), m = g.map;
       const x = ((ev.clientX - r.left) / r.width * (m.w + 2 * PLAN_PAD) - PLAN_PAD) * TILE;
       const y = ((ev.clientY - r.top) / r.height * (m.h + 2 * PLAN_PAD) - PLAN_PAD) * TILE;
-      let best = null, bd = 2 * U;
-      m.breaches.forEach((b, i) => { const d = Math.hypot(b.cx - x, b.cy - y); if (d < bd) { bd = d; best = i; } });
+      let best = null, bd = (war ? 4 : 2) * U;
+      spots.forEach((b, i) => { const d = Math.hypot(b.cx - x, b.cy - y); if (d < bd) { bd = d; best = i; } });
       return best;
     };
     c.onmousemove = ev => {
       const i = at(ev);
       c.style.cursor = i === null ? '' : 'pointer';
-      c.title = i === null ? 'Cliquez une ouverture pour entrer par là' : g.map.breachLabel(g.map.breaches[i]);
+      c.title = i === null ? tip : label(i);
       if (i !== this._planHover) { this._planHover = i; this.drawBriefPlan(i); }
     };
     c.onmouseleave = () => { this._planHover = null; this.drawBriefPlan(); };
@@ -452,18 +523,20 @@ class UI {
     const btn = (name, txt, why) => {
       const fits = accFits(key, name, m);
       const off = !w ? 'Pas d\'accessoire sur un bouclier'
-        : ACC_TABLES[name][key] ? 'En trinômes seulement : le groupe armé qui tient un bâtiment n\'a pas ce matériel' : why;
+        : ACC_TABLES[name][key] ? 'En trinômes et en guerre totale seulement : le groupe armé qui tient un bâtiment n\'a pas ce matériel' : why;
       return `<button class="accbtn${fits && a[name] ? ' sel' : ''}" data-key="${key}" data-acc="${name}" title="${fits ? tip(name) : off}"${fits ? '' : ' disabled'}>${UI.icon(name)}<span>${txt}</span></button>`;
     };
     const supWhy = w && w.kind === 'shotgun' ? 'Pas de silencieux sur un fusil à pompe' : 'Pas de silencieux pour cette arme';
     const gripWhy = w && w.cat === 'hg' ? 'Pas de poignée avant sur une arme de poing' : key === 'mp7' ? 'Le MP7 a déjà sa poignée avant, repliable' : 'Pas de rail sous le garde-main';
-    return `<div class="accrow"><span class="accname">${w ? w.name : label}</span><div class="accbtns">${btn('sup', 'Silencieux', supWhy)}${btn('laser', 'Laser', 'Pas de rail pour fixer un laser')}${btn('light', 'Lampe', 'Pas de rail pour fixer une lampe')}${btn('grip', 'Poignée', gripWhy)}${btn('mag', 'Chargeur', 'Pas de chargeur grande capacité pour cette arme')}</div></div>`;
+    const scopeWhy = w && w.cat === 'hg' ? 'Pas de lunette sur une arme de poing' : w && w.kind === 'shotgun' ? 'Pas de lunette sur un fusil à pompe : la gerbe ne porte pas assez loin'
+      : key === 'mp7' ? 'Le MP7 garde son point rouge : trop court pour une lunette' : 'Pas de rail pour fixer une lunette';
+    return `<div class="accrow"><span class="accname">${w ? w.name : label}</span><div class="accbtns">${btn('sup', 'Silencieux', supWhy)}${btn('laser', 'Laser', 'Pas de rail pour fixer un laser')}${btn('light', 'Lampe', 'Pas de rail pour fixer une lampe')}${btn('grip', 'Poignée', gripWhy)}${btn('mag', 'Chargeur', 'Pas de chargeur grande capacité pour cette arme')}${btn('scope', 'Lunette', scopeWhy)}</div></div>`;
   }
 
   // Effet des accessoires montés, en clair dans la fiche.
   accNotes(key) {
     const m = MODES[this.game.mode], a = accOf(this.game.loadout, key);
-    const notes = [['sup', 'Silencieux'], ['laser', 'Laser'], ['light', 'Lampe'], ['grip', 'Poignée avant'], ['mag', 'Chargeur grande capacité']]
+    const notes = [['sup', 'Silencieux'], ['laser', 'Laser'], ['light', 'Lampe'], ['grip', 'Poignée avant'], ['mag', 'Chargeur grande capacité'], ['scope', 'Lunette']]
       .filter(([name]) => accFits(key, name, m) && a[name]).map(([name, label]) => `<b>${UI.icon(name)} ${label}</b> : ${UI.accEffect(key, name)}`);
     return notes.length ? `<p class="wd-acc">${notes.join('<br>')}</p>` : '';
   }
@@ -479,6 +552,10 @@ class UI {
       const m = MAGS[key], what = m.drum ? `tambour de ${m.mag} coups` : m.tube ? `rallonge de tube : ${m.mag} cartouches au lieu de ${w.mag}` : `${m.mag} coups au lieu de ${w.mag}`;
       const rl = m.reload > 1 ? `, rechargement ${Math.round((m.reload - 1) * 100)} % plus long` : '';
       return `${what}. On recharge moins souvent, pas avec plus de munitions en tout. Plus lourd (+${num(m.weight)} kg)${rl}.`;
+    }
+    if (name === 'scope') {
+      const pct = v => Math.round((v - 1) * 100);
+      return `${SCOPES[key].name}, à l'arrêt seulement : l'arme épaulée, il faut ${num(SCOPE.settle)} s pour poser l'œil. Elle porte la vue ${pct(SCOPE.sight)} % plus loin dans l'axe, divise par deux la dispersion de base, allonge de ${pct(SCOPE.reach)} % la portée efficace et la portée. La vue glisse vers le point visé sans le lâcher : on peut pousser le viseur plus loin, même pris au bord de l'écran. Le moindre pas la fait quitter l'œil. +${num(SCOPES[key].weight)} kg.`;
     }
     if (name === 'light') {
       return "éclaire un cône devant l'arme. Inutile si le bâtiment est éclairé ; courant coupé, c'est elle qui fait voir loin. Prise en face de près, elle éblouit un suspect, qui met plus de temps à viser. Mais elle se voit de loin dans le noir. X l'éteint ou la rallume (celles de l'équipe avec).";
@@ -534,10 +611,11 @@ class UI {
     const bars = [
       ['Puissance', Math.sqrt(w.damage * (w.pellets || 1) / 135)],
       ['Cadence', n(w.rof, 0, 16)],
-      ['Précision', n(12 * DEG - (2 * w.spread + w.bloom), 0, 12 * DEG)],
+      // la lunette, à l'arrêt : dispersion de base réduite et portée efficace allongée
+      ['Précision', n(12 * DEG - (2 * w.spread * (w.scope ? SCOPE.spread : 1) + w.bloom), 0, 12 * DEG)],
       // ce que le laser améliore : la visée sans épauler
       ['En mouvement', n(6 * DEG - w.moveSpread * (w.laser ? LASER_MOVE : 1), 0, 6 * DEG)],
-      ['Portée', n(w.effRange, 0, 12 * U)],
+      ['Portée', n(w.effRange * (w.scope ? SCOPE.reach : 1), 0, 12 * U)],
       // une arme légère pèse moins dans la charge, donc ralentit moins (voir loadMobility)
       ['Mobilité', n(5.5 - w.weight, 0, 4.7)],
       ['Discrétion', n(12 - w.noise, 0, 10)],
@@ -593,16 +671,20 @@ class UI {
     Sprites.gun(ctx, w.kind, w.gunLen, w.tint);
   }
 
+  // Deuxième écran : la carte, parmi celles du mode (chacun a les siennes). Un clic la charge et ouvre l'équipement.
+  // back : écran à rouvrir avec « Retour » (le briefing, la pause, la fin de partie) ; « ◀ Modes » ramène au premier.
   showLevels(back) {
-    const g = this.game;
-    const ret = back || (() => this.showBriefing());
-    const siege = g.mode === 'siege', escort = g.mode === 'escort', squads = !!g.squads;
-    let html = `<h1>Missions</h1><p>${siege
+    const g = this.game, M = MODES[g.mode];
+    g.paused = true;
+    const siege = g.mode === 'siege', escort = g.mode === 'escort', war = !!M.war, squads = !!M.squads && !war;
+    let html = `<h1>${M.name} — choisissez la carte</h1>${UI.steps(2, M.name)}<p>${siege
       ? `Objectif : repousser les ${SIEGE_WAVES.length} vagues d'assaut avec vos otages vivants et entre vos mains.`
       : escort ? "Objectif : conduire le VIP vivant du point A au point B, à travers les pièces tenues par le commando. Inutile de neutraliser tout le monde."
+      : war ? `Objectif : abattre plus d'adversaires que l'armée d'en face en ${Math.round(WAR_TIME / 60)} minutes. Chaque trinôme anéanti revient de sa base.`
       : squads ? "Objectif : deux trinômes contre deux, l'intervention contre le groupe armé. Le premier camp entièrement hors de combat a perdu."
       : "Objectif : neutraliser tous les suspects, sans perdre toute l'équipe ni tuer d'otage. Escorter les otages dehors, par une porte extérieure ou une fenêtre, les met à l'abri en attendant."}</p>
-      <p class="planlegend"><i class="lg-door"></i> porte <i class="lg-win"></i> fenêtre ${escort ? '<i class="lg-a"></i> départ (A) <i class="lg-b"></i> extraction (B)' : "<i class=\"lg-entry\"></i> ouverture sur l'extérieur"}</p>`;
+      <p class="planlegend"><i class="lg-door"></i> porte <i class="lg-win"></i> fenêtre ${escort ? '<i class="lg-a"></i> départ (A) <i class="lg-b"></i> extraction (B)'
+        : war ? '<i class="lg-base"></i> base d\'une armée' : "<i class=\"lg-entry\"></i> ouverture sur l'extérieur"}</p>`;
     html += '<div class="levels">';
     g.levels.forEach((l, i) => {
       const txt = l.map.join('');
@@ -610,17 +692,22 @@ class UI {
       const h = txt.split('').filter(c => c === 'H').length;
       // en plein air, on arrive par les entrées du terrain (O) ; ailleurs, par les portes extérieures et les fenêtres
       const ent = txt.split('').filter(c => (l.outdoor ? 'O' : 'XW').includes(c)).length;
+      const what = war ? '2 bases · 3 trinômes contre 3' : squads ? `${ent} ouvertures · 2 trinômes contre 2`
+        : `${siege ? ent + ' entrées à surveiller' : n + ' suspects'} · ${escort ? 'VIP à conduire de A à B' : h + ' otages'}`;
       html += `<button class="levelbtn${i === g.levelIndex ? ' sel' : ''}" data-i="${i}"><canvas></canvas>
-        <span class="lname">${i + 1}. ${l.name}${l.outdoor ? ' <em>· plein air</em>' : ''}</span><small>${squads ? `${ent} ouvertures · 2 trinômes contre 2` : `${siege ? ent + ' entrées à surveiller' : n + ' suspects'} · ${escort ? 'VIP à conduire de A à B' : h + ' otages'}`}</small></button>`;
+        <span class="lname">${i + 1}. ${l.name}${war ? ' <em>· champ de bataille</em>' : l.outdoor ? ' <em>· plein air</em>' : ''}</span><small>${what}</small></button>`;
     });
-    html += `</div><div class="row"><button id="ovClose">Retour</button></div>`;
+    html += `</div><div class="row"><button id="ovToModes">◀ Modes</button>${back ? '<button id="ovClose">Retour</button>' : ''}</div>`;
     this.showOverlay(html);
     this.panel.classList.add('wide');
     this.panel.querySelectorAll('.levelbtn').forEach(b => {
       UI.drawPlan(b.querySelector('canvas'), g.levels[+b.dataset.i]);
       b.onclick = () => { g.loadLevel(+b.dataset.i); this.showBriefing(); };
     });
-    this.panel.querySelector('#ovClose').onclick = ret;
+    // (le fil et le bouton du bas ramènent tous deux aux modes)
+    for (const b of this.panel.querySelectorAll('#ovModes, #ovToModes')) b.onclick = () => this.showModes(back);
+    const close = this.panel.querySelector('#ovClose');
+    if (close) close.onclick = back;
   }
 
   // Aperçu d'une mission : le plan de la minimap, portes fermées comprises, et ses ouvertures sur
@@ -636,6 +723,20 @@ class UI {
     ctx.scale(dpr, dpr);
     ctx.translate(pad, pad);
     Renderer.paintPlan(ctx, m, s, true);
+    if (m.bases.length) {
+      // guerre totale : les deux bases, la vôtre (sel) en bleu et l'autre en rouge, ou toutes deux en orange tant que
+      // le sort décide ; celle qu'on survole, cernée de blanc
+      const chosen = opts.sel !== null && opts.sel !== undefined;
+      m.bases.forEach((b, i) => {
+        ctx.fillStyle = !chosen ? 'rgba(255,179,71,0.9)' : i === opts.sel ? 'rgba(100,181,246,0.9)' : 'rgba(239,106,90,0.9)';
+        for (const c of b.cells) ctx.fillRect(c.x * s, c.y * s, s, s);
+        if (i !== opts.hover) return;
+        const xs = b.cells.map(c => c.x), ys = b.cells.map(c => c.y);
+        ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5;
+        ctx.strokeRect(Math.min(...xs) * s - 1.5, Math.min(...ys) * s - 1.5, (Math.max(...xs) - Math.min(...xs) + 1) * s + 3, (Math.max(...ys) - Math.min(...ys) + 1) * s + 3);
+      });
+      return;
+    }
     if (m.vipStart && m.goal) {
       const mark = (x, y, txt, col) => {
         const r = Math.max(5, 2.2 * s);
@@ -673,21 +774,25 @@ class UI {
 
   showPause() {
     const g = this.game;
-    this.showOverlay(`<h1>Pause</h1><p>${g.squads ? this.squadsBriefing() : g.def.briefing}</p>
-      <div class="row"><button class="primary" id="ovResume">Reprendre</button><button id="ovRestart">↺ Recommencer</button><button id="ovLevels">Missions</button><button id="ovHelp">Aide</button></div>`);
+    this.showOverlay(`<h1>Pause</h1><p>${g.war ? this.warBriefing() : g.squads ? this.squadsBriefing() : g.def.briefing}</p>
+      <div class="row"><button class="primary" id="ovResume">Reprendre</button><button id="ovRestart">↺ Recommencer</button><button id="ovLevels">Cartes</button><button id="ovModes">Modes</button><button id="ovHelp">Aide</button></div>`);
     this.panel.querySelector('#ovResume').onclick = () => g.setPaused(false);
     this.panel.querySelector('#ovRestart').onclick = () => { g.restart(); this.showBriefing(); };
     this.panel.querySelector('#ovLevels').onclick = () => this.showLevels(() => this.showPause());
+    this.panel.querySelector('#ovModes').onclick = () => this.showModes(() => this.showPause());
     this.panel.querySelector('#ovHelp').onclick = () => this.showHelp();
   }
 
   showEnd(result) {
     const g = this.game, s = g.stats;
-    const win = result === 'win';
-    const siege = !!g.siege, escort = !!g.escort, squads = !!g.squads, armed = g.camp === 'armed';
+    const win = result === 'win', draw = result === 'draw';
+    const siege = !!g.siege, escort = !!g.escort, war = !!g.war, squads = !!g.squads && !war, armed = g.camp === 'armed';
+    const W = g.war, tally = W ? `${W.kills.ops} adversaires abattus contre ${W.kills.enemy}` : '';
     const title = siege ? (win ? 'Assaut repoussé' : 'Bâtiment repris') : escort ? (win ? 'VIP exfiltré' : 'Mission échouée')
+      : war ? (win ? 'Bataille remportée' : draw ? 'Égalité' : 'Bataille perdue')
       : squads ? (win ? 'Engagement remporté' : 'Engagement perdu') : (win ? 'Mission accomplie' : 'Mission échouée');
-    const intro = win
+    const intro = war ? (win ? `Votre armée l'emporte : ${tally}.` : draw ? `Personne ne l'emporte : ${tally}.` : g.loseReason)
+      : win
       ? (siege ? 'Toutes les vagues sont repoussées : les négociations aboutissent.'
         : escort ? (g.vip.hp < g.vip.maxHp ? 'Le VIP est arrivé au point B, blessé mais vivant.' : 'Le VIP est arrivé sain et sauf au point B.')
         : squads ? `Les deux trinômes ${armed ? "d'intervention" : 'du groupe armé'} sont hors de combat.`
@@ -698,32 +803,35 @@ class UI {
     const sc = g.score || g.scoreReport(result), rec = g.record;
     const best = rec ? (rec.beaten ? (rec.prev === null ? 'Première note sur cette mission' : `Nouveau record (avant : ${rec.prev})`) : `Record : ${rec.prev}`) : '';
     const pts = n => (n > 0 ? '+' : n < 0 ? '−' : '') + Math.abs(n);
-    const html = `<h1 class="${win ? 'win' : 'lose'}">${title}</h1>
+    const html = `<h1 class="${win ? 'win' : draw ? 'draw' : 'lose'}">${title}</h1>
       <p>${intro}</p>
       <div class="score"><div class="grade grade-${sc.grade}" id="endGrade">${sc.grade}</div>
         <div class="score-sum"><b id="endScore">${sc.total} / 100</b>${best ? `<small>${best}</small>` : ''}</div>
         <div class="score-lines">${sc.lines.map(l => `<span>${l.label}</span><span class="sd">${l.detail}</span><b class="${l.pts < 0 ? 'neg' : ''}">${pts(l.pts)}</b>`).join('')}</div></div>
       <div class="stats">
         <span>Temps</span><b>${fmtTime(g.time)}</b>
-        <span>${siege ? 'Opérateurs neutralisés' : squads ? 'Adversaires neutralisés' : 'Suspects abattus / arrêtés'}</span><b>${siege || squads ? `${s.kills} / ${g.enemies.length}` : `${s.kills} / ${s.arrests}`}</b>
+        <span>${siege ? 'Opérateurs neutralisés' : war ? 'Abattus par votre armée / par vous' : squads ? 'Adversaires neutralisés' : 'Suspects abattus / arrêtés'}</span><b id="endKills">${war ? `${W.kills.ops} / ${W.mine}` : siege || squads ? `${s.kills} / ${g.enemies.length}` : `${s.kills} / ${s.arrests}`}</b>
         <span>Tirs / touchés</span><b>${s.shots} / ${s.hits}</b>
         <span>Précision</span><b>${s.shots ? Math.round(100 * s.hits / s.shots) : 0} %</b>
         <span>${armed ? 'Grenades utilisées' : 'Flashs utilisées'}</span><b>${s.flashes}</b>
-        <span>${armed ? 'Terroristes perdus' : 'Opérateurs perdus'}</span><b>${g.ops.filter(o => !o.alive).length} / ${g.squadSize}</b>
-        ${squads ? '' : escort ? `<span>Santé du VIP</span><b id="endVip">${g.vip.alive ? Math.round(100 * g.vip.hp / g.vip.maxHp) + ' %' : 'tué'}</b>`
+        <span>${war ? 'Pertes de votre armée' : armed ? 'Terroristes perdus' : 'Opérateurs perdus'}</span><b>${war ? W.kills.enemy : `${g.ops.filter(o => !o.alive).length} / ${g.squadSize}`}</b>
+        ${war ? `<span>Votre trinôme revenu de la base</span><b>${W.reinforce} fois</b>`
+          : squads ? '' : escort ? `<span>Santé du VIP</span><b id="endVip">${g.vip.alive ? Math.round(100 * g.vip.hp / g.vip.maxHp) + ' %' : 'tué'}</b>`
           : `<span>Otages tués</span><b id="endHostagesKilled">${g.hostages.filter(h => !h.alive).length} / ${g.hostages.length}</b>
         <span>${siege ? "Otages évacués par l'intervention" : 'Otages évacués'}</span><b id="endHostagesOut">${out} / ${g.hostages.length}</b>`}
       </div>
       <div class="row">
         <button id="ovRetry">↺ Rejouer</button>
-        ${win && g.levelIndex + 1 < g.levels.length ? '<button class="primary" id="ovNext">Mission suivante ▶</button>' : ''}
-        <button id="ovLevels">Missions</button>
+        ${win && g.levelIndex + 1 < g.levels.length ? '<button class="primary" id="ovNext">Carte suivante ▶</button>' : ''}
+        <button id="ovLevels">Cartes</button>
+        <button id="ovModes">Modes</button>
       </div>`;
     this.showOverlay(html);
     this.panel.querySelector('#ovRetry').onclick = () => { g.restart(); this.showBriefing(); };
     const nx = this.panel.querySelector('#ovNext');
     if (nx) nx.onclick = () => { g.loadLevel(g.levelIndex + 1); this.showBriefing(); };
     this.panel.querySelector('#ovLevels').onclick = () => this.showLevels(() => this.showEnd(result));
+    this.panel.querySelector('#ovModes').onclick = () => this.showModes(() => this.showEnd(result));
   }
 
   // back : écran à rouvrir en fermant l'aide (le briefing) ; sinon la pause, ou le jeu.
@@ -746,7 +854,7 @@ class UI {
       <b>Sommation et arrestation</b> : <kbd>C</kbd> crie « Police ! À terre ! ». Chaque suspect que vous voyez à portée de voix peut se rendre : il lâche son arme et se met à genoux, mains sur la tête. Il cède plus facilement aveuglé par une flash, blessé, pris de dos ou tenu en joue par plusieurs d'entre vous ; bien moins en plein échange de tirs ou avec un complice à côté. Approchez-vous et <kbd>H</kbd> le menotte. Un suspect rendu que plus personne ne surveille finit par reprendre son arme. Il compte comme neutralisé une fois menotté. Le cri s'entend : les autres viennent voir. Abattre un suspect rendu coûte cher dans la note de fin.<br>
       <b>Note de fin</b> : chaque mission est notée sur 100, de S à D : otages en vie et évacués, suspects arrêtés plutôt qu'abattus, équipe indemne ; un suspect abattu après sa reddition, une balle dans un coéquipier ou l'alerte générale retirent des points. Votre meilleure note par mission est gardée.<br>
       <b>Courant coupé et lampe</b> : au briefing, vous pouvez couper le courant avant d'entrer. Dans le noir, on ne voit qu'à quatre cases, vous comme les suspects, sauf ce qu'éclaire une lampe, et un tireur sans silencieux se trahit un instant par sa flamme. La <b>lampe</b> (accessoire, sur toute arme à rail) éclaire un cône loin devant vous et éblouit un suspect pris en face de près, mais dans le noir elle se voit de loin. <kbd>X</kbd> l'éteint ou la rallume ; Bravo et Charlie, équipés d'une lampe quand le courant est coupé, font comme vous.<br>
-      <b>Accessoires</b> : au briefing, arme par arme. Le <b>silencieux</b> : un tir ne s'entend plus qu'à 2 à 5 cases selon le calibre, au lieu de 13 à 18, mais l'arme est plus lourde et plus longue, et l'impact d'une balle manquée s'entend toujours ; la ligne « Équipe » en munit aussi Bravo et Charlie, et montre l'arme que chacun a reçue. Le <b>laser</b> : le point montre où part la balle, ce qui divise par deux la dispersion en mouvement ; mais le faisceau se voit, et un suspect qui aperçoit le trait ou le point se tourne vers vous, puis vient voir. <kbd>L</kbd> l'éteint ou le rallume ; il s'éteint de lui-même pendant un geste ou un rechargement. La <b>poignée avant</b> (HK416, SCAR-H, MP5) : la rafale s'ouvre d'un quart de moins et l'arme relève moins. Le <b>chargeur grande capacité</b> (40 coups pour le HK416, 33 pour le Glock, rallonge de tube pour le Remington ; en siège, tambour de 75 pour l'AKM, 45 pour l'AK-74, 40 pour l'Uzi) : on recharge moins souvent, mais pas avec plus de cartouches en tout, l'arme est plus lourde et le rechargement un peu plus long.<br>
+      <b>Accessoires</b> : au briefing, arme par arme. Le <b>silencieux</b> : un tir ne s'entend plus qu'à 2 à 5 cases selon le calibre, au lieu de 13 à 18, mais l'arme est plus lourde et plus longue, et l'impact d'une balle manquée s'entend toujours ; la ligne « Équipe » en munit aussi Bravo et Charlie, et montre l'arme que chacun a reçue. Le <b>laser</b> : le point montre où part la balle, ce qui divise par deux la dispersion en mouvement ; mais le faisceau se voit, et un suspect qui aperçoit le trait ou le point se tourne vers vous, puis vient voir. <kbd>L</kbd> l'éteint ou le rallume ; il s'éteint de lui-même pendant un geste ou un rechargement. La <b>poignée avant</b> (HK416, SCAR-H, MP5) : la rafale s'ouvre d'un quart de moins et l'arme relève moins. La <b>lunette</b> (HK416, SCAR-H, MP5, AKM, AK-74) ne sert qu'à l'arrêt : immobile, l'œil posé (quatre dixièmes de seconde), on voit 60 % plus loin dans l'axe de l'arme, la dispersion de base est divisée par deux, la portée allongée de moitié, et la vue glisse vers le point visé sans le lâcher, ce qui laisse pousser le viseur plus loin, même depuis le bord de l'écran ; au moindre pas, il ne reste que son poids. Le <b>chargeur grande capacité</b> (40 coups pour le HK416, 33 pour le Glock, rallonge de tube pour le Remington ; en siège, tambour de 75 pour l'AKM, 45 pour l'AK-74, 40 pour l'Uzi) : on recharge moins souvent, mais pas avec plus de cartouches en tout, l'arme est plus lourde et le rechargement un peu plus long.<br>
       <b>Bilan</b> : au briefing, en haut des caractéristiques, la charge emportée, la vitesse (toutes vos armes pèsent, en main ou à la bretelle, accessoires compris, puis le gilet et le bouclier) et, avec un gilet ou un bouclier, la part des dégâts qu'une balle vous fait selon l'arme qui tire et le côté d'où elle vient.<br>
       <b>Gilet</b> : au briefing, en assaut et en escorte, les deux côte à côte, celui que vous portez en surbrillance ; en jeu, il est rappelé à côté de la santé. Le <b>souple</b> (NIJ IIIA, la référence) arrête tout autour du torse les balles d'arme de poing, de pistolet mitrailleur en 9 mm et la chevrotine : il n'en reste que le choc, la moitié des dégâts. Une balle de fusil le traverse. Le <b>lourd</b> y ajoute des plaques devant et derrière qui arrêtent même une balle de fusil (il n'en reste qu'un tiers), mais pas de flanc ; onze kilos, on avance nettement moins vite.<br>
       <b>Bouclier</b> : à choisir au briefing à la place de l'arme principale. Tenu au bras gauche, il ne laisse que l'arme de poing, tirée d'une main par-dessus le bord, donc moins précise (un laser compense en partie), avec deux chargeurs de plus. De face, il arrête les balles de son niveau : le léger (NIJ IIIA) celles d'arme de poing, de pistolet mitrailleur et la chevrotine, mais pas celles d'un fusil (une balle d'AK le traverse) ; le lourd (NIJ III) arrête tout, mais il ralentit nettement et sa lucarne rétrécit le champ de vision. De flanc et de dos, on est à découvert. Bouclier au bras, on ne ramasse qu'une arme de poing.<br>
@@ -770,7 +878,8 @@ class UI {
       le voit le vise avant vous. Si vous tombez, il suit celui qui reprend la main. La mission est accomplie dès qu'il
       entre dans la zone B, vivant, quels que soient les terroristes encore debout ; elle échoue s'il meurt. La note
       récompense sa santé, l'équipe indemne et la discrétion (pas d'alerte générale), et punit chaque balle de l'équipe qui le touche.</p>
-      <p><b>Mode trinômes</b> : deux trinômes contre deux, l'intervention contre le groupe armé ; au briefing, vous
+      <p><b>Mode trinômes</b> : sur ses propres cartes (des bâtiments symétriques, ouverts sur chaque façade), deux trinômes
+      contre deux, l'intervention contre le groupe armé ; au briefing, vous
       choisissez votre camp et votre ouverture. Vous menez votre trinôme (vous et deux coéquipiers, avec les ordres
       habituels) ; le second trinôme de votre camp entre par l'ouverture la plus proche et progresse seul, et les deux
       d'en face entrent par les plus éloignées. Chaque trinôme autonome balaie le bâtiment depuis son entrée, converge sur
@@ -779,6 +888,18 @@ class UI {
       à fragmentation là où ils vous savent. Ni otage ni sommation. Si vous tombez, vous reprenez la main dans un
       coéquipier, puis, quand votre trinôme n'est plus, dans un homme de l'autre. Le premier camp entièrement hors de
       combat a perdu.</p>
+      <p><b>Guerre totale</b> : sur des champs de bataille en plein air, deux armées de trois trinômes, l'intervention contre
+      le groupe armé, dans le camp de votre choix. Au briefing, vous choisissez aussi votre base (ou le sort). Vous menez le
+      trinôme du centre, avec les ordres habituels ; les deux autres de votre armée tiennent les flancs seuls, chacun son
+      couloir, et ceux d'en face font de même. Un trinôme dont plus personne n'est debout revient de sa base
+      ${WAR_RESPAWN} secondes plus tard : le vôtre aussi (si vous tombez, vous reprenez d'abord la main dans un coéquipier,
+      puis vous repartez de la base avec un trinôme frais). La bataille dure ${Math.round(WAR_TIME / 60)} minutes (le chrono
+      décompte) ; chaque homme abattu compte un point pour l'armée d'en face, et l'armée qui a le plus de points l'emporte,
+      à égalité personne. Le champ de bataille est connu d'avance : la minimap le montre en entier, mais l'adversaire ne se
+      voit que dans le champ de vision de votre armée.</p>
+      <p><b>Pour commencer</b> : choisissez le mode, puis la carte (chaque mode a les siennes), puis l'équipement au briefing.
+      Le fil en haut du briefing ramène au choix du mode ou de la carte ; en pause et en fin de partie, « Cartes » et
+      « Modes » aussi.</p>
       <div class="row"><button class="primary" id="ovClose">Compris</button></div>`);
     this.panel.querySelector('#ovClose').onclick = back || (() => { if (this.game.paused) this.showPause(); else this.hideOverlay(); });
   }

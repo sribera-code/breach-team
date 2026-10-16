@@ -8,12 +8,30 @@
   renderer.resize();
   window.addEventListener('resize', () => renderer.resize());
   game.loadLevel(0);
-  if (location.hash !== '#nobrief') ui.showBriefing();
+  // on choisit le mode, puis la carte, puis l'équipement (#nobrief : on joue tout de suite la première carte du mode)
+  if (location.hash !== '#nobrief') ui.showModes();
 
   const inp = game.input;
-  canvas.addEventListener('mousemove', e => { renderer.mouse.sx = e.clientX; renderer.mouse.sy = e.clientY; });
+  // Souris verrouillée dans le jeu (Pointer Lock) : le curseur est celui qu'on dessine, il ne bute plus sur le bord de
+  // la fenêtre, et la lunette peut faire glisser la vue sans lâcher le point visé. Un clic en jeu la verrouille, un
+  // menu ouvert la libère.
+  const locked = () => document.pointerLockElement === canvas;
+  const lock = () => {
+    if (locked() || ui.isOpen() || !canvas.requestPointerLock) return;
+    try { const r = canvas.requestPointerLock(); if (r && r.catch) r.catch(() => {}); } catch (e) { /* refusé : souris libre */ }
+  };
+  canvas.addEventListener('mousemove', e => renderer.pointerMove(e.movementX || 0, e.movementY || 0, e.clientX, e.clientY, locked()));
+  document.addEventListener('click', lock); // après « Lancer l'assaut » ou « Reprendre », le menu fermé
+  // Échap libère d'abord la souris (le navigateur s'en charge) : c'est aussi la pause, comptée une seule fois
+  let unlockedAt = -1e9;
+  document.addEventListener('pointerlockchange', () => {
+    if (locked() || ui.isOpen() || game.over || game.paused) return;
+    unlockedAt = performance.now();
+    game.setPaused(true);
+  });
   canvas.addEventListener('mousedown', e => {
     Sound.init();
+    lock();
     if (e.button === 0) { inp.mouse.down = true; inp.pressed.Mouse0 = true; }
     if (e.button === 1) { e.preventDefault(); inp.pressed.Mouse1 = true; }
     if (e.button === 2) { inp.pressed.Mouse2 = true; inp.mouse.rdown = true; }
@@ -31,7 +49,7 @@
     if (NO_DEFAULT.includes(e.code)) e.preventDefault(); // Alt ne doit pas ouvrir le menu du navigateur
     if (e.repeat) return;
     if (e.code === 'Escape') {
-      if (game.over) return;
+      if (game.over || performance.now() - unlockedAt < 300) return;
       if (ui.isOpen() && !game.paused) return;
       game.setPaused(!game.paused);
       return;
@@ -46,7 +64,8 @@
   function frame(now) {
     const dt = Math.min(0.05, (now - last) / 1000);
     last = now;
-    const m = renderer.toWorld(renderer.mouse.sx, renderer.mouse.sy);
+    if (locked() && ui.isOpen()) document.exitPointerLock();
+    const m = renderer.aimWorld();
     inp.mouse.x = m.x; inp.mouse.y = m.y;
     game.update(dt);
     renderer.draw(dt);

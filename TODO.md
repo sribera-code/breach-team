@@ -43,6 +43,26 @@ de chaque section.
 - **Le groupe armé ne se met jamais en colonne** et n'entre pas à la grenade : il franchit les portes comme il vient.
 - **Pas de réapparition ni de manches** : une seule manche, à l'élimination.
 
+## Guerre totale
+
+- **Tout est réglé à l'estime, et la bataille est très meurtrière.** Cinq minutes (`WAR_TIME`), six secondes avant le
+  retour d'un trinôme (`WAR_RESPAWN`), un couloir par trinôme avancé par étapes de quatre cases (`WAR_STEP`). En parties
+  simulées sans le joueur (il reste à sa base), les armées se rencontrent vers la dixième seconde et la bataille compte
+  environ 160 morts en cinq minutes, 75 à 90 par armée : chaque homme vit une trentaine de secondes. Ni joué à la main,
+  ni comparé d'une carte à l'autre. Leviers : `WAR_RESPAWN`, `WAR_STEP`, `SQUAD_MILITANT`, les armes de l'IA.
+- **Pas de protection à la réapparition.** Un trinôme revient dans sa base même si l'adversaire y est : rien n'empêche
+  de camper la base d'en face. Ni zone interdite, ni invulnérabilité de quelques secondes, ni base de repli.
+- **Les trinômes autonomes ne se coordonnent pas entre couloirs.** Chacun tient sa bande et ne partage un contact
+  qu'avec les siens ; un flanc enfoncé n'appelle pas les autres. Pas d'objectif à tenir ou à prendre (drapeau, zone) :
+  seul le décompte des morts compte.
+- **Les ordres ne vont qu'à votre trinôme**, et l'on ne peut pas reprendre la main dans un autre trinôme de son armée
+  (on attend les renforts). Pas de choix d'équipement entre deux réapparitions : on revient avec celui du briefing.
+- **Les champs de bataille (Village, Port, Usine) n'ont été joués que par les tests** et par des parties simulées.
+  Dessinés par symétrie, ils gardent une petite dissymétrie : un meuble déborde d'une demi-case à droite et en bas de sa
+  case, si bien que son reflet n'est pas exactement à la même place.
+- **Le rendu des grandes cartes reste à mesurer dans un vrai navigateur.** Le brouillard et les calques de la carte ne
+  se recomposent plus qu'à l'écran, mais une armée entière, c'est neuf cônes de vision à découper à chaque image.
+
 ## Mode escorte
 
 - **Tout est réglé à l'estime** : 100 points de vie et un gilet souple pour le VIP, priorité de tir absolue
@@ -150,8 +170,23 @@ de chaque section.
 - **Hôtel, Banque et Centre de données n'ont été jouées que par les tests.** Leur équilibre (nombre
   d'entrées, longueur des allées entre les baies, couvert du hall de la banque) reste à éprouver à la main,
   dans les deux modes.
+- **Les dix nouvelles cartes n'ont été jouées que par les tests** : Musée (assaut), Mairie et Supermarché (siège), Gare
+  (escorte), Lycée, Galerie marchande et Chantier (trinômes), Village, Port et Usine (guerre totale).
+- **Les trinômes n'ont plus que trois cartes**, leurs arènes : les bâtiments à otages, pensés pour l'assaut, n'y sont
+  plus. Trois arènes, c'est peu ; en dessiner d'autres, ou rouvrir aux trinômes les deux cartes en plein air.
+- **Les meilleures notes sont rangées par numéro de carte** (`breach.best.<mode>.<i>`) : on ajoute les cartes en fin de
+  liste pour ne pas les mélanger.
 
 ## Fait depuis la dernière version
+
+Mode guerre totale : deux armées de trois trinômes, cinq minutes de combat sur des champs de bataille en plein air
+(Village, Port, Usine), un trinôme anéanti revient de sa base six secondes plus tard, le vôtre compris ; l'armée qui
+abat le plus d'adversaires l'emporte (égalité possible) · chaque mode a ses cartes : le Musée pour l'assaut, la Mairie
+et le Supermarché pour le siège, la Gare pour l'escorte, trois arènes symétriques pour les trinômes (Lycée, Galerie
+marchande, Chantier) · on choisit le mode, puis la carte, puis l'équipement (fil « Mode › Carte › Équipement » au
+briefing) · sacs de sable et asphalte · brouillard et calques de la carte recomposés seulement à l'écran.
+
+Version précédente :
 
 Deux cartes en plein air, plus grandes (Maison de maître, Corps de ferme) : herbe, gravier, terrasse, haies, arbres,
 bassin, entrées du terrain au bord de la carte · mode trinômes : deux trinômes contre deux, l'intervention contre le groupe armé, dans le camp de son choix ; votre
@@ -171,7 +206,7 @@ la vitesse dépend du poids de toutes les armes portées, accessoires compris, e
 entrée à la flash (second clic droit sur la porte de la colonne : entrebâillement, flash, porte grande ouverte, entrée ;
 deux flashs par coéquipier) · en escorte, les terroristes tirent sur le VIP dès qu'ils le voient.
 
-Version précédente :
+Plus tôt :
 
 Les suspects tirent dans la porte derrière laquelle ils vous ont vu disparaître, ou d'où l'on vient de leur tirer dessus · silencieux sans perte sur les balles supersoniques et le .45, munition subsonique plus faible pour le 9 mm, effets des accessoires détaillés au briefing · Neutraliser tous les suspects suffit pour gagner en assaut · boucliers balistiques léger et lourd, avec l'arme
 de poing seule · accessoires choisis arme par arme au briefing : silencieux et laser (`L`), et un silencieux pour

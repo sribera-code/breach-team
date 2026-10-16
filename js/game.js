@@ -105,6 +105,11 @@ const SQUAD_MILITANT = { hp: 110, maxHp: 110, reaction: 0.35, turnRate: 7, fov: 
 // Escorte : un terroriste qui voit le VIP le vise, quoi qu'il fasse (même en plein échange avec l'équipe, il
 // pivote vers lui en VIP_SWITCH s au moins) ; personne n'est posté à moins de GOAL_MARGIN de la zone d'extraction.
 const VIP_SWITCH = 0.2, GOAL_MARGIN = 2 * U;
+// Guerre totale : durée de la bataille, délai avant qu'un trinôme anéanti ne revienne de sa base, et âge au-delà duquel
+// un corps hors de vue est retiré (cinq minutes de combat en laissent des dizaines).
+const WAR_TIME = 300, WAR_RESPAWN = 6, WAR_BODY_LIFE = 45;
+// Guerre totale : un trinôme autonome avance dans son couloir par étapes de WAR_STEP (voir warSectors).
+const WAR_STEP = 4 * U;
 
 class Game {
   constructor() {
@@ -154,8 +159,9 @@ class Game {
   // fragmentation, ni charge ni fibre).
   get camp() { return (MODES[this.mode] || MODES.assault).camp; }
 
-  // Bascule de mode : on recharge la mission dans l'autre rôle. Passer à une autre liste de cartes (l'escorte)
-  // ramène à la mission où l'on en était dans cette liste.
+  // Bascule de mode : on recharge la mission dans l'autre rôle. Chaque mode a sa liste de cartes : on garde la même
+  // carte si l'autre mode la joue aussi (l'assaut et le siège se partagent les bâtiments à otages), sinon on revient à
+  // celle où l'on en était dans cette liste.
   setMode(mode) {
     if (!MODES[mode] || mode === this.mode) return;
     const list = this.levels;
@@ -164,7 +170,8 @@ class Game {
     this.loadout = Game.loadSavedLoadout(mode);
     if (this.levels !== list) {
       this.levelMemo.set(list, this.levelIndex);
-      this.levelIndex = this.levelMemo.get(this.levels) || 0;
+      const same = this.levels.indexOf(this.def);
+      this.levelIndex = same >= 0 ? same : this.levelMemo.get(this.levels) || 0;
     }
     this.loadLevel(this.levelIndex);
   }
@@ -227,18 +234,22 @@ class Game {
     const siege = this.mode === 'siege';
     // En escorte, l'équipe part du point A avec le VIP : elle ne passe par aucune ouverture.
     const escort = this.mode === 'escort';
-    // Trinômes : personne n'attend dans le bâtiment, les quatre trinômes y entrent (voir startSquads).
-    const squads = !!(MODES[this.mode] || {}).squads, armed = this.camp === 'armed';
+    // Trinômes : personne n'attend dans le bâtiment, les quatre trinômes y entrent (voir startSquads). Guerre totale :
+    // les deux armées partent de leurs bases (voir startWar).
+    const squads = !!(MODES[this.mode] || {}).squads, armed = this.camp === 'armed', war = !!(MODES[this.mode] || {}).war;
+    this.war = null;
     // agents à la manœuvre autonome (intervention du siège, trinômes) : leurs colonnes sur les portes
     // (stackT : instant de la dernière colonne de chaque camp ; tried : camp:porte → instant où elle a été envisagée)
     this.hunt = siege || squads ? { stacks: [], stackT: {}, tried: new Map() } : null;
     const vipAt = escort ? this.map.vipStart || entry : null;
-    // En assaut, l'équipe entre par une ouverture sur l'extérieur (tirée au sort, ou choisie au briefing).
-    const breaches = this.map.breaches;
-    this.entryIndex = !breaches.length ? 0
-      : this.entryRandom ? Math.floor(Math.random() * breaches.length)
-      : clamp(this.entryIndex || 0, 0, breaches.length - 1);
-    const entryBreach = !siege && !escort && breaches.length ? breaches[this.entryIndex] : null;
+    // En assaut, l'équipe entre par une ouverture sur l'extérieur (tirée au sort, ou choisie au briefing) ; en guerre
+    // totale, votre armée part de l'une des deux bases (de même).
+    const breaches = this.map.breaches, picks = war ? this.map.bases : breaches;
+    this.entryIndex = !picks.length ? 0
+      : this.entryRandom ? Math.floor(Math.random() * picks.length)
+      : clamp(this.entryIndex || 0, 0, picks.length - 1);
+    const entryBreach = !siege && !escort && !war && breaches.length ? breaches[this.entryIndex] : null;
+    const home = war ? picks[this.entryIndex] || null : null;
     // Personne n'attend là où l'équipe commence : la pièce d'entrée de l'assaut, ou en escorte celle du
     // point A (et les abords du point B).
     const quiet = entryBreach ? this.map.roomOf(entryBreach.inside.x, entryBreach.inside.y)
@@ -253,6 +264,7 @@ class Game {
     const s = siege ? { x: Math.floor(foePosts[0].x / TILE), y: Math.floor(foePosts[0].y / TILE) }
       : entryBreach ? this.entryStart(entryBreach)
       : escort ? this.escortStart(vipAt)
+      : home ? this.baseStart(home)
       : entry;
     this.player = new Player(c(s).x, c(s).y, this.loadout);
     this.player.style = armed ? { ...STYLE_BOSS } : { ...STYLE_PLAYER };
@@ -260,6 +272,7 @@ class Game {
     const goal = escort && this.map.goal;
     this.player.angle = siege ? rand(0, TAU)
       : goal ? Math.atan2(goal.cy - this.player.y, goal.cx - this.player.x)
+      : home ? home.angle
       : Math.atan2(this.map.h * TILE / 2 - this.player.y, this.map.w * TILE / 2 - this.player.x);
     const weps = def.enemyWeapons || ['ak'];
     this.enemies = siege || squads ? [] : foePosts.map(q => new Enemy(q.x, q.y, null, weps[Math.floor(Math.random() * weps.length)]));
@@ -272,18 +285,9 @@ class Game {
     // en trinômes, vos deux coéquipiers ; côté groupe armé, deux complices
     const baseDefs = siege ? SIEGE_MATE_DEFS.slice(0, Math.max(1, Math.min(SIEGE_MATE_DEFS.length, foePosts.length - 1)))
       : armed ? SIEGE_MATE_DEFS.slice(0, 2) : TEAMMATE_DEFS;
-    // armes tirées au sort, une par coéquipier ; silencieux pour les coéquipiers (assaut) : chacun en
-    // reçoit une qui en accepte un (pas de fusil à pompe)
-    const sup = !armed && !!this.loadout.teamSup;
     // courant coupé : chacun a une lampe sur son arme (toutes celles du lot ont un rail)
     this.dark = !!(MODES[this.mode] || {}).power && !!this.loadout.cutPower;
-    // (en trinômes, vos complices ont une arme d'épaule : ils vont au combat, pas tenir un poste)
-    const pool = armed ? (squads ? SIEGE_MATE_POOL.filter(k => WEAPONS[k].cat !== 'hg') : SIEGE_MATE_POOL)
-      : sup ? MATE_POOL.filter(k => SUPPRESSORS[k]) : MATE_POOL;
-    const dealt = dealWeapons(pool, baseDefs.length);
-    // en trinômes, le groupe armé vient équipé : chaque complice a son lot d'accessoires (MILITANT_KITS)
-    const kits = squads && armed ? dealWeapons(MILITANT_KITS, baseDefs.length) : null;
-    const mateDefs = baseDefs.map((d, i) => ({ ...d, weapon: dealt[i], acc: kits ? kits[i] : { sup, light: this.dark } }));
+    const mateDefs = this.crewDefs(baseDefs);
     if (siege) {
       // Chaque complice à son poste, tiré au sort lui aussi, en position tenue.
       this.mates = mateDefs.map((d, i) => {
@@ -317,7 +321,8 @@ class Game {
       if (quiet && !squads) this.clearZone(quiet);
       this.siege = null;
       this.player.charges = armed ? 0 : CHARGES;
-      if (squads) this.startSquads(entryBreach);
+      if (war) this.startWar();
+      else if (squads) this.startSquads(entryBreach);
       else {
         // Des portes fermées à clé : il faut crocheter, faire sauter la serrure ou poser une charge.
         if (this.lockDoors) for (const d of this.map.doors) d.locked = Math.random() < LOCK_CHANCE;
@@ -550,6 +555,19 @@ class Game {
     }
   }
 
+  // Fiches de vos coéquipiers (defs) avec leur arme, tirée au sort dans le lot du camp : avec des silencieux pour l'équipe
+  // (assaut), une arme qui en accepte un (pas de fusil à pompe) ; courant coupé, une lampe ; en trinômes et en guerre
+  // totale, côté groupe armé, une arme d'épaule (on va au combat, pas tenir un poste) et un lot d'accessoires
+  // (MILITANT_KITS).
+  crewDefs(defs) {
+    const squads = !!(MODES[this.mode] || {}).squads, armed = this.camp === 'armed', sup = !armed && !!this.loadout.teamSup;
+    const pool = armed ? (squads ? SIEGE_MATE_POOL.filter(k => WEAPONS[k].cat !== 'hg') : SIEGE_MATE_POOL)
+      : sup ? MATE_POOL.filter(k => SUPPRESSORS[k]) : MATE_POOL;
+    const dealt = dealWeapons(pool, defs.length);
+    const kits = squads && armed ? dealWeapons(MILITANT_KITS, defs.length) : null;
+    return defs.map((d, i) => ({ ...d, weapon: dealt[i], acc: kits ? kits[i] : { sup, light: this.dark } }));
+  }
+
   get ops() { return [this.player, ...(this.mates || [])]; }
   // Vos coéquipiers debout, ceux qui prennent vos ordres : pas le trinôme autonome de votre camp (mode trinômes).
   get crew() { return this.mates.filter(m => m.alive && !m.hunter); }
@@ -593,8 +611,9 @@ class Game {
   // groupe armé (deux grenades à fragmentation chacun, et des accessoires sur leur arme), qui balaient leurs propres
   // secteurs depuis leur entrée et partagent ce qu'ils apprennent (group.contact). Celui de votre camp porte un nom,
   // comme vos coéquipiers.
-  spawnSquad(b, team, camp, taken) {
-    const police = camp === 'police', pts = this.breachFile(b, 3, taken);
+  // opts.pts : leurs places, déjà choisies (une base de la guerre totale) ; opts.names : les noms de ceux de votre camp.
+  spawnSquad(b, team, camp, taken, opts = {}) {
+    const police = camp === 'police', pts = opts.pts || this.breachFile(b, 3, taken);
     const weps = dealWeapons(police ? OPERATOR_POOL : MILITANT_POOL, 3), kits = police ? null : dealWeapons(MILITANT_KITS, 3);
     const group = { team, camp, breach: b, contact: null, members: [], sectors: this.buildSectors(null, b.inside) };
     pts.forEach((q, k) => {
@@ -609,7 +628,7 @@ class Game {
       a.team = team;
       a.group = group;
       if (team === 'ops') {
-        const d = SQUAD_DEFS[camp][k];
+        const d = (opts.names || SQUAD_DEFS[camp])[k];
         Object.assign(a, { name: d.name, accent: d.accent, coverAngle: null });
         if (!police) a.style = { ...STYLE_MILITANT, body: d.jacket, shoulder: d.jacket, sleeve: d.jacket, pants: d.pants };
       }
@@ -617,6 +636,152 @@ class Game {
     });
     this.squads.groups.push(group);
     return group;
+  }
+
+  // ---- Guerre totale ----
+  // Deux armées de trois trinômes. La vôtre part de la base choisie (ou tirée au sort) : votre trinôme, à vos ordres, au
+  // centre, et deux trinômes autonomes sur les flancs ; l'autre armée, de l'autre base. Chaque trinôme autonome a son
+  // couloir (warSectors). Un trinôme anéanti revient de sa base WAR_RESPAWN s plus tard (updateWar) ; au bout de
+  // WAR_TIME s, l'armée qui a abattu le plus d'adversaires l'emporte (checkEnd). Le champ de bataille est connu d'avance.
+  startWar() {
+    const bs = this.map.bases, mine = this.camp, theirs = mine === 'police' ? 'armed' : 'police';
+    const home = bs[this.entryIndex] || bs[0], away = bs.find(b => b !== home) || home;
+    this.squads = { groups: [] };
+    this.war = {
+      bases: { ops: home, enemy: away },
+      camps: { ops: mine, enemy: theirs },
+      // les trois trinômes de chaque armée, tels qu'ils sont en ce moment (le premier des vôtres : le vôtre)
+      slots: { ops: [{ team: 'ops', camp: mine, crew: true, members: [this.player, ...this.mates] }, null, null], enemy: [null, null, null] },
+      respawn: { ops: [null, null, null], enemy: [null, null, null] }, // instant du retour d'un trinôme anéanti
+      kills: { ops: 0, enemy: 0 }, // adversaires abattus par chaque armée
+      mine: 0,                     // dont par vous
+      reinforce: 0,                // retours de votre trinôme
+      pruneT: 0,
+    };
+    for (const k of [1, 2]) this.warSquad('ops', k);
+    for (const k of [0, 1, 2]) this.warSquad('enemy', k);
+    const m = this.map;
+    for (let i = 0; i < m.explored.length; i++) if (m.tiles[i] !== 2) m.explored[i] = 1;
+  }
+
+  // Couloir d'un trinôme : 0 et 2 les flancs, 1 le centre (le vôtre). Ceux des deux armées se font face.
+  static warLane(team, k) { return team === 'ops' ? (k === 1 ? 0 : k === 2 ? 2 : 1) : k; }
+
+  // Le trinôme k de l'armée team sort de sa base : trois hommes du camp de cette armée, du côté de son couloir.
+  warSquad(team, k) {
+    const W = this.war, base = W.bases[team], foe = W.bases[team === 'ops' ? 'enemy' : 'ops'], lane = Game.warLane(team, k);
+    const taken = [...this.ops, ...this.enemies].filter(a => a.alive).map(a => ({ x: a.x, y: a.y }));
+    const gate = { inside: { x: base.cx, y: base.cy }, angle: base.angle };
+    const g = this.spawnSquad(gate, team, W.camps[team], taken, { pts: this.baseFile(base, 3, taken, lane), names: WAR_DEFS[W.camps[team]][k - 1] });
+    g.sectors = this.warSectors(base, foe, lane);
+    g.pingpong = true; // au bout du couloir, il le reprend dans l'autre sens
+    g.slot = k;
+    if (team === 'ops') this.mates = [...this.mates, ...g.members]; else this.enemies = [...this.enemies, ...g.members];
+    W.slots[team][k] = g;
+    W.respawn[team][k] = null;
+    return g;
+  }
+
+  // Votre trinôme anéanti revient de la base : vous, avec l'équipement choisi au briefing, et deux nouveaux coéquipiers.
+  // Le corps que vous incarniez reste où il est tombé, parmi ceux de l'équipe.
+  warCrew() {
+    const W = this.war, base = W.bases.ops, armed = this.camp === 'armed', old = this.player;
+    const taken = [...this.ops, ...this.enemies].filter(a => a.alive).map(a => ({ x: a.x, y: a.y }));
+    const pts = this.baseFile(base, 3, taken, 1);
+    const p = new Player(pts[0].x, pts[0].y, this.loadout);
+    p.style = armed ? { ...STYLE_BOSS } : { ...STYLE_PLAYER };
+    this.armGrenades(p);
+    p.charges = armed ? 0 : CHARGES;
+    p.angle = p.moveDir = base.angle;
+    p.cooking = null;
+    const crew = this.crewDefs(armed ? SIEGE_MATE_DEFS.slice(0, 2) : TEAMMATE_DEFS).map((d, i) => {
+      const m = new Teammate(pts[i + 1].x, pts[i + 1].y, d);
+      m.angle = base.angle;
+      return m;
+    });
+    old.accent = '#9aa4ae';
+    this.mates = [...this.mates, old, ...crew];
+    this.player = p;
+    W.slots.ops[0] = { team: 'ops', camp: this.camp, crew: true, members: [p, ...crew] };
+    W.respawn.ops[0] = null;
+    W.reinforce++;
+    Object.assign(this, { relayT: 0, stack: null, orderMarker: null, orderDrag: null });
+    this.say('Renforts : vous repartez de la base avec un trinôme frais', 3);
+    this.emit('weapon');
+  }
+
+  // Case de départ du joueur dans sa base (petites cases).
+  baseStart(base) {
+    const q = this.baseFile(base, 1, [], 1)[0];
+    return { x: Math.floor(q.x / TILE), y: Math.floor(q.y / TILE) };
+  }
+
+  // n places libres dans une base, écartées les unes des autres et de taken, du côté du couloir lane (vu de la base 1
+  // vers la base 2) et un peu vers l'avant. Une base saturée empile au centre : separate les écarte.
+  baseFile(base, n, taken, lane = 1) {
+    const m = this.map, [b0, b1] = m.bases.length > 1 ? m.bases : [base, base];
+    const L = dist(b0.cx, b0.cy, b1.cx, b1.cy) || 1, vx = -(b1.cy - b0.cy) / L, vy = (b1.cx - b0.cx) / L;
+    const tx = base.cx + vx * (lane - 1) * 2 * U + Math.cos(base.angle) * U, ty = base.cy + vy * (lane - 1) * 2 * U + Math.sin(base.angle) * U;
+    const cells = base.cells.map(c => ({ x: (c.x + 0.5) * TILE, y: (c.y + 0.5) * TILE }))
+      .filter(q => m.circleFree(q.x, q.y, 11, false))
+      .sort((a, b) => dist(a.x, a.y, tx, ty) - dist(b.x, b.y, tx, ty));
+    const out = [], all = (taken || []).slice();
+    for (const q of cells) {
+      if (out.length >= n) break;
+      if (all.some(o => dist(o.x, o.y, q.x, q.y) < 24)) continue;
+      out.push(q); all.push(q);
+    }
+    while (out.length < n) out.push({ x: base.cx, y: base.cy });
+    return out;
+  }
+
+  // Étapes du couloir lane, de sa base vers celle d'en face : le champ de bataille est coupé en trois bandes dans le
+  // sens base 1 → base 2 ; dans la sienne, le trinôme marche d'étape en étape (une toutes les WAR_STEP de progression,
+  // la plus proche du milieu de la bande), sans zigzaguer d'un bord à l'autre.
+  warSectors(base, foe, lane) {
+    const m = this.map, [b0, b1] = m.bases.length > 1 ? m.bases : [base, foe];
+    const L = dist(b0.cx, b0.cy, b1.cx, b1.cy) || 1, vx = -(b1.cy - b0.cy) / L, vy = (b1.cx - b0.cx) / L;
+    const lat = p => (p.x - b0.cx) * vx + (p.y - b0.cy) * vy;
+    const F = dist(base.cx, base.cy, foe.cx, foe.cy) || 1;
+    const along = p => ((p.x - base.cx) * (foe.cx - base.cx) + (p.y - base.cy) * (foe.cy - base.cy)) / F;
+    const pts = this.buildSectors(null, { x: base.cx, y: base.cy });
+    const cuts = pts.map(lat).sort((a, b) => a - b), c1 = cuts[Math.floor(cuts.length / 3)], c2 = cuts[Math.floor(2 * cuts.length / 3)];
+    const band = p => (lat(p) < c1 ? 0 : lat(p) < c2 ? 1 : 2);
+    const mine = pts.filter(p => band(p) === lane);
+    const mid = mine.map(lat).sort((a, b) => a - b)[Math.floor(mine.length / 2)] || 0;
+    const steps = new Map();
+    for (const p of mine) {
+      const k = Math.floor(along(p) / WAR_STEP), q = steps.get(k);
+      if (!q || Math.abs(lat(p) - mid) < Math.abs(lat(q) - mid)) steps.set(k, p);
+    }
+    return [...steps.keys()].sort((a, b) => a - b).map(k => steps.get(k));
+  }
+
+  // Un trinôme dont plus personne n'est debout revient de sa base WAR_RESPAWN s plus tard. Les corps tombés depuis
+  // longtemps, hors de vue, sont retirés de temps en temps.
+  updateWar() {
+    const W = this.war;
+    for (const team of ['ops', 'enemy']) W.slots[team].forEach((g, k) => {
+      if (!g) return;
+      const at = W.respawn[team][k];
+      if (at !== null) {
+        if (this.time >= at) (team === 'ops' && k === 0 ? this.warCrew() : this.warSquad(team, k));
+        return;
+      }
+      if (g.members.some(a => a.alive)) return;
+      W.respawn[team][k] = this.time + WAR_RESPAWN;
+      this.say(team === 'enemy' ? 'Un trinôme adverse est anéanti'
+        : k === 0 ? `Votre trinôme est anéanti — renforts dans ${WAR_RESPAWN} s`
+        : `Le trinôme de ${g.members[0].name} est anéanti — renforts dans ${WAR_RESPAWN} s`, 2.5);
+    });
+    if (this.time - W.pruneT >= 5) { W.pruneT = this.time; this.pruneBodies(); }
+  }
+
+  // Guerre totale : un corps tombé depuis plus de WAR_BODY_LIFE s, que personne de votre camp ne voit, est retiré.
+  pruneBodies() {
+    const keep = a => a.alive || a.dying || a === this.player || this.time - (a.diedAt || 0) < WAR_BODY_LIFE || this.seesPoint(a.x, a.y);
+    if (!this.mates.every(keep)) this.mates = this.mates.filter(keep);
+    if (!this.enemies.every(keep)) this.enemies = this.enemies.filter(keep);
   }
 
   // ---- Mode siège ----
@@ -779,14 +944,16 @@ class Game {
   // Dispersion courante (demi-angle) : arme + déplacement (réduit en marche) + tirs récents (recul)
   // + distance de visée au-delà de la portée efficace. L'erreur linéaire à la cible vaut tan(spread) * distance.
   // Laser allumé : le déplacement disperse moins (LASER_MOVE). Bouclier : arme de poing tenue d'une main,
-  // dispersion multipliée par shield.aim, gêne réduite de moitié par un laser.
+  // dispersion multipliée par shield.aim, gêne réduite de moitié par un laser. Lunette en service (à l'arrêt) :
+  // dispersion de base réduite (SCOPE.spread), portée efficace allongée (SCOPE.reach).
   spreadOf(agent, aimDist) {
-    const w = agent.weapon, laser = this.laserLit(agent);
+    const w = agent.weapon, laser = this.laserLit(agent), scope = this.scoped(agent);
     const move = agent.moving ? w.moveSpread * (agent.walkMode ? 0.25 : 1) * (laser ? LASER_MOVE : 1) : 0;
     // mains occupées (porte, grenade) : l'arme n'est plus épaulée, le viseur s'ouvre en grand
-    let s = w.spread + move + agent.bloom + (agent.handBloom || 0) + (agent.act ? 7 * DEG : 0);
+    let s = w.spread * (scope ? SCOPE.spread : 1) + move + agent.bloom + (agent.handBloom || 0) + (agent.act ? 7 * DEG : 0);
     const d = aimDist === undefined ? agent.aimDist || 0 : aimDist;
-    if (w.effRange && d > w.effRange) s += (w.rangeSpread || 0) * Math.min(1.5, (d - w.effRange) / w.effRange);
+    const eff = (w.effRange || 0) * (scope ? SCOPE.reach : 1);
+    if (eff && d > eff) s += (w.rangeSpread || 0) * Math.min(1.5, (d - eff) / eff);
     if (agent.shield) s *= 1 + (agent.shield.aim - 1) * (laser ? 0.5 : 1);
     return s * (agent.spreadMul || 1);
   }
@@ -795,6 +962,18 @@ class Game {
   // rechargement, fibre, grenade dégoupillée).
   laserLit(a) {
     return !!(a.alive && a.laserOn && a.weapon && a.weapon.laser && !a.act && !(a.reloadT > 0) && !a.fiber && !a.cooking);
+  }
+
+  // Lunette en service : l'arme en main en porte une, l'agent est immobile depuis SCOPE.settle et l'arme est épaulée
+  // (ni geste, ni rechargement, ni fibre, ni grenade dégoupillée, ni sonné).
+  scoped(a) {
+    return !!(a.alive && a.weapon && a.weapon.scope && !a.moving && a.stillT >= SCOPE.settle
+      && !a.act && !(a.reloadT > 0) && !a.fiber && !a.cooking && !(a.stun > 0));
+  }
+
+  // Portée de vue d'un agent dans la direction ang : la lunette en service porte plus loin dans l'axe de l'arme.
+  viewOf(a, ang) {
+    return this.scoped(a) && Math.abs(angleDiff(a.angle, ang)) <= SCOPE.half ? a.viewRange * SCOPE.sight : a.viewRange;
   }
 
   // Lampe de l'arme en main allumée (même règle que le laser, sauf le rechargement : elle reste pointée).
@@ -816,9 +995,10 @@ class Game {
   // Courant coupé : on ne voit plus qu'à DARK_SIGHT, sauf qui est éclairé (pris dans un faisceau), qui porte
   // une lampe allumée, ou qui vient de tirer sans silencieux (la flamme de bouche).
   sightOf(agent, o) {
-    if (!this.dark) return agent.viewRange;
-    if (this.lampLit(o) || o.glowT > 0 || this.inLamp(o.x, o.y)) return agent.viewRange;
-    return Math.min(agent.viewRange, DARK_SIGHT);
+    const r = this.viewOf(agent, Math.atan2(o.y - agent.y, o.x - agent.x));
+    if (!this.dark) return r;
+    if (this.lampLit(o) || o.glowT > 0 || this.inLamp(o.x, o.y)) return r;
+    return Math.min(r, DARK_SIGHT);
   }
 
   // Éblouissement : celui qui reçoit une lampe en face, d'assez près, met plus de temps à viser.
@@ -874,8 +1054,9 @@ class Game {
 
   // Un point dans le champ de vision d'un agent, à portée et sans obstacle.
   seesSpot(a, x, y) {
-    if (dist(a.x, a.y, x, y) > a.viewRange) return false;
-    if (Math.abs(angleDiff(a.angle, Math.atan2(y - a.y, x - a.x))) > a.fov / 2) return false;
+    const ang = Math.atan2(y - a.y, x - a.x);
+    if (dist(a.x, a.y, x, y) > this.viewOf(a, ang)) return false;
+    if (Math.abs(angleDiff(a.angle, ang)) > a.fov / 2) return false;
     return this.map.hasLOS(a.x, a.y, x, y);
   }
 
@@ -914,6 +1095,7 @@ class Game {
       }
     }
     if (this.siege) this.updateSiege(dt);
+    if (this.war) this.updateWar();
     if (this.hunt) for (const st of this.hunt.stacks.slice()) this.updateAiStack(st, dt);
     this.updateActions(dt);
     this.updateCooking(this.player, dt);
@@ -938,12 +1120,16 @@ class Game {
     this.casings = this.casings.filter(c => c.t < c.life);
     for (const f of this.effects) f.t += dt;
     this.effects = this.effects.filter(f => f.t < f.life);
-    for (const a of [...this.ops, ...this.enemies]) if (a.glowT > 0) a.glowT -= dt;
+    for (const a of [...this.ops, ...this.enemies]) {
+      if (a.glowT > 0) a.glowT -= dt;
+      a.stillT = a.moving ? 0 : (a.stillT || 0) + dt; // temps à l'arrêt : la lunette demande de poser l'œil
+    }
     for (const h of this.heard) h.t += dt;
     this.heard = this.heard.filter(h => h.t < NOISE_KINDS[h.kind].life);
     if (this.message.t > 0) this.message.t -= dt;
-    // Joueur tombé : après un court instant, on reprend la partie dans un coéquipier encore debout.
-    if (!this.player.alive && this.mates.some(m => m.alive)) {
+    // Joueur tombé : après un court instant, on reprend la partie dans un coéquipier encore debout (en guerre totale,
+    // de votre trinôme seulement : sinon on attend les renforts).
+    if (!this.player.alive && (this.war ? this.crew.length : this.mates.some(m => m.alive))) {
       this.relayT += dt;
       if (this.relayT >= RELAY_DELAY) this.takeOver();
     }
@@ -964,6 +1150,14 @@ class Game {
           : "Plus aucun otage vivant entre vos mains : vous ne négociez plus rien.";
       }
       else if (this.siege.wave >= this.siege.waves.length && !this.enemies.some(e => e.alive)) this.over = 'win';
+    } else if (this.war) {
+      // Guerre totale : personne n'est jamais à court d'hommes ; au bout du temps, l'armée qui a abattu le plus
+      // d'adversaires l'emporte, et à égalité, personne.
+      if (this.time >= WAR_TIME) {
+        const k = this.war.kills;
+        this.over = k.ops > k.enemy ? 'win' : k.ops < k.enemy ? 'lose' : 'draw';
+        if (this.over === 'lose') this.loseReason = `L'armée d'en face l'emporte, ${k.enemy} adversaires abattus contre ${k.ops}.`;
+      }
     } else if (this.squads) {
       // Trinômes : le premier camp entièrement hors de combat a perdu.
       if (!this.ops.some(o => o.alive)) { this.over = 'lose'; this.loseReason = 'Vos deux trinômes sont hors de combat.'; }
@@ -1009,7 +1203,7 @@ class Game {
   // à arrêter plutôt qu'abattre ; abattre un suspect rendu coûte cher. En siège, à tenir avec ses otages. En
   // escorte, à amener le VIP indemne, sans perte et sans alerte générale : nul besoin de tout nettoyer.
   scoreReport(result) {
-    const win = result === 'win', H = this.hostages.length, size = this.squadSize || 1;
+    const win = result === 'win', draw = result === 'draw', H = this.hostages.length, size = this.squadSize || 1;
     const lost = this.ops.filter(o => !o.alive).length, s = this.stats, lines = [];
     const add = (label, detail, pts) => lines.push({ label, detail: String(detail), pts: Math.round(pts) });
     const share = (n, of, pts) => (of ? pts * n / of : pts);
@@ -1019,6 +1213,14 @@ class Game {
       add('Otages entre vos mains', `${held} / ${H}`, share(held, H, 30));
       add('Groupe debout', `${size - lost} / ${size}`, share(size - lost, size, 20));
       add('Opérateurs neutralisés', `${s.kills} / ${n}`, share(s.kills, n, 10));
+    } else if (this.war) {
+      // Guerre totale : la bataille, la part de l'armée dans le décompte, vos propres éliminations, et votre trinôme tenu
+      const W = this.war, ours = W.kills.ops, theirs = W.kills.enemy, n = W.reinforce;
+      add('Bataille', win ? 'remportée' : draw ? 'égalité' : 'perdue', win ? 40 : draw ? 20 : 0);
+      add('Score des armées', `${ours} – ${theirs}`, ours + theirs ? 30 * ours / (ours + theirs) : 15);
+      add('Vos éliminations', W.mine, Math.min(20, 4 * W.mine));
+      add('Votre trinôme', n ? `anéanti ${n} fois` : 'jamais anéanti', Math.max(0, 10 - 5 * n));
+      if (s.friendly) add('Balles dans votre camp', s.friendly, -3 * s.friendly);
     } else if (this.squads) {
       const n = this.enemies.length;
       add('Engagement', win ? 'remporté' : 'perdu', win ? 40 : 0);
@@ -1048,8 +1250,9 @@ class Game {
       if (this.alarm) add('Alerte générale donnée', 'par un suspect', -5);
     }
     let total = clamp(lines.reduce((t, l) => t + l.pts, 0), 0, 100);
-    if (!win) total = Math.min(total, 49);
-    const grade = !win ? 'D' : total >= 95 ? 'S' : total >= 85 ? 'A' : total >= 70 ? 'B' : total >= 55 ? 'C' : 'D';
+    // une égalité (guerre totale) plafonne à C
+    if (!win) total = Math.min(total, draw ? 69 : 49);
+    const grade = !win ? (draw && total >= 55 ? 'C' : 'D') : total >= 95 ? 'S' : total >= 85 ? 'A' : total >= 70 ? 'B' : total >= 55 ? 'C' : 'D';
     return { lines, total, grade };
   }
 
@@ -1244,8 +1447,9 @@ class Game {
   // même objet (les ennemis qui le visaient le visent toujours) en lui donnant le prototype du joueur.
   takeOver() {
     const old = this.player;
-    // d'abord un coéquipier de votre trinôme ; en trinômes, quand il n'en reste plus, un homme de l'autre
-    const crew = this.crew, pool = crew.length ? crew : this.mates.filter(x => x.alive);
+    // d'abord un coéquipier de votre trinôme ; en trinômes, quand il n'en reste plus, un homme de l'autre (en guerre
+    // totale, non : votre trinôme reviendra de la base)
+    const crew = this.crew, pool = crew.length || this.war ? crew : this.mates.filter(x => x.alive);
     const m = pool.sort((a, b) => dist(a.x, a.y, old.x, old.y) - dist(b.x, b.y, old.x, old.y))[0];
     if (!m) return;
     if (m.hunter) {
@@ -2075,7 +2279,7 @@ class Game {
   fireWeapon(shooter) {
     const s = shooter.slot, w = s.def;
     const n = w.pellets || 1;
-    const spread = this.spreadOf(shooter);
+    const spread = this.spreadOf(shooter), range = w.range * (this.scoped(shooter) ? SCOPE.reach : 1);
     const ml = muzzleDist(w.gunLen);
     // Collé à un mur ou à une porte, le canon dépasse de l'autre côté : la balle part alors du tireur
     // (et bute sur l'obstacle, ou le traverse avec le malus d'une porte) au lieu de naître derrière.
@@ -2089,7 +2293,7 @@ class Game {
       const a = shooter.angle + rand(-spread, spread);
       const clear = !blocked && !this.map.castRay(shooter.x, shooter.y, a, ml, false).hit;
       const bx = clear ? shooter.x + Math.cos(a) * ml : shooter.x, by = clear ? shooter.y + Math.sin(a) * ml : shooter.y;
-      this.bullets.push({ x: bx, y: by, vx: Math.cos(a) * w.speed, vy: Math.sin(a) * w.speed, team: shooter.team, damage: w.damage, life: w.range / w.speed, shooter, ox: shooter.x, oy: shooter.y, trail: w.heavy ? 10 : 18, pierce: w.pierce === undefined ? 0.4 : w.pierce, pierced: 0, breach, pen: w.pen || 1 });
+      this.bullets.push({ x: bx, y: by, vx: Math.cos(a) * w.speed, vy: Math.sin(a) * w.speed, team: shooter.team, damage: w.damage, life: range / w.speed, shooter, ox: shooter.x, oy: shooter.y, trail: w.heavy ? 10 : 18, pierce: w.pierce === undefined ? 0.4 : w.pierce, pierced: 0, breach, pen: w.pen || 1 });
     }
     shooter.bloom = Math.min(shooter.bloom + w.bloom, w.bloomMax || 8 * DEG);
     shooter.kick = 1;
@@ -2250,8 +2454,9 @@ class Game {
       return;
     }
     target.hp -= dmg;
-    // balle (ou éclat) de l'équipe dans l'un des siens : comptée dans la note de fin
-    if (target.team === 'ops' && shooter && shooter.team === 'ops' && shooter !== target && !this.siege) this.stats.friendly++;
+    // balle (ou éclat) de l'équipe dans l'un des siens : comptée dans la note de fin (en guerre totale, seulement les
+    // vôtres : votre armée compte des dizaines de tireurs que vous ne commandez pas)
+    if (target.team === 'ops' && shooter && shooter.team === 'ops' && shooter !== target && !this.siege && (!this.war || shooter === this.player)) this.stats.friendly++;
     if (target !== this.player && !target.target && shooter && !target.surrender) target.alertAngle = Math.atan2(shooter.y - target.y, shooter.x - target.x);
     if (target === this.player) this.camShake = Math.max(this.camShake, 5);
     if (target.hp <= 0) {
@@ -2262,14 +2467,22 @@ class Game {
       target.moving = false;
       target.bodyAngle = ang + rand(-0.6, 0.6);
       target.dying = { t: 0, dur: 0.7, dir: ang, spin: Math.random() < 0.5 ? -1 : 1 };
+      target.diedAt = this.time;
       // un corps qui tombe s'entend un peu : un suspect abattu sans bruit peut encore alerter ses voisins
       this.noise(target.x, target.y, 2 * U, target, 'body');
+      // guerre totale : chaque mort compte pour l'armée d'en face, quoi qui l'ait tué
+      if (this.war) {
+        this.war.kills[target.team === 'ops' ? 'enemy' : 'ops']++;
+        if (shooter === this.player && target.team === 'enemy') this.war.mine++;
+      }
       if (target.team === 'enemy') {
         this.stats.kills++;
         if (target.surrender) this.stats.badKills++; // abattu à genoux, les mains sur la tête
       }
-      else if (target !== this.player) { this.stats.losses++; this.say(`${target.name} est à terre !`, 2.5); }
-      else if (this.mates.some(m => m.alive)) { this.stats.losses++; this.say('Vous êtes à terre — un coéquipier reprend la main', RELAY_DELAY + 0.3); }
+      // (en guerre totale, seuls ceux de votre trinôme sont annoncés : les autres tombent par dizaines)
+      else if (target !== this.player) { this.stats.losses++; if (!(this.war && target.hunter)) this.say(`${target.name} est à terre !`, 2.5); }
+      else if (this.war ? this.crew.length : this.mates.some(m => m.alive)) { this.stats.losses++; this.say('Vous êtes à terre — un coéquipier reprend la main', RELAY_DELAY + 0.3); }
+      else if (this.war) this.stats.losses++;
     }
   }
 
@@ -2539,9 +2752,8 @@ class Game {
   }
 
   canSee(agent, other) {
-    const d = dist(agent.x, agent.y, other.x, other.y);
-    if (d > agent.viewRange || (this.dark && d > DARK_SIGHT && d > this.sightOf(agent, other))) return false;
-    const a = Math.atan2(other.y - agent.y, other.x - agent.x);
+    const d = dist(agent.x, agent.y, other.x, other.y), a = Math.atan2(other.y - agent.y, other.x - agent.x);
+    if (d > this.viewOf(agent, a) || (this.dark && d > DARK_SIGHT && d > this.sightOf(agent, other))) return false;
     if (Math.abs(angleDiff(agent.angle, a)) > agent.fov / 2) return false;
     return this.map.hasLOS(agent.x, agent.y, other.x, other.y);
   }
@@ -2562,7 +2774,7 @@ class Game {
   enemyCombat(e, dt) {
     if (e.stun > 0) { e.stun -= dt; e.target = null; e.blind = null; e.moving = false; return; }
     let t = e.target;
-    if (t && (!t.alive || dist(e.x, e.y, t.x, t.y) > e.viewRange || !this.map.hasLOS(e.x, e.y, t.x, t.y))) {
+    if (t && (!t.alive || dist(e.x, e.y, t.x, t.y) > this.viewOf(e, Math.atan2(t.y - e.y, t.x - e.x)) || !this.map.hasLOS(e.x, e.y, t.x, t.y))) {
       // vu disparaître derrière une porte : il sait où, et tire dedans
       if (t.alive) { e.target = null; this.startBlindFire(e, t.x, t.y); }
       t = null;
@@ -2783,10 +2995,12 @@ class Game {
     if (!e.path.length || e.repathT <= 0) {
       e.path = this.pathTo(e, goal.x, goal.y);
       e.repathT = 1.2;
-      // point injoignable (au ras d'un mur, derrière un meuble) : on l'oublie et on reprend le ratissage
+      // point injoignable (au ras d'un mur, derrière un meuble) : on l'oublie et on reprend le ratissage (un secteur
+      // injoignable compte comme fait)
       if (!e.path.length && dist(e.x, e.y, goal.x, goal.y) > 1.2 * U) {
         if (goal === e.lastKnown) e.lastKnown = null;
         if (g && goal === g.contact) g.contact = null;
+        if (goal.done === false) goal.done = true;
       }
     }
     if (this.considerStack(e)) return;
@@ -3115,7 +3329,8 @@ class Game {
     return true;
   }
 
-  // Prochain secteur à nettoyer ; quand tout est passé, on recommence le tour.
+  // Prochain secteur à nettoyer ; quand tout est passé, on recommence le tour (en guerre totale, dans l'autre sens :
+  // on remonte son couloir).
   assaultGoal(e) {
     // priorité aux otages repérés que personne n'emmène encore : c'est leur mission
     let best = null, bd = Infinity;
@@ -3134,7 +3349,10 @@ class Game {
       if (dist(e.x, e.y, g.x, g.y) < 1.4 * U) { g.done = true; continue; }
       return g;
     }
-    if (all) for (const g of secs) g.done = false;
+    if (all) {
+      for (const g of secs) g.done = false;
+      if (e.group && e.group.pingpong) secs.reverse();
+    }
     return null;
   }
 
@@ -3832,7 +4050,7 @@ class Game {
 
   mateCombat(m, dt) {
     let t = m.target;
-    if (t && (!t.alive || t.surrender || dist(m.x, m.y, t.x, t.y) > m.viewRange || !this.map.hasLOS(m.x, m.y, t.x, t.y))) t = null;
+    if (t && (!t.alive || t.surrender || dist(m.x, m.y, t.x, t.y) > this.viewOf(m, Math.atan2(t.y - m.y, t.x - m.x)) || !this.map.hasLOS(m.x, m.y, t.x, t.y))) t = null;
     if (!t) { t = this.acquireFor(m, this.enemies); if (t) m.reactT = m.reaction; }
     m.target = t;
     if (!t) {
@@ -4004,10 +4222,10 @@ class Game {
       this.map.markExplored(p.tx, p.ty);
       const cone = [];
       const n = Math.ceil(p.fov / (1 * DEG));
-      const range = this.dark ? DARK_SIGHT : p.viewRange;
+      // la lunette en service porte plus loin, dans l'axe seulement (pas dans le noir)
       for (let i = 0; i <= n; i++) {
         const a = p.angle - p.fov / 2 + p.fov * i / n;
-        cone.push(this.map.castRay(p.x, p.y, a, range, true));
+        cone.push(this.map.castRay(p.x, p.y, a, this.dark ? DARK_SIGHT : this.viewOf(p, a), true));
       }
       polys.push({ x: p.x, y: p.y, pts: cone });
       this.lampPoly(p, polys);
@@ -4030,8 +4248,10 @@ class Game {
       this.map.markExplored(m.tx, m.ty);
       const cone = [];
       const n = Math.ceil(m.fov / (1.5 * DEG));
-      const range = this.dark ? DARK_SIGHT : m.viewRange;
-      for (let i = 0; i <= n; i++) cone.push(this.map.castRay(m.x, m.y, m.angle - m.fov / 2 + m.fov * i / n, range, true));
+      for (let i = 0; i <= n; i++) {
+        const a = m.angle - m.fov / 2 + m.fov * i / n;
+        cone.push(this.map.castRay(m.x, m.y, a, this.dark ? DARK_SIGHT : this.viewOf(m, a), true));
+      }
       polys.push({ x: m.x, y: m.y, pts: cone });
       this.lampPoly(m, polys);
     }

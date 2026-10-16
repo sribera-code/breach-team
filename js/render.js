@@ -9,7 +9,7 @@ const actStyle = a => (a.act ? { act: { type: a.act.type, k: a.act.t / a.act.dur
   // rechargement : pas un geste à deux mains (on peut marcher), mais il s'anime pareil
   : a.reloadT > 0 && a.reloadDur ? { act: { type: 'reload', k: 1 - a.reloadT / a.reloadDur } } : null);
 // Teinte des sols sur les plans réduits, dans l'ordre de FLOOR (js/map.js).
-const MINI_FLOORS = ['#2f3742', '#3a3327', '#2d3a3d', '#3d2a30', '#403d37', '#343b42', '#2c3d26', '#46413a', '#3e3b35'];
+const MINI_FLOORS = ['#2f3742', '#3a3327', '#2d3a3d', '#3d2a30', '#403d37', '#343b42', '#2c3d26', '#46413a', '#3e3b35', '#26292e'];
 // Rendu canvas : calque statique (sols, murs, mobilier), décalques, entités, brouillard, HUD canvas.
 class Renderer {
   constructor(canvas, game) {
@@ -58,6 +58,7 @@ class Renderer {
     for (let y = 0; y < m.h; y++) for (let x = 0; x < m.w; x++) if (m.tile(x, y) === 0) Sprites.paintShadows(ctx, m, x, y);
     Sprites.paintGoal(ctx, m);  // escorte : la zone d'extraction (point B)...
     Sprites.paintStart(ctx, m); // ...et le point A
+    Sprites.paintBases(ctx, m, this.homeBase()); // guerre totale : la base de chaque armée
     for (let y = 0; y < m.h; y++) for (let x = 0; x < m.w; x++) if (m.tile(x, y) === 1) Sprites.paintWall(ctx, m, x, y);
     for (const d of m.doors) Sprites.paintDoorFrame(ctx, d);
     for (const w of m.windows) Sprites.paintWindow(ctx, w);
@@ -78,7 +79,19 @@ class Renderer {
     const ctx = this.miniC.getContext('2d');
     ctx.clearRect(0, 0, this.miniC.width, this.miniC.height);
     Renderer.paintPlan(ctx, m, s, false);
+    // guerre totale : votre base en bleu, celle d'en face en rouge
+    const home = this.homeBase();
+    m.bases.forEach((b, i) => {
+      ctx.fillStyle = i === home ? 'rgba(100,181,246,0.55)' : 'rgba(239,106,90,0.55)';
+      for (const c of b.cells) ctx.fillRect(c.x * s, c.y * s, s, s);
+    });
     this.miniExpC.getContext('2d').clearRect(0, 0, this.miniExpC.width, this.miniExpC.height);
+  }
+
+  // Indice de la base de votre armée dans map.bases (guerre totale), -1 hors de ce mode.
+  homeBase() {
+    const g = this.game;
+    return g.war ? g.map.bases.indexOf(g.war.bases.ops) : -1;
   }
 
   // Plan réduit d'une carte, une petite case par carré de s pixels : sols, murs, mobilier, fenêtres,
@@ -154,18 +167,55 @@ class Renderer {
     return { x: (px - this.tx) / this.zoom, y: (py - this.ty) / this.zoom };
   }
 
+  // Point visé, dans le monde : sous le curseur, ou, lunette à l'œil, le point tenu (scopeAim).
+  aimWorld() {
+    return this.scopeAim ? { x: this.scopeAim.x, y: this.scopeAim.y } : this.toWorld(this.mouse.sx, this.mouse.sy);
+  }
+
+  // Mouvement de la souris (dx, dy en px CSS ; x, y : position du curseur système). Souris verrouillée (locked), le
+  // curseur dessiné se déplace d'autant sans quitter l'écran ; sinon il suit le curseur système. Lunette à l'œil, c'est
+  // le point visé qui se déplace, et la vue le suit (updateCamera) : on ne bute plus sur le bord de l'écran.
+  pointerMove(dx, dy, x, y, locked) {
+    if (this.scopeAim) {
+      const k = this.dpr / this.zoom;
+      this.scopeAim.x += dx * k; this.scopeAim.y += dy * k;
+    } else if (locked) {
+      this.mouse.sx = clamp(this.mouse.sx + dx, 0, this.canvas.width / this.dpr - 1);
+      this.mouse.sy = clamp(this.mouse.sy + dy, 0, this.canvas.height / this.dpr - 1);
+    } else { this.mouse.sx = x; this.mouse.sy = y; }
+  }
+
   updateCamera(dt) {
     const g = this.game, p = g.player;
     if (!isFinite(this.cam.x) || !isFinite(this.cam.y)) { this.cam.x = p.x; this.cam.y = p.y; }
-    const m = this.toWorld(this.mouse.sx, this.mouse.sy);
-    const lx = p.x + clamp((m.x - p.x) * 0.25, -90, 90), ly = p.y + clamp((m.y - p.y) * 0.25, -70, 70);
     const k = 1 - Math.pow(0.001, dt);
-    this.cam.x = lerp(this.cam.x, lx, k); this.cam.y = lerp(this.cam.y, ly, k);
+    if (g.scoped(p)) {
+      // Lunette à l'œil : le point visé reste où il est, et la vue glisse vers lui (à mi-chemin du tireur, SCOPE.lead,
+      // jusqu'à SCOPE.look de la demi-largeur de l'écran) ; le viseur se déplace à l'écran avec le décor, sans
+      // jamais quitter son point. Il garde ainsi de la marge pour viser plus loin, même pris au bord de l'écran.
+      const a = this.scopeAim || (this.scopeAim = this.toWorld(this.mouse.sx, this.mouse.sy));
+      const hw = this.canvas.width / 2 / this.zoom, hh = this.canvas.height / 2 / this.zoom;
+      const lx = p.x + clamp((a.x - p.x) * SCOPE.lead, -hw * SCOPE.look, hw * SCOPE.look);
+      const ly = p.y + clamp((a.y - p.y) * SCOPE.lead, -hh * SCOPE.look, hh * SCOPE.look);
+      this.cam.x = lerp(this.cam.x, lx, k); this.cam.y = lerp(this.cam.y, ly, k);
+      const m = 2 * this.dpr / this.zoom; // le point visé ne sort pas de l'écran
+      a.x = clamp(a.x, this.cam.x - hw + m, this.cam.x + hw - m); a.y = clamp(a.y, this.cam.y - hh + m, this.cam.y + hh - m);
+    } else {
+      this.scopeAim = null;
+      const m = this.toWorld(this.mouse.sx, this.mouse.sy);
+      const lx = p.x + clamp((m.x - p.x) * 0.25, -90, 90), ly = p.y + clamp((m.y - p.y) * 0.25, -70, 70);
+      this.cam.x = lerp(this.cam.x, lx, k); this.cam.y = lerp(this.cam.y, ly, k);
+    }
     const sh = g.camShake;
     const ox = (sh ? rand(-sh, sh) * this.dpr : 0) + g.camKick.x * this.zoom;
     const oy = (sh ? rand(-sh, sh) * this.dpr : 0) + g.camKick.y * this.zoom;
     this.tx = this.canvas.width / 2 - this.cam.x * this.zoom + ox;
     this.ty = this.canvas.height / 2 - this.cam.y * this.zoom + oy;
+    // le viseur dessiné suit le point tenu ; la lunette baissée, le curseur repart de là
+    if (this.scopeAim) {
+      this.mouse.sx = (this.scopeAim.x * this.zoom + this.tx) / this.dpr;
+      this.mouse.sy = (this.scopeAim.y * this.zoom + this.ty) / this.dpr;
+    }
   }
 
   draw(dt) {
@@ -180,8 +230,11 @@ class Renderer {
     ctx.setTransform(this.zoom, 0, 0, this.zoom, this.tx, this.ty);
     ctx.imageSmoothingEnabled = true;
 
-    ctx.drawImage(this.staticC, 0, 0);
-    ctx.drawImage(this.decalC, 0, 0);
+    const v = this.viewRect(); // (seule la partie à l'écran des calques de la carte)
+    // cônes de vision qui touchent l'écran : les seuls à découper le brouillard et les tracés (une armée entière en a neuf)
+    this.shownPolys = g.visionPolys.filter(p => Renderer.polyMeets(p, v));
+    ctx.drawImage(this.staticC, v.x, v.y, v.w, v.h, v.x, v.y, v.w, v.h);
+    ctx.drawImage(this.decalC, v.x, v.y, v.w, v.h, v.x, v.y, v.w, v.h);
     this.drawCasings();
     this.drawBodies();
     this.drawDoors();
@@ -521,10 +574,20 @@ class Renderer {
 
   // Traçantes, gerbes de sang, éclats : seulement dans ce que le groupe voit en ce moment,
   // sinon un tir à travers une porte trahit ce qui se passe derrière.
+  // Le polygone p (un cône de vision) a-t-il un point dans le rectangle v ? (par sa boîte englobante)
+  static polyMeets(p, v) {
+    let x0 = p.x, x1 = p.x, y0 = p.y, y1 = p.y;
+    for (const q of p.pts) {
+      if (q.x < x0) x0 = q.x; else if (q.x > x1) x1 = q.x;
+      if (q.y < y0) y0 = q.y; else if (q.y > y1) y1 = q.y;
+    }
+    return x1 >= v.x && y1 >= v.y && x0 <= v.x + v.w && y0 <= v.y + v.h;
+  }
+
   clipToVision() {
     const ctx = this.ctx;
     ctx.beginPath();
-    for (const p of this.game.visionPolys) {
+    for (const p of this.shownPolys || this.game.visionPolys) {
       ctx.moveTo(p.x, p.y);
       for (const q of p.pts) ctx.lineTo(q.x, q.y);
       ctx.closePath();
@@ -609,12 +672,23 @@ class Renderer {
     ctx.globalAlpha = 1;
   }
 
+  // Partie du monde à l'écran (pixels du monde, bornée à la carte) : le brouillard ne se recompose que là, ce qui garde
+  // les grandes cartes (champs de bataille) aussi légères que les petites.
+  viewRect() {
+    const z = this.zoom, W = this.fogC.width, H = this.fogC.height;
+    const x0 = clamp(Math.floor(-this.tx / z) - 4, 0, W), y0 = clamp(Math.floor(-this.ty / z) - 4, 0, H);
+    const x1 = clamp(Math.ceil((this.canvas.width - this.tx) / z) + 4, x0 + 1, W), y1 = clamp(Math.ceil((this.canvas.height - this.ty) / z) + 4, y0 + 1, H);
+    return { x: x0, y: y0, w: Math.max(1, x1 - x0), h: Math.max(1, y1 - y0) };
+  }
+
   drawFog() {
-    const g = this.game, m = g.map, f = this.fogC.getContext('2d');
+    const g = this.game, m = g.map, f = this.fogC.getContext('2d'), v = this.viewRect();
     f.setTransform(1, 0, 0, 1, 0, 0);
+    f.save();
+    f.beginPath(); f.rect(v.x, v.y, v.w, v.h); f.clip();
     f.globalCompositeOperation = 'source-over';
     f.fillStyle = 'rgba(4,5,7,0.9)';
-    f.fillRect(0, 0, this.fogC.width, this.fogC.height);
+    f.fillRect(v.x, v.y, v.w, v.h);
     f.globalCompositeOperation = 'destination-out';
     // zones explorées : calque mis à jour seulement pour les nouvelles cases
     if (m.newlyExplored.length) {
@@ -630,15 +704,15 @@ class Renderer {
       }
       m.newlyExplored = [];
     }
-    f.drawImage(this.exploredC, 0, 0);
+    f.drawImage(this.exploredC, v.x, v.y, v.w, v.h, v.x, v.y, v.w, v.h);
     f.fillStyle = 'rgba(0,0,0,1)';
-    for (const p of g.visionPolys) {
+    for (const p of this.shownPolys || g.visionPolys) {
       f.beginPath(); f.moveTo(p.x, p.y);
       for (const q of p.pts) f.lineTo(q.x, q.y);
       f.closePath(); f.fill();
     }
-    f.globalCompositeOperation = 'source-over';
-    this.ctx.drawImage(this.fogC, 0, 0);
+    f.restore();
+    this.ctx.drawImage(this.fogC, v.x, v.y, v.w, v.h, v.x, v.y, v.w, v.h);
   }
 
   // Halo de votre dernier bruit : les cases qu'il atteint (murs et portes compris), plus clair là où il
@@ -798,6 +872,14 @@ class Renderer {
     ctx.strokeStyle = color; ctx.lineWidth = 3.2 * this.dpr; ticks();
     ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.beginPath(); ctx.arc(x, y, 3 * this.dpr, 0, TAU); ctx.fill();
     ctx.fillStyle = color; ctx.beginPath(); ctx.arc(x, y, 1.8 * this.dpr, 0, TAU); ctx.fill();
+    if (g.scoped(p)) {
+      // lunette à l'œil : un cercle fin autour du réticule
+      const r = gap + len + 6 * this.dpr;
+      ctx.strokeStyle = 'rgba(0,0,0,0.5)'; ctx.lineWidth = 3.5 * this.dpr;
+      ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.stroke();
+      ctx.strokeStyle = 'rgba(130,215,235,0.9)'; ctx.lineWidth = 1.6 * this.dpr;
+      ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.stroke();
+    }
     if (p.reloadT > 0 || p.act || p.cooking) {
       // mèche en cours : l'anneau se vide, en rouge, au lieu de se remplir
       const c = p.cooking;

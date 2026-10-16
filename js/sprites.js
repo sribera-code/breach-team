@@ -68,7 +68,18 @@ const Sprites = {
       case 6: return this.paintGrass(ctx, x, y);
       case 7: return this.paintGravel(ctx, x, y);
       case 8: return this.paintPaving(ctx, x, y);
+      case 9: return this.paintAsphalt(ctx, x, y);
       default: return this.paintConcrete(ctx, x, y);
+    }
+  },
+  // Asphalte : gris sombre par grandes plaques (calées sur le monde), grain fin de gravillons.
+  paintAsphalt(ctx, x, y) {
+    const v = Math.floor((this.hash(Math.floor(x / 64), Math.floor(y / 64)) - 0.5) * 8);
+    ctx.fillStyle = `rgb(${64 + v},${66 + v},${70 + v})`;
+    ctx.fillRect(x, y, TILE, TILE);
+    for (let i = 0; i < 18; i++) {
+      ctx.fillStyle = Math.random() < 0.5 ? 'rgba(0,0,0,0.2)' : 'rgba(255,255,255,0.07)';
+      ctx.fillRect(x + Math.random() * TILE, y + Math.random() * TILE, rand(0.5, 1.2), rand(0.5, 1.2));
     }
   },
   // Pelouse : un vert qui varie par grandes plaques (calées sur le monde), et des brins.
@@ -352,6 +363,26 @@ const Sprites = {
         if (e.e) ctx.fillRect(cx + h - 4, cy - h, 4, 2 * h);
         break;
       }
+      // Sacs de sable : deux rangs en quinconce, couchés dans le sens du muret qu'ils forment avec leurs voisins (nb).
+      case 'sandbag': {
+        const nb = p.nb || {}, vert = (nb.n || nb.s) && !(nb.w || nb.e);
+        ctx.translate(cx, cy);
+        if (vert) ctx.rotate(Math.PI / 2); // +x local vers le sud : le bout « gauche » est au nord
+        const x0 = (vert ? nb.n : nb.w) ? -16 : -14, x1 = (vert ? nb.s : nb.e) ? 16 : 14;
+        ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fillRect(x0 + 2, -9, x1 - x0, 22);
+        for (let row = 0; row < 2; row++) {
+          const y = -10 + row * 10;
+          for (let bx = x0 - (row ? 5 : 0); bx < x1; bx += 10) {
+            const a = Math.max(bx, x0), b = Math.min(bx + 10, x1);
+            if (b - a < 3) continue;
+            roundRect(ctx, a + 0.5, y, b - a - 1, 9.5, 3.5);
+            ctx.fillStyle = this.hash(cx + bx, cy + row) < 0.5 ? '#b49f74' : '#a38e66'; ctx.fill();
+            ctx.strokeStyle = 'rgba(70,55,30,0.55)'; ctx.lineWidth = 0.8; ctx.stroke();
+          }
+        }
+        ctx.fillStyle = 'rgba(255,245,220,0.12)'; ctx.fillRect(x0 + 1, -9.5, x1 - x0 - 2, 2);
+        break;
+      }
       case 'crate': {
         this.shadow(ctx, cx, cy, 14, 14);
         ctx.translate(cx, cy); ctx.rotate(rand(-0.08, 0.08));
@@ -597,6 +628,17 @@ const Sprites = {
       ctx.strokeStyle = 'rgba(150,170,190,0.35)'; ctx.lineWidth = 0.22; ctx.stroke();
       ctx.fillStyle = 'rgba(150,180,205,0.2)'; circle(ctx, cx - r * 0.3, A - r * 0.3, r * 0.45); ctx.fill();
     };
+    // Lunette vue de dessus : tube, oculaire à l'arrière, cloche d'objectif à l'avant, tourelles qui dépassent
+    // sur les flancs, et le verre de l'objectif qui accroche la lumière.
+    const scope = (x0, x1, dy) => {
+      const mid = (x0 + x1) / 2;
+      part(x0 + 1.2, x1 - 1.7, 1.5, '#1b1e22', dy, 0.4);
+      part(mid - 0.55, mid + 0.55, 2.6, '#22252a', dy, 0.25);
+      part(x0, x0 + 1.4, 2, '#16181b', dy, 0.5);
+      part(x1 - 1.9, x1, 2.5, '#16181b', dy, 0.6);
+      shine(x0 + 1.4, x1 - 1.9, dy - 0.65, 0.16);
+      ctx.fillStyle = 'rgba(120,175,215,0.6)'; ctx.fillRect(x1 - 0.35, A + dy - 0.95, 0.3, 1.9);
+    };
     // Lampe tactique : petit tube sombre, lentille grise (jamais allumée d'en haut).
     const light = (x0, x1, dy) => {
       part(x0, x1, 1.2, '#1b1d21', dy, 0.3);
@@ -679,6 +721,7 @@ const Sprites = {
         part(14, 20.6, 2.6, '#22252a', 0, 0.8);                // garde-main
         ribs(15, 20, 1.1, 0, 1.6, 0.25);
         if (t.grip) grip(18.6);
+        if (t.scope) { part(6.6, 11.4, 1, STEEL_D, 0, 0.2); scope(5.6, 13.2, 0); } // montage à griffes
         part(14.4, 19.4, 0.9, STEEL_D, -1.7, 0.3);             // tube du levier d'armement
         part(15.1, 16.2, 1.1, '#141619', -1.95, 0.3);          // poignée d'armement
         part(20.6, 22.2, 2.5, '#191b1f', 0, 0.6);              // guidon annulaire
@@ -724,6 +767,7 @@ const Sprites = {
           for (let k = 1; k <= 2; k++) { ctx.beginPath(); ctx.moveTo(8.9 + k * 0.5, A + 1.9 + k * 1.05); ctx.lineTo(11.4 + k * 0.45, A + 1.9 + k * 1.05); ctx.stroke(); }
         }
         part(13.8, 14.8, 3.1, '#23252a', 0, 0.25);             // hausse
+        if (t.scope) { part(8.6, 11.2, 1.4, '#1c1e22', -1.6, 0.2); scope(6.4, 13.4, -2.6); } // PSO-1 sur le rail latéral
         // garde-main : en bois, ou à rails dès qu'on y fixe un laser, une lampe ou une poignée (trinômes)
         const rails = t.laser || t.light || t.grip;
         if (rails) {
@@ -768,7 +812,8 @@ const Sprites = {
         ribs(15, 23, 1.05, 0, 0.9);
         for (let x = 15.4; x < 23; x += 1.7) { dark(x, -1.25, 0.9, 0.35, 0.45); dark(x, 0.9, 0.9, 0.35, 0.45); } // fentes de ventilation
         light(18.6, 21.8, -2);                                 // lampe tactique sur le flanc
-        optic(7.4, 11.6, 2.4);                                 // viseur holographique
+        if (t.scope) scope(6.2, 13.8, 0);                      // lunette grossissante
+        else optic(7.4, 11.6, 2.4);                            // viseur holographique
         part(23.8, M - 2.6, 1.1, BARREL, 0, 0.3);              // canon
         part(24.5, 25.9, 1.7, '#202328', 0, 0.25);             // bloc de gaz
         part(23.4, 24.3, 1.9, STEEL_D, 0, 0.2);                // guidon rabattable
@@ -952,6 +997,44 @@ const Sprites = {
     ctx.font = 'bold 13px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillStyle = 'rgba(140,195,245,0.5)'; ctx.fillText('A', x + 19, y - 15);
     ctx.restore();
+  },
+
+  // ---- Guerre totale : les bases, peintes au sol ----
+  // Un aplat hachuré à la couleur de l'armée qui en part (la vôtre en bleu, home ; l'autre en rouge), le contour en
+  // tirets, et son nom en grand.
+  paintBases(ctx, m, home) {
+    m.bases.forEach((b, i) => {
+      const rgb = i === home ? '100,181,246' : '239,106,90';
+      const xs = b.cells.map(c => c.x * TILE), ys = b.cells.map(c => c.y * TILE);
+      const x0 = Math.min(...xs), x1 = Math.max(...xs) + TILE, y0 = Math.min(...ys), y1 = Math.max(...ys) + TILE;
+      ctx.save();
+      ctx.beginPath();
+      for (const c of b.cells) ctx.rect(c.x * TILE, c.y * TILE, TILE, TILE);
+      ctx.fillStyle = `rgba(${rgb},0.14)`; ctx.fill();
+      ctx.clip();
+      ctx.strokeStyle = `rgba(${rgb},0.22)`; ctx.lineWidth = 3;
+      ctx.beginPath();
+      for (let k = x0 - (y1 - y0); k < x1; k += 12) { ctx.moveTo(k, y0); ctx.lineTo(k + (y1 - y0), y1); }
+      ctx.stroke();
+      ctx.restore();
+      ctx.save();
+      ctx.strokeStyle = `rgba(${rgb},0.7)`; ctx.lineWidth = 1.5; ctx.setLineDash([5, 3]);
+      ctx.beginPath();
+      for (const c of b.cells) {
+        const x = c.x * TILE, y = c.y * TILE;
+        if (!b.at.has((c.y - 1) * m.w + c.x)) { ctx.moveTo(x, y); ctx.lineTo(x + TILE, y); }
+        if (!b.at.has((c.y + 1) * m.w + c.x)) { ctx.moveTo(x, y + TILE); ctx.lineTo(x + TILE, y + TILE); }
+        if (!b.at.has(c.y * m.w + c.x - 1)) { ctx.moveTo(x, y); ctx.lineTo(x, y + TILE); }
+        if (!b.at.has(c.y * m.w + c.x + 1)) { ctx.moveTo(x + TILE, y); ctx.lineTo(x + TILE, y + TILE); }
+      }
+      ctx.stroke();
+      ctx.font = 'bold 14px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillStyle = `rgba(${rgb},0.55)`;
+      ctx.translate(b.cx, b.cy);
+      if (y1 - y0 > x1 - x0) ctx.rotate(-Math.PI / 2); // base en long : le nom dans la longueur
+      ctx.fillText(i === home ? 'VOTRE BASE' : 'BASE ADVERSE', 0, 1);
+      ctx.restore();
+    });
   },
 
   // ---- Personnages ----
