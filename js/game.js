@@ -55,6 +55,10 @@ const STEP_EVERY = 30, STEP_NOISE = { run: 2.5 * U, mate: 2.2 * U, operator: 2.4
 // Grenade à fragmentation (camp du groupe armé en siège) : rayon létal et dégâts au centre.
 const FRAG_RADIUS = 3.5 * U;
 const FRAG_DAMAGE = 200;
+// L'IA (suspects, opérateurs, trinômes, coéquipiers) n'ouvre le feu qu'à AI_FIRE_RANGE au plus, même si elle voit et
+// porte plus loin : plus loin, elle se rapproche. L'écran n'en montre guère davantage dans la direction visée (voir
+// VIEW_HALF dans js/render.js) : on n'est pas pris pour cible par un tireur qu'on ne peut pas voir à l'écran.
+const AI_FIRE_RANGE = 9 * U;
 // Laser : portée du faisceau, intervalle entre deux coups d'œil d'un suspect, inquiétude ajoutée quand il le voit.
 const LASER_RANGE = 22 * U, LASER_LOOK = 0.2, LASER_ALARM = 0.4;
 // Tir dans une porte (suspects) : durée pendant laquelle il arrose une porte derrière laquelle il sait quelqu'un,
@@ -201,17 +205,20 @@ class Game {
       cutPower: !!l.cutPower && !!m.power,
       // un équipement enregistré avant les gilets reçoit le premier du mode (le souple)
       vest: (m.vests || []).includes(l.vest) ? l.vest : (m.vests || [])[0] || null,
+      // et, avant le choix des grenades, les trois flashs d'alors
+      nades: NADE_KITS[l.nades] ? l.nades : 'flash',
     };
   }
 
   setLoadout(l) {
-    const teamBefore = !!this.loadout.teamSup, cutBefore = !!this.loadout.cutPower;
+    const teamBefore = !!this.loadout.teamSup, cutBefore = !!this.loadout.cutPower, nadesBefore = this.loadout.nades;
     this.loadout = { ...this.loadout, ...l };
     try { localStorage.setItem('breach.loadout.' + this.mode, JSON.stringify(this.loadout)); } catch (e) { /* stockage indisponible */ }
     // les silencieux (ou les lampes, courant coupé) des coéquipiers changent leur arme : on la leur redistribue
     const changed = !!this.loadout.teamSup !== teamBefore || !!this.loadout.cutPower !== cutBefore;
     if (changed && this.mode !== 'siege') { this.loadLevel(this.levelIndex); return; }
     this.player.equip(this.loadout);
+    if (this.loadout.nades !== nadesBefore) this.armGrenades(this.player);
     this.emit('weapon');
   }
 
@@ -1317,6 +1324,7 @@ class Game {
     if (pr.Digit2) this.switchWeapon(p, 1);
     if (pr.AltLeft || pr.AltRight) this.switchWeapon(p, (p.cur + 1) % p.slots.length);
     if (pr.Space || pr.KeyG) this.throwFlash(p);
+    if (pr.KeyN) this.cycleNade(p);
     if (pr.KeyL) {
       if (!p.slots.some(s => s.def.laser)) this.say('Aucun laser sur vos armes', 1.2);
       else { p.laserOn = !p.laserOn; this.say(p.laserOn ? 'Laser allumé' : 'Laser éteint', 1.2); }
@@ -1436,10 +1444,25 @@ class Game {
     this.emit('weapon');
   }
 
-  // Grenades selon le camp : l'intervention a des flashs, le groupe armé deux grenades à fragmentation.
-  armGrenades(p, flashes) {
-    if (this.camp === 'armed') { p.nade = 'frag'; p.flashbangs = 2; }
-    else { p.nade = 'flash'; if (flashes !== undefined) p.flashbangs = flashes; }
+  // Grenades du joueur selon le camp : le groupe armé a deux grenades à fragmentation ; l'intervention, le lot choisi au
+  // briefing (NADE_KITS). kept : les flashs d'un coéquipier qui reprend la main (il garde les siennes). En main, les
+  // flashs d'abord.
+  armGrenades(p, kept) {
+    const kit = NADE_KITS[this.loadout.nades] || NADE_KITS.flash;
+    p.nades = this.camp === 'armed' ? { flash: 0, frag: 2 }
+      : kept !== undefined ? { flash: kept, frag: 0 }
+      : { flash: kit.flash, frag: kit.frag };
+    p.nade = p.nades.flash > 0 || !p.nades.frag ? 'flash' : 'frag';
+  }
+
+  // N : l'autre sorte de grenade en main, s'il en reste (lot mixte). Pas pendant qu'on en dégoupille une.
+  cycleNade(p) {
+    if (p.cooking || (p.act && p.act.type === 'grenade')) return;
+    const other = Object.keys(p.nades).find(k => k !== p.nade && p.nades[k] > 0);
+    if (!other) { this.say("Pas d'autre grenade", 1.2); return; }
+    p.nade = other;
+    this.say(other === 'frag' ? 'Grenade à fragmentation en main' : 'Flash en main', 1.2);
+    this.emit('weapon');
   }
 
   // ---- Relais et armes au sol ----
@@ -1457,8 +1480,9 @@ class Game {
       if (m.group) m.group.members = m.group.members.filter(o => o !== m);
       Object.assign(m, { hunter: false, drilled: false, group: null, entry: null, clear: null, escorting: null, blind: null });
     }
-    const main = this.pickupSlot(m.slot);
-    delete m.slot; // la propriété propre du coéquipier masquerait l'accesseur du joueur
+    const main = this.pickupSlot(m.slot), kept = m.flashbangs || 0;
+    delete m.slot; // les propriétés propres du coéquipier masqueraient les accesseurs du joueur
+    delete m.flashbangs;
     Object.setPrototypeOf(m, Player.prototype);
     m.slots = main.def.kind === 'pistol' ? [main] : [main, makeSlot(this.loadout.sidearm, accOf(this.loadout, this.loadout.sidearm))];
     m.cur = 0;
@@ -1468,7 +1492,7 @@ class Game {
       target: null, lookAt: null, alertAngle: null, order: null, coverAngle: null, blockedLine: false,
     });
     m.moveDir = m.angle;
-    this.armGrenades(m, m.flashbangs || 0); // il garde les flashs qui lui restent
+    this.armGrenades(m, kept); // il garde les flashs qui lui restent
     // l'ancien joueur reste au sol, dans la liste de l'équipe (« À terre »)
     old.accent = '#9aa4ae';
     this.mates = [...this.mates.filter(x => x !== m), old];
@@ -1873,10 +1897,18 @@ class Game {
     p.flashbangs--;
     this.stats.flashes++;
     Sound.tick(0.12); // goupille
+    const kind = p.nade || 'flash';
     this.startAction(p, 'grenade', 0.45, () => {
-      p.cooking = { t: 0, kind: p.nade || 'flash', fuse: FUSE[p.nade === 'frag' ? 'frag' : 'flash'] };
+      p.cooking = { t: 0, kind, fuse: FUSE[kind === 'frag' ? 'frag' : 'flash'] };
       Sound.tick(0.1); // la cuillère part : la mèche brûle
     });
+  }
+
+  // La dernière de sa sorte partie, l'autre sorte (lot mixte) passe en main.
+  nextNade(p) {
+    if (!p.nades || p.nades[p.nade] > 0) return;
+    const other = Object.keys(p.nades).find(k => p.nades[k] > 0);
+    if (other) p.nade = other;
   }
 
   // Grenade dégoupillée en main : elle part au relâchement de la touche, et éclate sur place
@@ -1887,6 +1919,7 @@ class Game {
     c.t += dt;
     if (c.t >= c.fuse) {
       p.cooking = null;
+      this.nextNade(p);
       if (c.kind === 'frag') this.detonateFrag({ x: p.x, y: p.y, thrower: p, team: p.team, kind: 'frag' });
       else this.detonateFlash(p.x, p.y, null); // à bout portant, même son camp est aveuglé
       this.say('Elle vous a explosé dans la main', 3); // après l'explosion : ce message-là prime
@@ -1896,12 +1929,14 @@ class Game {
     if (!p.alive || !(k.Space || k.KeyG)) {
       p.cooking = null;
       const m = this.input.mouse;
-      this.spawnFlash(p, p.alive ? m.x : p.x, p.alive ? m.y : p.y, c.t);
+      this.spawnFlash(p, p.alive ? m.x : p.x, p.alive ? m.y : p.y, c.t, null, c.kind);
+      this.nextNade(p);
     }
   }
 
-  // Jet d'une flash depuis un agent vers un point : la distance règle la force du lancer.
-  spawnFlash(p, mx, my, cooked, via) {
+  // Jet d'une grenade depuis un agent vers un point : la distance règle la force du lancer. kind : sa sorte, celle que
+  // l'agent a en main sinon.
+  spawnFlash(p, mx, my, cooked, via, kind) {
     const m = { x: mx, y: my };
     // Portée = distance au curseur (plafonnée). Vol en l'air puis roulement avec frottement :
     // distance ≈ v0 * (flight + 1/friction), d'où v0.
@@ -1912,7 +1947,7 @@ class Game {
     let gx = p.x + Math.cos(ang) * 14, gy = p.y + Math.sin(ang) * 14;
     // la main ne passe pas à travers un mur : si un obstacle sépare le lanceur du point de départ, elle part de lui
     if (this.grenadeBlocked(gx, gy, true) || this.map.castRay(p.x, p.y, ang, 14, false).hit) { gx = p.x; gy = p.y; }
-    const kind = p.nade || 'flash';
+    kind = kind || p.nade || 'flash';
     // temps déjà brûlé dans la main : la mèche a commencé à la fin du geste d'armement
     const burnt = cooked || 0;
     const g = { x: gx, y: gy, vx: Math.cos(ang) * v0, vy: Math.sin(ang) * v0, t: 0, flight, friction, fuse: FUSE[kind === 'frag' ? 'frag' : 'flash'], cooked: burnt, h: 0, spin: rand(0, TAU), bounces: 0, post: null,
@@ -2808,7 +2843,7 @@ class Game {
     const d = dist(e.x, e.y, t.x, t.y);
     const w = e.weapon;
     e.aimDist = d;
-    e.engaged = d <= w.range;
+    e.engaged = d <= this.fireRange(e);
     if (e.engaged || !e.path.length) turnToward(e, a, e.turnRate, dt);
     e.reactT -= dt;
     // L'intervention ne tire jamais avec un otage (ou un équipier) dans l'axe : si ça dure, elle se
@@ -2825,6 +2860,9 @@ class Game {
       if (--e.burstLeft <= 0) this.endBurst(e, w);
     }
   }
+
+  // Distance d'où l'IA ouvre le feu : la portée de son arme, sans dépasser AI_FIRE_RANGE.
+  fireRange(a) { return Math.min(a.weapon.range, AI_FIRE_RANGE); }
 
   // Fin d'une rafale de l'IA : le temps de ramener l'arme sur la cible avant la suivante. Personne ne tire au
   // métronome : la rafale suivante compte un coup de plus ou de moins (une arme qui tire coup par coup reste au
@@ -3575,10 +3613,10 @@ class Game {
     if (s.flash) { this.updateFlashEntry(s, team); return; }
     if (!d.broken && !this.map.doorPassable(d)) { s.wait = null; return; }
     if (s.wait === null) s.wait = d.broken ? 0.15 : ENTRY_DELAY;
-    // une flash dégoupillée ou en vol : on attend qu'elle éclate
+    // une flash dégoupillée ou en vol, ou votre grenade à fragmentation (on n'entre pas dessus) : on attend qu'elle éclate
     const p = this.player;
-    const flash = (p.act && p.act.type === 'grenade') || p.cooking || this.grenades.some(g => g.team === 'ops' && g.kind === 'flash');
-    if (flash) { s.wait = Math.max(s.wait, 0.15); return; }
+    const nade = (p.act && p.act.type === 'grenade') || p.cooking || this.grenades.some(g => g.team === 'ops' && (g.kind === 'flash' || g.thrower === p));
+    if (nade) { s.wait = Math.max(s.wait, 0.15); return; }
     s.wait -= dt;
     if (s.wait > 0) return;
     this.endStack(s, team);
@@ -4038,7 +4076,7 @@ class Game {
       // un coéquipier ne se place ni sur le joueur ni dans son axe de visée
       if (m.team === 'ops' && dist(x, y, this.player.x, this.player.y) < 0.8 * U) continue;
       if (m.team === 'ops' && this.inAimCone(x, y, 30 * DEG)) continue;
-      if (dist(x, y, t.x, t.y) > m.weapon.range) continue;
+      if (dist(x, y, t.x, t.y) > this.fireRange(m)) continue;
       if (!this.map.hasLOS(x, y, t.x, t.y)) continue;
       if (!this.lineOfFireClear(m, t, x, y, 12)) continue; // de quoi rester dégagé une fois arrivé
       const score = dist(x, y, m.x, m.y);
@@ -4063,7 +4101,7 @@ class Game {
     const a = Math.atan2(t.y - m.y, t.x - m.x);
     const d = dist(m.x, m.y, t.x, t.y);
     m.aimDist = d;
-    m.engaged = d <= m.weapon.range;
+    m.engaged = d <= this.fireRange(m);
     // Discipline de tir : un allié ou un otage dans l'axe interdit le tir. Si ça dure, le coéquipier
     // ne doit pas rester planté : il redevient mobile (ordres, repli de côté) tout en gardant sa cible.
     const clear = this.lineOfFireClear(m, t);

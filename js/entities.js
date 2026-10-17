@@ -338,8 +338,20 @@ const PRIMARY_WEAPONS = ['hk416', 'scarh', 'mp5', 'mp7', 'm870', 'm4super90'];
 const SIDEARMS = ['glock17', 'usp45'];
 // shield : bouclier pris à la place de l'arme principale (null : aucun) ; acc : accessoires de chaque arme
 // ({ hk416: { sup, laser, light } }) ; teamSup : silencieux pour les coéquipiers ; cutPower : courant coupé
-// avant d'entrer (assaut) ; vest : gilet (VESTS, assaut ; null en siège).
-const DEFAULT_LOADOUT = { primary: 'hk416', sidearm: 'glock17', shield: null, acc: {}, teamSup: false, cutPower: false, vest: 'vestL' };
+// avant d'entrer (assaut) ; vest : gilet (VESTS, assaut ; null en siège) ; nades : lot de grenades (NADE_KITS,
+// camp de l'intervention).
+const DEFAULT_LOADOUT = { primary: 'hk416', sidearm: 'glock17', shield: null, acc: {}, teamSup: false, cutPower: false, vest: 'vestL', nades: 'flash' };
+
+// Grenades du joueur dans le camp de l'intervention, au choix du briefing : combien de chaque sorte il emporte. Le groupe
+// armé n'a pas le choix (deux grenades à fragmentation, voir Game.armGrenades) ; les coéquipiers gardent leurs flashs
+// (MATE_FLASHES) pour l'entrée à la flash. N passe d'une sorte à l'autre (voir Game.cycleNade).
+const NADE_KITS = {
+  flash: { label: 'Flashs ×3', flash: 3, frag: 0, icon: 'flash', note: "Trois grenades aveuglantes : elles sonnent sans tuer, otages compris. L'outil de l'entrée en force." },
+  mix:   { label: 'Mixte 2 + 1', flash: 2, frag: 1, icon: 'mix', note: 'Deux flashs et une grenade à fragmentation, pour la pièce tenue sans otage. N change de grenade en main.' },
+  frag:  { label: 'Frag ×2', flash: 0, frag: 2, icon: 'frag', note: "Deux grenades à fragmentation : elles tuent dans un rayon de trois cases et demie, vous, les vôtres et les otages compris ; un mur ou une porte fermée arrête l'éclat." },
+};
+// Nom court de chaque sorte de grenade (HUD, messages).
+const NADE_NAMES = { flash: 'Flash', frag: 'Frag' };
 
 // Cinq modes de jeu : l'assaut (on incarne l'opérateur), le siège (on incarne le groupe armé), l'escorte (l'équipe
 // conduit un VIP d'un point A à un point B), les trinômes (deux trinômes contre deux) et la guerre totale (deux armées de
@@ -419,7 +431,8 @@ class Player extends Agent {
     this.equip(loadout || DEFAULT_LOADOUT);
     this.reloadT = 0;
     this.switchT = 0;
-    this.flashbangs = 3;
+    this.nade = 'flash';                // sorte de grenade en main (voir Game.armGrenades)
+    this.nades = { flash: 3, frag: 0 }; // ce qui reste de chaque sorte
     this.fiber = null; // fibre optique glissée sous une porte (voir Game.updateFiber)
     this.flashT = 0; // aveuglé (écran blanc)
     this.laserOn = true; // L éteint ou rallume le laser de l'arme qui en porte un
@@ -427,6 +440,9 @@ class Player extends Agent {
     this.charges = 0;    // charges de brèche (assaut, voir Game.chargeKey)
   }
   get slot() { return this.slots[this.cur]; }
+  // Grenades de la sorte en main : le même compteur que celui des coéquipiers et de l'IA, qui n'en ont qu'une sorte.
+  get flashbangs() { return this.nades[this.nade] || 0; }
+  set flashbangs(n) { this.nades[this.nade] = n; }
   // Masse des armes portées (en main ou à la bretelle), accessoires compris : elle règle la vitesse (loadMobility).
   get weaponLoad() { return this.slots.reduce((t, s) => t + ((s && s.def.weight) || 0), 0); }
   // Avec un bouclier, l'arme de poing est la seule arme, avec des chargeurs en plus.

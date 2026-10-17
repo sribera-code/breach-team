@@ -152,6 +152,23 @@ de chaque section.
 - **Les rondes ne referment pas les portes** derrière elles : au fil de la partie, le bâtiment s'ouvre.
 - **L'alerte générale ne change que la vigilance** : personne ne se replie, ne se barricade ni ne menace un otage.
 
+## Cadrage et portée de tir de l'IA
+
+- **Réglés à l'estime, pas joués à la main** : sept cases au moins au-dessus et au-dessous du centre de l'écran
+  (`VIEW_HALF`), vue décalée vers le curseur de 40 % de l'écart, jusqu'à la moitié de la demi-hauteur (`LOOK_AHEAD`,
+  `LOOK_MAX` en tête de `js/render.js`), l'IA qui n'ouvre le feu qu'à neuf cases (`AI_FIRE_RANGE`). Sur un portable
+  (1366 × 657), le zoom passe de 2 à 1,47 : les personnages sont nettement plus petits qu'avant. Si c'est trop, réduire
+  `VIEW_HALF` demande de réduire `AI_FIRE_RANGE` d'autant.
+- **La guerre totale change de rythme** : les armées ne s'accrochent plus à quinze cases mais à neuf, en se rapprochant.
+  L'équilibre et le nombre de morts (TODO plus haut) sont à remesurer.
+- **Le joueur garde l'avantage de la portée** : il tire à la portée de son arme (la lunette comprise), l'IA non.
+
+## Grenades de l'intervention
+
+- **Aucune masse pour les grenades** : le lot ne change pas la vitesse. Les coéquipiers gardent leurs deux flashs quel que
+  soit le lot du joueur, et l'IA de l'intervention n'a que des flashs.
+- **Le lot mixte ne se règle qu'à deux flashs et une fragmentation** : pas de dosage libre.
+
 ## Confort de jeu
 
 - **Pas de réglage de difficulté.** Ni pour l'assaut, ni pour le siège.
@@ -184,7 +201,10 @@ Mode guerre totale : deux armées de trois trinômes, cinq minutes de combat sur
 abat le plus d'adversaires l'emporte (égalité possible) · chaque mode a ses cartes : le Musée pour l'assaut, la Mairie
 et le Supermarché pour le siège, la Gare pour l'escorte, trois arènes symétriques pour les trinômes (Lycée, Galerie
 marchande, Chantier) · on choisit le mode, puis la carte, puis l'équipement (fil « Mode › Carte › Équipement » au
-briefing) · sacs de sable et asphalte · brouillard et calques de la carte recomposés seulement à l'écran.
+briefing) · sacs de sable et asphalte · brouillard et calques de la carte recomposés seulement à l'écran · le lot de
+grenades de l'intervention se choisit au briefing (trois flashs, mixte deux flashs et une fragmentation, ou deux
+fragmentations ; `N` change de grenade en main) · l'IA n'ouvre plus le feu au-delà de neuf cases, et l'écran montre au
+moins sept cases en hauteur, la vue décalée vers le curseur : plus de tir venu du hors-champ.
 
 Version précédente :
 

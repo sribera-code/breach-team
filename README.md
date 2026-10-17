@@ -70,7 +70,8 @@ Chaque mode a ses cartes, pensées pour ce qu'on y fait. L'écran du choix de la
 | Charge de brèche | `B` devant une porte fermée : poser ; `B` à nouveau : mise à feu |
 | Sommation | `C` : « Police ! À terre ! » |
 | Fibre optique | `F` maintenu devant une porte fermée ou entrouverte |
-| Grenade flash | `Espace` ou `G` maintenu : la mèche part à la fin de l'armement, la grenade au relâchement |
+| Grenade | `Espace` ou `G` maintenu : la mèche part à la fin de l'armement, la grenade au relâchement |
+| Changer de grenade | `N` : flash ↔ fragmentation (lot mixte de l'intervention) |
 | Ramasser une arme | `V` près d'un corps (échange avec l'arme de même catégorie) |
 | Otage / VIP / menottes | `H` près d'un otage : il se relève et vous suit ; `H` à nouveau : il attend à genoux. Près du VIP (escorte) : il attend à couvert, ou repart. Près d'un suspect rendu : le menotter |
 | Équipe | `T` suivre / tenir ; clic droit : aller là (sur soi : suivre ; sur une porte fermée : en colonne, prêts à entrer ; à nouveau sur la même porte : entrée à la flash) |
@@ -148,6 +149,8 @@ Personne n'a la même arme : à chaque partie, coéquipiers, opérateurs d'assau
 
 L'IA tire à la cadence réelle de son arme (celle du modèle qu'on ramasse sur le corps), en rafales : trois coups en automatique pour les coéquipiers et l'intervention, quatre à six pour le groupe armé et les suspects, une paire au pistolet, un coup à la fois au fusil à pompe, dont la pompe impose son rythme. Entre deux rafales, le temps de ramener l'arme sur la cible, plus long quand elle relève fort (un AKM plus qu'un MP5). Rien n'est réglé au métronome : d'une rafale à l'autre, un coup de plus ou de moins, et une pause qui varie d'un quart.
 
+**On n'est pas pris pour cible depuis le hors-champ.** L'IA (suspects, opérateurs, trinômes, coéquipiers) voit jusqu'à douze ou quatorze cases, mais n'ouvre le feu qu'à neuf au plus, quelle que soit la portée de son arme : plus loin, elle se rapproche d'abord. L'écran, de son côté, montre toujours au moins sept cases au-dessus et au-dessous de son centre (sur un écran large, c'est la hauteur qui manquait), et la vue se décale vers le curseur : en visant vers le bord de l'écran, on voit dix cases et demie devant soi. Un tireur qui vous vise peut donc être à l'écran, pourvu que vous regardiez de son côté.
+
 ## Bruit et silencieux
 
 Tout ce qui fait du bruit s'entend à une certaine distance : un coup de feu (13 à 18 cases selon l'arme), une explosion, une serrure arrachée, une porte ouverte en grand (5 cases, 1,5 en l'entrebâillant), l'impact d'une balle dans un mur (2,5), un corps qui tombe, un cri, des pas de course (2 à 2,5). **Marcher est silencieux.** Le son se propage dans le bâtiment comme on l'attend : il contourne les angles par les portes ouvertes, et chaque mur traversé lui coûte trois cases, chaque porte fermée une case et demie, chaque vitre un peu moins.
@@ -183,6 +186,8 @@ Certaines portes sont **fermées à clé** (environ une sur trois, tirées au so
 Une grenade lancée vole par-dessus le mobilier (tables, plantes, caisses, canapés...) : seuls les murs, les fenêtres et les portes l'arrêtent en l'air. Une fois retombée, elle roule et rebondit sur les meubles qu'elle rencontre ; tombée sur une table ou un lit, elle en roule jusqu'au sol. Les opérateurs de l'IA en tiennent compte pour décider s'ils lancent.
 
 Dégoupiller et armer le bras prend 0,45 s. **La mèche commence à brûler à la fin de ce geste, pas au lancer** : tant que vous gardez `Espace`, la grenade reste en main et le compte à rebours tourne. L'anneau du viseur passe au rouge et se vide. Une fois au sol, la grenade porte le même anneau : il se vide dès qu'elle touche le sol, et rougit dans la dernière demi-seconde. Relâchez, et elle part vers le curseur avec le temps déjà brûlé : de quoi la faire éclater en l'air ou à l'arrivée, sans laisser le temps de la fuir. Gardez-la jusqu'au bout et elle vous explose dans la main. Tant qu'elle est dégoupillée, vous ne tirez pas et vous ne rechargez pas.
+
+**Le lot de grenades se choisit au briefing**, dans le camp de l'intervention (ligne « Grenades », sous le gilet) : trois flashs (le choix par défaut), deux flashs et une grenade à fragmentation (« Mixte »), ou deux grenades à fragmentation. La flash aveugle et sonne sans blesser, otages compris ; la fragmentation éclate au bout de deux secondes et tue dans un rayon de trois cases et demie, vous, les vôtres et les otages compris, mais un mur ou une porte fermée arrête l'éclat : pour une pièce tenue où personne n'attend d'être sauvé. `N` passe d'une sorte à l'autre ; le HUD montre celle en main (« Flash 2 ») et, à côté, ce qui reste de l'autre (« · Frag 1 (N) »). La dernière d'une sorte lancée, l'autre passe en main d'elle-même. Bravo et Charlie gardent leurs deux flashs pour l'entrée à la flash ; une colonne n'entre pas tant que votre grenade, flash ou fragmentation, n'a pas éclaté. Le groupe armé n'a pas le choix : deux grenades à fragmentation.
 
 ## Minimap
 

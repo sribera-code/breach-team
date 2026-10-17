@@ -1832,9 +1832,117 @@ test('en siège : pas de fibre, deux grenades à fragmentation', () => {
   g.press('Space'); g.step(40);
   ok(game.grenades.some(x => x.kind === 'frag'), 'la grenade lancée est une fragmentation');
   eq(p.flashbangs, 1, 'il en reste une');
-  // en assaut, rien ne change
-  const a = mkGame().game.player;
+  // en assaut, rien ne change (le lot par défaut : des flashs)
+  const a = mkGame({ loadout: { primary: 'hk416', sidearm: 'glock17' } }).game.player;
   eq(a.nade, 'flash', 'assaut : flashs');
+});
+
+test('intervention : le lot de grenades se choisit au briefing, N change de grenade en main', () => {
+  // le briefing enregistre l'équipement : on remet celui du joueur en sortant
+  const KEY = 'breach.loadout.assault';
+  let sauve = null;
+  try { sauve = localStorage.getItem(KEY); } catch (e) { /* stockage indisponible */ }
+  try { nadeKitTest(); } finally {
+    try { if (sauve === null) localStorage.removeItem(KEY); else localStorage.setItem(KEY, sauve); } catch (e) { /* idem */ }
+  }
+});
+
+function nadeKitTest() {
+  const kit = nades => ({ primary: 'hk416', sidearm: 'glock17', nades });
+  // un équipement enregistré avant le choix garde les trois flashs d'alors
+  eq(Game.normLoadout({ primary: 'hk416', sidearm: 'glock17' }, MODES.assault).nades, 'flash', 'par défaut : les flashs');
+  const def = mkGame({ alone: true, loadout: kit() }).game.player;
+  ok(def.nade === 'flash' && def.flashbangs === 3 && def.nades.frag === 0, 'trois flashs, comme avant');
+  // lot mixte : les flashs en main d'abord, la grenade à fragmentation annoncée à côté
+  const g = mkGame({ alone: true, loadout: kit('mix') });
+  const game = g.game, p = game.player;
+  ok(p.nade === 'flash' && p.nades.flash === 2 && p.nades.frag === 1, 'mixte : deux flashs et une grenade à fragmentation');
+  g.ui.update();
+  eq(g.ui.$('nadeLabel').textContent + ' ' + g.ui.$('flashCount').textContent, 'Flash 2', 'HUD : la flash en main');
+  ok(/Frag 1 \(N\)/.test(g.ui.$('nadeOther').textContent), 'HUD : l’autre sorte, et sa touche : ' + g.ui.$('nadeOther').textContent);
+  g.press('KeyN');
+  eq(p.nade, 'frag', 'N : la grenade à fragmentation en main');
+  eq(g.ui.$('nadeLabel').textContent + ' ' + g.ui.$('flashCount').textContent, 'Frag 1', 'HUD : elle passe en tête');
+  g.press('KeyN');
+  eq(p.nade, 'flash', 'N à nouveau : la flash');
+  // on lance (la grenade est retirée aussitôt partie, avant qu'elle n'éclate) : les deux flashs, puis la fragmentation
+  // passe d'elle-même en main
+  game.input.mouse.x = p.x + 3 * U; game.input.mouse.y = p.y;
+  const lance = () => { p.act = null; g.press('Space'); g.step(40); const n = game.grenades.pop(); game.grenades = []; return n || {}; };
+  eq(lance().kind, 'flash', 'une flash part');
+  ok(p.nade === 'flash' && p.flashbangs === 1, 'la seconde reste en main');
+  eq(lance().kind, 'flash', 'la seconde part');
+  ok(p.nade === 'frag' && p.flashbangs === 1, 'plus de flash : la grenade à fragmentation passe en main');
+  const f = lance();
+  ok(f.kind === 'frag' && f.fuse === FUSE.frag, 'elle part, avec sa mèche');
+  ok(!p.nades.flash && !p.nades.frag, 'plus rien');
+  g.ui.update();
+  eq(g.ui.$('nadeOther').textContent, '', 'HUD : plus d’autre sorte à annoncer');
+  game.message = { text: '', t: 0 };
+  g.press('KeyN');
+  ok(/Pas d'autre grenade/.test(game.message.text), 'N sans autre sorte : refus annoncé');
+  // lot de fragmentation ; le groupe armé, lui, n'a pas le choix
+  const fr = mkGame({ alone: true, loadout: kit('frag') }).game.player;
+  ok(fr.nade === 'frag' && fr.flashbangs === 2 && !fr.nades.flash, 'fragmentation : deux grenades, pas de flash');
+  const si = mkGame({ mode: 'siege', loadout: { primary: 'akP', sidearm: 'makarovP', nades: 'mix' } }).game.player;
+  ok(si.nade === 'frag' && si.nades.frag === 2 && !si.nades.flash, 'siège : deux grenades à fragmentation, quel que soit le lot');
+  // relais : le coéquipier qui reprend la main garde ses flashs, au même compteur
+  const rg = mkGame({ loadout: kit('frag') }).game;
+  rg.mates.forEach(m => { m.flashbangs = 1; });
+  rg.player.alive = false;
+  rg.takeOver();
+  const m = rg.player;
+  ok(m instanceof Player && m.nade === 'flash' && m.flashbangs === 1 && m.nades.flash === 1 && !m.nades.frag, 'relais : il garde la flash qui lui reste');
+  m.flashbangs--;
+  eq(m.nades.flash, 0, 'le compteur suit');
+  // au briefing : trois lots côte à côte, celui retenu en surbrillance ; le choix arme le joueur et se retrouve
+  const b = mkGame({ loadout: kit() });
+  b.game.paused = true;
+  b.ui.showBriefing();
+  const nb = k => b.ui.panel.querySelector('.nadebtn[data-nades="' + k + '"]');
+  ok(nb('flash') && nb('mix') && nb('frag'), 'trois lots proposés');
+  ok(nb('flash').classList.contains('sel') && !nb('mix').classList.contains('sel'), 'les flashs retenues au départ');
+  nb('mix').click();
+  ok(b.game.loadout.nades === 'mix' && nb('mix').classList.contains('sel') && !nb('flash').classList.contains('sel'), 'lot mixte choisi, en surbrillance');
+  ok(b.game.player.nades.flash === 2 && b.game.player.nades.frag === 1, 'le joueur l’emporte');
+  eq(Game.loadSavedLoadout('assault').nades, 'mix', 'retrouvé au rechargement');
+  b.ui.hideOverlay();
+  const a = mkGame({ mode: 'siege' });
+  a.game.paused = true;
+  a.ui.showBriefing();
+  ok(!a.ui.panel.querySelector('.nadebtn'), 'siège : pas de choix de grenades');
+  a.ui.hideOverlay();
+}
+
+test('l’IA n’ouvre le feu qu’à AI_FIRE_RANGE : plus loin, elle se rapproche ; en visant, l’écran montre jusque-là', () => {
+  const g = mkGame({ mode: 'war', alone: true });
+  const game = g.game, p = game.player;
+  const o = openLine(game, 12 * U);
+  ok(o, 'une ligne dégagée');
+  const e = new Enemy(o.x, o.y, 0, 'ak74H'); // porte à 15 cases
+  Object.assign(e, { viewRange: 14 * U, reaction: 0, angle: 0 });
+  game.enemies = [e];
+  p.x = o.x + 11.5 * U; p.y = o.y;
+  let shots = 0;
+  const fire = game.fireWeapon.bind(game);
+  game.fireWeapon = s => { if (s === e) shots++; fire(s); };
+  for (let i = 0; i < 60; i++) game.enemyCombat(e, 1 / 60);
+  ok(e.target === p && !e.engaged && !shots, 'vu à 11,5 cases : pris pour cible, mais pas un tir');
+  const d0 = dist(e.x, e.y, p.x, p.y);
+  for (let i = 0; i < 300 && !shots; i++) game.updateEnemy(e, 1 / 60);
+  const d1 = dist(e.x, e.y, p.x, p.y);
+  ok(d1 < d0 - U, 'il se rapproche (' + (d0 / U).toFixed(1) + ' → ' + (d1 / U).toFixed(1) + ' cases)');
+  ok(shots > 0 && d1 <= AI_FIRE_RANGE + 1, 'et tire une fois à portée');
+  // le cadrage : au moins VIEW_HALF au-dessus du centre de l'écran, et, le curseur en haut, plus loin que l'IA ne tire
+  const c = mkGame({ alone: true }), r = c.r, cp = c.game.player;
+  ok(r.canvas.height / 2 / r.zoom >= VIEW_HALF - 1, 'l’écran montre ' + (r.canvas.height / 2 / r.zoom / U).toFixed(1) + ' cases au-dessus du centre');
+  const W = r.canvas.width / r.dpr;
+  r.mouse.sx = W / 2; r.mouse.sy = 0;
+  c.step(120);
+  const ahead = cp.y - r.toWorld(W / 2, 0).y;
+  ok(ahead >= AI_FIRE_RANGE, 'en visant vers le haut, on voit à ' + (ahead / U).toFixed(1) + ' cases devant soi');
+  const below = r.toWorld(W / 2, r.canvas.height / r.dpr).y - cp.y;
+  ok(below > 2 * U, 'le joueur reste bien à l’écran (' + (below / U).toFixed(1) + ' cases sous lui)');
 });
 
 test('une grenade à fragmentation tue autour d’elle, pas derrière une porte fermée', () => {

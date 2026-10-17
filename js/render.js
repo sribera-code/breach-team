@@ -8,6 +8,12 @@ const actStyle = a => (a.act ? { act: { type: a.act.type, k: a.act.t / a.act.dur
   : a.fiber ? { act: { type: 'fiber', k: 1 } }
   // rechargement : pas un geste à deux mains (on peut marcher), mais il s'anime pareil
   : a.reloadT > 0 && a.reloadDur ? { act: { type: 'reload', k: 1 - a.reloadT / a.reloadDur } } : null);
+// Cadrage : le zoom montre au moins VIEW_HALF de monde au-dessus et au-dessous du centre de l'écran (sur un écran
+// large, c'est la hauteur qui manque), et la vue se décale vers le curseur de LOOK_AHEAD de l'écart entre le joueur et
+// le point visé, jusqu'à LOOK_MAX de la demi-hauteur de l'écran (la plus petite des deux dimensions), dans les deux
+// axes. Viser vers le bord de l'écran montre ainsi au moins une fois et demie VIEW_HALF devant soi : plus loin que
+// AI_FIRE_RANGE, d'où l'adversaire ouvre le feu.
+const VIEW_HALF = 7 * U, LOOK_AHEAD = 0.4, LOOK_MAX = 0.5;
 // Teinte des sols sur les plans réduits, dans l'ordre de FLOOR (js/map.js).
 const MINI_FLOORS = ['#2f3742', '#3a3327', '#2d3a3d', '#3d2a30', '#403d37', '#343b42', '#2c3d26', '#46413a', '#3e3b35', '#26292e'];
 // Rendu canvas : calque statique (sols, murs, mobilier), décalques, entités, brouillard, HUD canvas.
@@ -41,7 +47,8 @@ class Renderer {
     this.dpr = window.devicePixelRatio || 1;
     this.canvas.width = Math.max(1, Math.floor(r.width * this.dpr));
     this.canvas.height = Math.max(1, Math.floor(r.height * this.dpr));
-    this.zoom = 1.9 * this.dpr * clamp(r.width / 1280, 0.75, 1.3);
+    // à la largeur, sans montrer moins de VIEW_HALF en hauteur (ni descendre sous 1,1 dans une toute petite fenêtre)
+    this.zoom = this.dpr * Math.max(1.1, Math.min(1.9 * clamp(r.width / 1280, 0.75, 1.3), r.height / (2 * VIEW_HALF)));
   }
 
   buildStatic() {
@@ -202,8 +209,10 @@ class Renderer {
       a.x = clamp(a.x, this.cam.x - hw + m, this.cam.x + hw - m); a.y = clamp(a.y, this.cam.y - hh + m, this.cam.y + hh - m);
     } else {
       this.scopeAim = null;
+      // la vue regarde où l'on vise : de quoi voir venir un tireur jusqu'à sa portée de tir
       const m = this.toWorld(this.mouse.sx, this.mouse.sy);
-      const lx = p.x + clamp((m.x - p.x) * 0.25, -90, 90), ly = p.y + clamp((m.y - p.y) * 0.25, -70, 70);
+      const r = Math.min(this.canvas.width, this.canvas.height) / 2 / this.zoom * LOOK_MAX;
+      const lx = p.x + clamp((m.x - p.x) * LOOK_AHEAD, -r, r), ly = p.y + clamp((m.y - p.y) * LOOK_AHEAD, -r, r);
       this.cam.x = lerp(this.cam.x, lx, k); this.cam.y = lerp(this.cam.y, ly, k);
     }
     const sh = g.camShake;

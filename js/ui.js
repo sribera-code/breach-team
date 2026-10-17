@@ -18,6 +18,10 @@ const ICONS = {
   loud: '<rect x="1.5" y="6" width="11" height="4" rx="1" class="f"/><path d="M15 8h6.5M14.5 4.8l5-2.6M14.5 11.2l5 2.6" class="f"/>',
   vestL: '<path d="M8 1.5l2.5 2h3l2.5-2 4 2.5-.8 11H4.8L4 4z" class="f"/><path d="M12 3.5v11.5" class="t"/>',
   vestH: '<path d="M8 1.5l2.5 2h3l2.5-2 4 2.5-.8 11H4.8L4 4z" class="f"/><rect x="8.5" y="5.5" width="7" height="7.5" rx="1" fill="currentColor"/>',
+  // grenades : la flash (cylindre percé, éclair), la fragmentation (corps quadrillé, cuillère), et les deux
+  flash: '<rect x="8.5" y="5" width="7" height="10" rx="1.2" class="f"/><rect x="10" y="2.5" width="4" height="2.5" class="f"/><path d="M10.5 8.5h3M10.5 11.5h3" class="t"/><path d="M3 4.5l3 1.6M21 4.5l-3 1.6M2.5 10.5h3.5M21.5 10.5H18" stroke="#ffd27a" stroke-width="1.3" stroke-linecap="round"/>',
+  frag: '<circle cx="11" cy="10" r="5" class="f"/><rect x="9" y="2.5" width="4" height="2.6" class="f"/><path d="M13 3.6l4.5 3.6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><path d="M6.5 10h9M11 5.5v9" class="t"/>',
+  mix: '<rect x="2" y="6" width="6" height="9" rx="1" class="f"/><rect x="3.4" y="3.6" width="3.2" height="2.4" class="f"/><circle cx="16.5" cy="10.5" r="4.5" class="f"/><rect x="14.8" y="3.6" width="3.4" height="2.4" class="f"/><path d="M12.5 10.5h8M16.5 6.5v8" class="t"/>',
 };
 class UI {
   constructor(game) {
@@ -77,13 +81,20 @@ class UI {
     const cb = this.$('chargeBox');
     if (cb) { cb.style.display = g.camp === 'armed' ? 'none' : ''; this.$('chargeCount').textContent = g.charges.some(c => c.team === p.team) ? 'posée' : p.charges; }
     const nl = this.$('nadeLabel');
-    if (nl) nl.textContent = p.nade === 'frag' ? 'Grenades' : 'Flash';
+    if (nl) nl.textContent = g.camp === 'armed' ? 'Grenades' : NADE_NAMES[p.nade] || 'Flash';
+    // lot mixte : l'autre sorte de grenade, et la touche qui la met en main
+    const no = this.$('nadeOther');
+    if (no) {
+      const k = g.camp === 'armed' ? null : Object.keys(p.nades || {}).find(n => n !== p.nade && p.nades[n] > 0);
+      const html = k ? `· ${NADE_NAMES[k]} <b>${p.nades[k]}</b> <small>(N)</small>` : '';
+      if (this._nadeOther !== html) { this._nadeOther = html; no.innerHTML = html; }
+    }
     // aide du bas d'écran : pas de fibre et des grenades à fragmentation côté groupe armé ; ni otage ni sommation
     // en trinômes
     const rh = this.$('reloadHint');
     if (rh) {
       if (this._reloadHint === undefined) this._reloadHint = rh.textContent;
-      const txt = g.camp === 'armed' ? this._reloadHint.replace(' · F (maintenu) : fibre sous la porte', '').replace('Espace : flash', 'Espace : grenade')
+      const txt = g.camp === 'armed' ? this._reloadHint.replace(' · F (maintenu) : fibre sous la porte', '').replace(' · N : autre grenade', '')
         .replace(' · H : otage / menottes', '').replace(' · C : sommation', '').replace(' · B : charge', '')
         : g.squads ? this._reloadHint.replace(' · H : otage / menottes', '').replace(' · C : sommation', '')
         : g.escort ? this._reloadHint.replace('H : otage / menottes', 'H : VIP (suivre / attendre) / menottes') : this._reloadHint;
@@ -264,7 +275,7 @@ class UI {
           </div>
           <h2>Accessoires</h2>
           <div id="waccs"></div>
-          ${armed ? (squads ? `<div class="suprow">${this.crewKit()}</div>` : '') : `<div class="suprow">${this.vestPicker()}</div><div class="suprow">${this.teamPicker()}</div>`}
+          ${armed ? (squads ? `<div class="suprow">${this.crewKit()}</div>` : '') : `<div class="suprow">${this.vestPicker()}</div><div class="suprow">${this.nadePicker()}</div><div class="suprow">${this.teamPicker()}</div>`}
         </section>
         <section class="brief-col brief-specs"><div class="brief-specs-in"><h2>Caractéristiques</h2><div id="wsum" class="wsum"></div><div id="wdetail"></div></div></section>
       </div>
@@ -288,6 +299,9 @@ class UI {
     });
     this.panel.querySelectorAll('.vestbtn').forEach(b => {
       b.onclick = () => { g.setLoadout({ vest: b.dataset.vest }); this.refreshLoadout(); };
+    });
+    this.panel.querySelectorAll('.nadebtn').forEach(b => {
+      b.onclick = () => { g.setLoadout({ nades: b.dataset.nades }); this.refreshLoadout(); };
     });
     this.panel.querySelectorAll('.powbtn').forEach(b => {
       b.onclick = () => { const cut = b.dataset.cut === '1'; if (cut !== !!g.loadout.cutPower) { g.setLoadout({ cutPower: cut }); this.showBriefing(); } };
@@ -336,7 +350,7 @@ class UI {
   campRow() {
     const g = this.game, police = MODES[g.mode].variantOf || g.mode, armed = Object.keys(MODES).find(m => MODES[m].variantOf === police);
     const btn = (mode, label, tip) => `<button class="supbtn campbtn${g.mode === mode ? ' sel' : ''}" data-mode="${mode}" title="${tip}">${label}</button>`;
-    return `<div class="powerrow"><div class="suprow"><span class="rowlabel">Camp</span>${btn(police, '🛡 Intervention', 'Flashs, charges de brèche, fibre, gilet ; en face, le groupe armé et ses grenades à fragmentation.')}${btn(armed, '☠ Groupe armé', "Grenades à fragmentation ; en face, l'intervention, ses flashs, ses charges et ses colonnes.")}</div>
+    return `<div class="powerrow"><div class="suprow"><span class="rowlabel">Camp</span>${btn(police, '🛡 Intervention', 'Flashs ou grenades à fragmentation (au choix), charges de brèche, fibre, gilet ; en face, le groupe armé et ses grenades à fragmentation.')}${btn(armed, '☠ Groupe armé', "Grenades à fragmentation ; en face, l'intervention, ses flashs, ses charges et ses colonnes.")}</div>
       <small>${g.war ? 'Vos deux autres trinômes partent de votre base, sur les flancs ; l\'armée d\'en face, de l\'autre base.'
         : "Votre second trinôme entre par l'ouverture la plus proche de la vôtre, les deux d'en face par les plus éloignées."}</small></div>`;
   }
@@ -349,6 +363,16 @@ class UI {
     return `<span class="rowlabel">Gilet</span>${keys.map(k => {
       const v = VESTS[k], kg = String(v.weight).replace('.', ',');
       return `<button class="supbtn vestbtn${g.loadout.vest === k ? ' sel' : ''}" data-vest="${k}" title="${v.name}, ${v.rating}, ${kg} kg. ${v.note}">${UI.icon(v.plate ? 'vestH' : 'vestL')} ${v.label} · ${kg} kg</button>`;
+    }).join('')}`;
+  }
+
+  // Grenades de l'intervention : les lots côte à côte (NADE_KITS), celui qu'on emporte en surbrillance ; ce qu'il
+  // contient en bulle d'aide.
+  nadePicker() {
+    const g = this.game;
+    return `<span class="rowlabel">Grenades</span>${Object.keys(NADE_KITS).map(k => {
+      const n = NADE_KITS[k];
+      return `<button class="supbtn nadebtn${g.loadout.nades === k ? ' sel' : ''}" data-nades="${k}" title="${n.note}">${UI.icon(n.icon)} ${n.label}</button>`;
     }).join('')}`;
   }
 
@@ -499,6 +523,7 @@ class UI {
       else UI.drawWeapon(b.querySelector('canvas'), this.loadoutDef(k), CARD_SCALE);
     });
     this.panel.querySelectorAll('.vestbtn').forEach(b => b.classList.toggle('sel', b.dataset.vest === l.vest));
+    this.panel.querySelectorAll('.nadebtn').forEach(b => b.classList.toggle('sel', b.dataset.nades === l.nades));
     const sum = this.panel.querySelector('#wsum');
     if (sum) sum.innerHTML = this.gearSummary();
     const sh = SHIELDS[l.shield];
@@ -813,7 +838,7 @@ class UI {
         <span>${siege ? 'Opérateurs neutralisés' : war ? 'Abattus par votre armée / par vous' : squads ? 'Adversaires neutralisés' : 'Suspects abattus / arrêtés'}</span><b id="endKills">${war ? `${W.kills.ops} / ${W.mine}` : siege || squads ? `${s.kills} / ${g.enemies.length}` : `${s.kills} / ${s.arrests}`}</b>
         <span>Tirs / touchés</span><b>${s.shots} / ${s.hits}</b>
         <span>Précision</span><b>${s.shots ? Math.round(100 * s.hits / s.shots) : 0} %</b>
-        <span>${armed ? 'Grenades utilisées' : 'Flashs utilisées'}</span><b>${s.flashes}</b>
+        <span>${armed || g.loadout.nades !== 'flash' ? 'Grenades utilisées' : 'Flashs utilisées'}</span><b>${s.flashes}</b>
         <span>${war ? 'Pertes de votre armée' : armed ? 'Terroristes perdus' : 'Opérateurs perdus'}</span><b>${war ? W.kills.enemy : `${g.ops.filter(o => !o.alive).length} / ${g.squadSize}`}</b>
         ${war ? `<span>Votre trinôme revenu de la base</span><b>${W.reinforce} fois</b>`
           : squads ? '' : escort ? `<span>Santé du VIP</span><b id="endVip">${g.vip.alive ? Math.round(100 * g.vip.hp / g.vip.maxHp) + ' %' : 'tué'}</b>`
@@ -841,12 +866,13 @@ class UI {
       <p><b>Déplacement</b> : <kbd>ZQSD</kbd> / <kbd>WASD</kbd> / flèches. <kbd>A</kbd> (ou <kbd>Maj</kbd>) bascule entre course et marche : en marchant on est lent mais précis.<br>
       <b>Précision</b> : le viseur montre la zone réelle où les balles peuvent tomber. Elle grandit avec la distance, en courant, et à chaque tir (recul) ; au-delà de la portée efficace de l'arme elle s'ouvre encore. Tirez par courtes rafales et laissez le viseur se resserrer.<br>
       <b>Tir</b> : clic gauche (maintenu pour les armes automatiques). <kbd>R</kbd> ou clic molette recharge, <kbd>Alt</kbd> (ou <kbd>1</kbd>/<kbd>2</kbd>) change d'arme.<br>
-      <b>Gestes</b> : manœuvrer une porte ou lancer une flash occupe les deux mains. Le geste dure un instant (l'anneau du viseur montre où il en est), pendant lequel on ne tire pas et on avance au ralenti, et la visée reste perturbée juste après : ne le faites pas nez à nez avec un suspect. Les coéquipiers et les suspects sont soumis aux mêmes délais.<br>
+      <b>Gestes</b> : manœuvrer une porte ou lancer une grenade occupe les deux mains. Le geste dure un instant (l'anneau du viseur montre où il en est), pendant lequel on ne tire pas et on avance au ralenti, et la visée reste perturbée juste après : ne le faites pas nez à nez avec un suspect. Les coéquipiers et les suspects sont soumis aux mêmes délais.<br>
       <b>Portes</b> : <kbd>E</kbd> ouvre en grand la porte la plus proche, ou la ferme si elle est ouverte. La molette agit par crans : fermée, entrebâillée, entrouverte, ouverte ; vers le bas, l'inverse. Une porte qui n'est pas grande ouverte ne laisse ni passer ni voir autrement que par l'entrebâillement : le battant arrête le regard, et vous ne découvrez qu'un mince cône de la pièce (le vôtre comme celui des ennemis s'élargit avec le cran). Entrebâiller est silencieux et plus rapide qu'ouvrir en grand, puisque le battant a moins de chemin à faire ; comptez un second geste pour entrer. On ne peut pas fermer une porte si quelqu'un se trouve dans l'embrasure.<br>
       <b>Portes verrouillées</b> : en assaut, certaines portes sont fermées à clé. <kbd>E</kbd> (ou la molette) sur l'une d'elles lance le crochetage : quatre secondes, presque sans bruit, arme basse ; la porte est alors déverrouillée et c'est à vous de l'ouvrir comme vous voulez. Une serrure rouge marque celles qu'on a essayées. Plus vite : la chevrotine dans la serrure, ou une charge. Les suspects, eux, ont les clés.<br>
       <b>Charge de brèche</b> : deux par mission. <kbd>B</kbd> devant une porte fermée pose une charge sur le battant, de votre côté ; <kbd>B</kbd> à nouveau la fait sauter, où que vous soyez. La porte vole en éclats (elle ne se referme plus) ; derrière, tout ce qui se tient près de l'embrasure est sonné quelques secondes, et blessé tout contre — un otage aussi : regardez d'abord à la fibre. De votre côté, écartez-vous. Si quelqu'un ouvre la porte avant, la charge tombe.<br>
       <b>Fibre optique</b> : devant une porte fermée ou entrouverte, maintenez <kbd>F</kbd> pour glisser une fibre sous le battant : vous découvrez un large cône de la pièce voisine, suspects compris, sans ouvrir ni faire de bruit. La mise en place demande un geste ; tant que vous observez, vous ne tirez pas et vous ne pouvez pas bouger — le moindre pas retire la fibre.<br>
       <b>Flash</b> : <kbd>Espace</kbd> (ou <kbd>G</kbd>) lance une grenade aveuglante vers le curseur : la distance au curseur règle la force du lancer. Elle vole par-dessus le mobilier (tables, plantes, caisses...), retombe, puis roule et rebondit sur les murs, les meubles et les portes fermées, et explose au bout d'environ 1,7 s. Attention aux retours contre un mur proche. Collé à une porte entrouverte, visez l'embrasure pour glisser la grenade par l'entrebâillement ; de plus loin, elle rebondit sur le battant. Les ennemis aveuglés ne tirent plus pendant quelques secondes. Ne regardez pas l'explosion.<br>
+      <b>Grenades à emporter</b> : au briefing, l'intervention choisit son lot : trois flashs, deux flashs et une grenade à fragmentation, ou deux grenades à fragmentation. La fragmentation se lance pareil et éclate au bout de 2 s : elle tue dans un rayon de trois cases et demie, vous, les vôtres et les otages compris ; un mur ou une porte fermée arrête l'éclat. <kbd>N</kbd> passe d'une sorte à l'autre (le HUD montre celle en main, et ce qui reste de l'autre) ; la dernière d'une sorte lancée, l'autre passe en main. Bravo et Charlie gardent leurs flashs pour l'entrée à la flash, et une colonne n'entre pas tant que votre grenade n'a pas éclaté.<br>
       <b>À travers les portes</b> : un battant n'est pas un abri. Les balles le traversent en perdant de l'énergie (un tiers pour du 7,62, les quatre cinquièmes pour de la chevrotine) et en déviant un peu. Vous pouvez arroser une porte fermée — et un suspect peut faire de même. Les murs, eux, arrêtent tout.<br>
       <b>Relais et armes au sol</b> : si vous tombez, vous reprenez la main dans le coéquipier debout le plus proche ; la mission n'est perdue que quand toute l'équipe est à terre. Près d'un corps, <kbd>V</kbd> ramasse son arme et laisse au sol la vôtre de même catégorie (vous pouvez la reprendre).<br>
       <b>Bruit</b> : coups de feu, portes, impacts, grenades, cris et pas de course s'entendent à une certaine distance, qui fond à travers les murs et les portes fermées (le son contourne les angles par les portes ouvertes). Marcher (<kbd>A</kbd>) est silencieux ; courir s'entend à deux ou trois cases. Un suspect qui entend quelque chose se tourne vers le bruit et s'inquiète ; un bruit fort (tir, cri, explosion) ou des bruits qui se répètent le font venir voir — deux au plus à la fois, les autres guettent de ce côté —, puis il regagne son poste. Un « ? » au-dessus de lui le signale. Celui qui vous repère crie l'alerte, celui qui découvre le corps d'un des siens aussi.<br>
