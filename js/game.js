@@ -59,6 +59,10 @@ const FRAG_DAMAGE = 200;
 // porte plus loin : plus loin, elle se rapproche. L'écran n'en montre guère davantage dans la direction visée (voir
 // VIEW_HALF dans js/render.js) : on n'est pas pris pour cible par un tireur qu'on ne peut pas voir à l'écran.
 const AI_FIRE_RANGE = 9 * U;
+// Une balle part à sa vitesse réelle (des centaines de mètres par seconde : une image suffit à traverser une pièce) et
+// vole jusqu'au premier obstacle, BULLET_REACH au plus (la plus grande carte fait 66 m). Ce qu'elle parcourt pendant une
+// image reste tracé TRACER_LIFE s (voir Renderer.drawBullets).
+const BULLET_REACH = 80 * U, TRACER_LIFE = 0.08;
 // Laser : portée du faisceau, intervalle entre deux coups d'œil d'un suspect, inquiétude ajoutée quand il le voit.
 const LASER_RANGE = 22 * U, LASER_LOOK = 0.2, LASER_ALARM = 0.4;
 // Tir dans une porte (suspects) : durée pendant laquelle il arrose une porte derrière laquelle il sait quelqu'un,
@@ -340,6 +344,7 @@ class Game {
     }
     if (!squads) this.squads = null;
     this.bullets = [];
+    this.tracers = []; // ce que chaque balle a parcouru à la dernière image, tracé un instant (TRACER_LIFE)
     this.beam = null; // faisceau du laser du joueur, recalculé à chaque pas (voir spotLaser)
     this.beams = [];  // tous les faisceaux allumés : le sien, et ceux des armes de l'IA qui portent un laser
     this.grenades = [];
@@ -1127,6 +1132,8 @@ class Game {
     this.casings = this.casings.filter(c => c.t < c.life);
     for (const f of this.effects) f.t += dt;
     this.effects = this.effects.filter(f => f.t < f.life);
+    for (const f of this.tracers) f.t += dt;
+    this.tracers = this.tracers.filter(f => f.t < TRACER_LIFE);
     for (const a of [...this.ops, ...this.enemies]) {
       if (a.glowT > 0) a.glowT -= dt;
       a.stillT = a.moving ? 0 : (a.stillT || 0) + dt; // temps à l'arrêt : la lunette demande de poser l'œil
@@ -2314,7 +2321,8 @@ class Game {
   fireWeapon(shooter) {
     const s = shooter.slot, w = s.def;
     const n = w.pellets || 1;
-    const spread = this.spreadOf(shooter), range = w.range * (this.scoped(shooter) ? SCOPE.reach : 1);
+    // l'erreur de visée vaut pour tout le coup ; les plombs s'ouvrent ensuite en gerbe autour (pattern)
+    const spread = this.spreadOf(shooter), aim = shooter.angle + rand(-spread, spread), pattern = w.pattern || 0;
     const ml = muzzleDist(w.gunLen);
     // Collé à un mur ou à une porte, le canon dépasse de l'autre côté : la balle part alors du tireur
     // (et bute sur l'obstacle, ou le traverse avec le malus d'une porte) au lieu de naître derrière.
@@ -2325,10 +2333,10 @@ class Game {
     const mx = blocked ? muzzle.x - Math.cos(shooter.angle) * 2 : shooter.x + Math.cos(shooter.angle) * ml;
     const my = blocked ? muzzle.y - Math.sin(shooter.angle) * 2 : shooter.y + Math.sin(shooter.angle) * ml;
     for (let i = 0; i < n; i++) {
-      const a = shooter.angle + rand(-spread, spread);
+      const a = aim + rand(-pattern, pattern);
       const clear = !blocked && !this.map.castRay(shooter.x, shooter.y, a, ml, false).hit;
       const bx = clear ? shooter.x + Math.cos(a) * ml : shooter.x, by = clear ? shooter.y + Math.sin(a) * ml : shooter.y;
-      this.bullets.push({ x: bx, y: by, vx: Math.cos(a) * w.speed, vy: Math.sin(a) * w.speed, team: shooter.team, damage: w.damage, life: range / w.speed, shooter, ox: shooter.x, oy: shooter.y, trail: w.heavy ? 10 : 18, pierce: w.pierce === undefined ? 0.4 : w.pierce, pierced: 0, breach, pen: w.pen || 1 });
+      this.bullets.push({ x: bx, y: by, vx: Math.cos(a) * w.speed, vy: Math.sin(a) * w.speed, team: shooter.team, damage: w.damage, life: BULLET_REACH / w.speed, shooter, ox: shooter.x, oy: shooter.y, heavy: w.heavy, pierce: w.pierce === undefined ? 0.4 : w.pierce, pierced: 0, breach, pen: w.pen || 1 });
     }
     shooter.bloom = Math.min(shooter.bloom + w.bloom, w.bloomMax || 8 * DEG);
     shooter.kick = 1;
@@ -2354,7 +2362,8 @@ class Game {
     const keep = [];
     const civs = this.hostages.filter(h => !h.evacuated); // un otage sorti est hors d'atteinte
     for (const b of this.bullets) {
-      const len = Math.hypot(b.vx, b.vy) * dt;
+      // au bout de sa course (BULLET_REACH), elle s'arrête en l'air : on ne la fait pas voler une image de trop
+      const step = Math.min(dt, b.life), sp = Math.hypot(b.vx, b.vy), len = sp * step;
       const ang = Math.atan2(b.vy, b.vx), cs = Math.cos(ang), sn = Math.sin(ang);
       const r = this.map.castRay(b.x, b.y, ang, len, false);
       let hitT = r.hit ? r.dist : len;
@@ -2381,6 +2390,8 @@ class Game {
         const tt = Math.max(0, t - Math.sqrt(c.radius * c.radius - perp * perp));
         if (tt <= hitT) { hitT = tt; victim = c; onShield = false; }
       }
+      // ce qu'elle a parcouru pendant cette image, jusqu'à ce qui l'arrête, reste tracé un instant
+      this.tracers.push({ x0: b.x, y0: b.y, x1: b.x + cs * hitT, y1: b.y + sn * hitT, t: 0, heavy: !!b.heavy });
       if (b.pierced) this.doorShotAlarm(b, cs, sn, hitT);
       if (victim && onShield) { this.shieldHit(victim, b, b.x + cs * hitT, b.y + sn * hitT, ang); continue; }
       if (victim) {
@@ -2395,10 +2406,9 @@ class Game {
           b.pierced++;
           b.damage *= b.pierce;
           const na = ang + rand(-1.6, 1.6) * DEG;
-          const sp = Math.hypot(b.vx, b.vy);
           b.vx = Math.cos(na) * sp; b.vy = Math.sin(na) * sp;
           b.x = r.x + Math.cos(na) * 3; b.y = r.y + Math.sin(na) * 3; // ressort de l'autre côté
-          b.life -= dt;
+          b.life -= r.dist / sp;
           this.effects.push({ type: 'splinter', x: r.x, y: r.y, angle: ang, t: 0, life: 0.25 });
           Sound.pierce();
           this.noise(r.x, r.y, 3 * U, b.shooter, 'impact'); // l'impact s'entend de l'autre côté
@@ -2411,8 +2421,8 @@ class Game {
         this.noise(r.x - cs * 2, r.y - sn * 2, 2.5 * U, b.shooter, 'impact');
         continue;
       }
-      b.x += b.vx * dt; b.y += b.vy * dt; b.life -= dt;
-      if (b.life > 0) keep.push(b);
+      b.x += b.vx * step; b.y += b.vy * step; b.life -= step;
+      if (b.life > 1e-9) keep.push(b);
     }
     this.bullets = keep;
   }
@@ -4050,8 +4060,9 @@ class Game {
     // seule l'intervention se refuse aussi un otage derrière la cible : c'est sa mission
     const strict = shooter instanceof Operator;
     // L'intervention garde toute la marge de sa gerbe ; l'équipe s'en tient à la moitié, sans quoi
-    // elle ne tire plus jamais dans une pièce encombrée.
-    const cone = trained ? Math.tan(this.spreadOf(shooter, d) * (strict ? 1 : 0.5) + (strict ? 2 : 1) * DEG) : 0;
+    // elle ne tire plus jamais dans une pièce encombrée. Une chevrotine ouvre en plus sa gerbe de plombs.
+    const spread = this.spreadOf(shooter, d) + (shooter.weapon.pattern || 0);
+    const cone = trained ? Math.tan(spread * (strict ? 1 : 0.5) + (strict ? 2 : 1) * DEG) : 0;
     for (const f of [...friends, ...this.hostages]) {
       if (f === shooter || f === target || !f.alive || f.evacuated) continue;
       const rx = f.x - x, ry = f.y - y;

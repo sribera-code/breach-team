@@ -1,6 +1,6 @@
 # Reste à faire
 
-État des chantiers ouverts au 10 octobre 2026. Les points sont classés par ordre d'intérêt au sein
+État des chantiers ouverts au 18 octobre 2026. Les points sont classés par ordre d'intérêt au sein
 de chaque section.
 
 ## Mode siège
@@ -118,6 +118,19 @@ de chaque section.
   ils viennent voir, puis rentrent.
 
 ## Équipement
+
+- **Balles à leur vitesse réelle, à éprouver en jeu.** Une case vaut un mètre ; la balle part à sa vitesse à la bouche
+  (260 à 900 m/s) et vole jusqu'au premier obstacle (80 m au plus, `BULLET_REACH`). En guerre totale simulée, les morts
+  croisées (A abat B et B abat A à moins de 0,6 s) passent de 11 % des morts à 2 %, pour un nombre de morts à peu près
+  inchangé. Conséquences pas encore jouées : l'IA touche mieux une cible qui court (plus besoin d'anticiper), et une
+  balle manquée file désormais dans la pièce d'après, par une porte ouverte, au risque d'un otage qu'on ne voit pas
+  (ceux des suspects aussi). Si c'est trop, réduire `BULLET_REACH`.
+- **Chevrotine en gerbe serrée** (`pattern` : 1,5° pour le Remington 870, 2° pour le Benelli, 3° pour le canon scié
+  des suspects, au lieu d'une dispersion de 5,5 à 7° par plomb). À quelques mètres, toute la charge arrive : le fusil à
+  pompe est bien plus meurtrier, de près comme à neuf mètres, dans les mains de l'IA aussi. Pas de perte d'énergie des
+  plombs avec la distance.
+- **Pas de chute des dégâts avec la distance, ni de ricochet** : une balle frappe à 30 m comme à 3 m, et s'arrête sur
+  un mur ou un meuble sans rebondir.
 
 - **La vitesse suit la masse des armes** (3,5 % par kilo, toutes armes portées) ; le gilet et le bouclier gardent un
   coefficient à part plutôt que de peser au kilo, et une arme de poing seule (moins de 1,4 kg) donne déjà la vitesse

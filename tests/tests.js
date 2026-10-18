@@ -92,6 +92,78 @@ test('cadence de tir conforme à la fiche', () => {
   }
 });
 
+// Une place libre à D px de from, en vue (la première trouvée en tournant autour), ou null.
+function spotAt(game, from, D) {
+  for (let k = 0; k < 72; k++) {
+    const a = k * TAU / 72, x = from.x + Math.cos(a) * D, y = from.y + Math.sin(a) * D;
+    if (game.map.circleFree(x, y, 12, true) && game.map.hasLOS(from.x, from.y, x, y)) return { x, y };
+  }
+  return null;
+}
+// Le joueur face à un suspect posé en (x, y), intouchable et sans gilet ; visée parfaite (spreadMul nul).
+function faceTarget(g, x, y) {
+  const game = g.game, p = game.player, e = new Enemy(x, y, 0, 'ak');
+  Object.assign(e, { hp: 1e6, maxHp: 1e6 });
+  game.enemies = [e];
+  p.angle = Math.atan2(y - p.y, x - p.x);
+  p.spreadMul = 0;
+  return e;
+}
+
+test('les balles partent à leur vitesse réelle : à plusieurs cases, la cible est touchée dans l’image', () => {
+  for (const k of [...PRIMARY_WEAPONS, ...SIDEARMS, ...MODES.siege.primaries, ...MODES.siege.sidearms]) {
+    const w = WEAPONS[k];
+    ok(w.mps >= 250 && w.mps <= 950, k + ' : vitesse à la bouche réaliste (' + w.mps + ' m/s)');
+    eq(w.speed, w.mps * U, k + ' : une case vaut un mètre');
+  }
+  ok(WEAPONS.usp45.mps < WEAPONS.glock17.mps && WEAPONS.glock17.mps < WEAPONS.ak74P.mps, 'le .45 lent, le 5,45 tendu');
+  for (const [ai, real] of [['hk416op', 'hk416'], ['mp5op', 'mp5'], ['akH', 'akP'], ['ak', 'akP'], ['uziE', 'uziP'], ['pistolE', 'makarovP']]) eq(WEAPONS[ai].speed, WEAPONS[real].speed, ai + ' : la balle du ' + WEAPONS[real].name);
+  eq(fittedDef('mp5', { sup: true }).mps, SUBSONIC.mps, '9 mm subsonique sous la vitesse du son');
+  eq(fittedDef('akH', { sup: true }).mps, SUBSONIC.mps, '7,62 « US » aussi');
+  eq(fittedDef('hk416', { sup: true }).mps, WEAPONS.hk416.mps, 'un silencieux ne freine pas une balle supersonique');
+  const g = mkGame({ alone: true, loadout: { primary: 'hk416', sidearm: 'glock17' } });
+  const game = g.game, p = game.player;
+  let s = null, D = 8 * U;
+  for (; D >= 5 * U && !s; D -= 0.5 * U) s = spotAt(game, p, D);
+  ok(s, 'une cible à cinq cases au moins, en vue');
+  const e = faceTarget(g, s.x, s.y);
+  game.fireWeapon(p);
+  game.updateBullets(1 / 60);
+  ok(e.hp < e.maxHp, 'touchée dans l’image même où part le coup : elle n’a plus le temps de riposter');
+  const t = game.tracers[game.tracers.length - 1];
+  ok(t && dist(t.x1, t.y1, e.x, e.y) <= e.radius + 1 && dist(t.x0, t.y0, p.x, p.y) < 2 * U, 'sa trace va de la bouche à la cible');
+  game.step(TRACER_LIFE + 0.02);
+  eq(game.tracers.length, 0, 'et s’efface aussitôt');
+});
+
+test('une balle vole jusqu’au premier obstacle, bien au-delà de neuf cases', () => {
+  const g = mkGame({ mode: 'war', alone: true, loadout: { primary: 'hk416', sidearm: 'glock17' } });
+  const game = g.game, map = game.map, p = game.player, D = 24 * U;
+  let a = null;
+  for (let ty = 2; ty < map.h - 2 && !a; ty++) for (let tx = 2; tx < map.w - 2 && !a; tx++) {
+    const x = (tx + 0.5) * TILE, y = (ty + 0.5) * TILE;
+    if (map.circleFree(x, y, 12, true) && map.circleFree(x + D, y, 12, true) && map.hasLOS(x, y, x + D, y)) a = { x, y };
+  }
+  ok(a, 'une ligne dégagée de ' + D / U + ' cases');
+  p.x = a.x; p.y = a.y;
+  const e = faceTarget(g, a.x + D, a.y);
+  game.fireWeapon(p);
+  for (let i = 0; i < 10 && game.bullets.length; i++) game.updateBullets(1 / 60);
+  ok(e.hp < e.maxHp, 'touché à ' + D / U + ' cases (l’ancienne portée du HK416 s’arrêtait à 16)');
+});
+
+test('la chevrotine part en gerbe serrée : à six cases, toute la charge arrive', () => {
+  const g = mkGame({ alone: true, loadout: { primary: 'm870', sidearm: 'glock17' } });
+  const game = g.game, p = game.player, s = spotAt(game, p, 6 * U);
+  ok(s, 'une cible à six cases, en vue');
+  const e = faceTarget(g, s.x, s.y), w = p.weapon;
+  ok(w.pattern > 0 && w.pattern < 2 * DEG && w.pellets === 9, 'neuf plombs, une gerbe de quelques centimètres par mètre');
+  game.fireWeapon(p);
+  for (let i = 0; i < 10 && game.bullets.length; i++) game.updateBullets(1 / 60);
+  eq(e.maxHp - e.hp, w.pellets * w.damage, 'les neuf plombs touchent');
+  ok(WEAPONS.sgE.pattern > w.pattern, 'le canon scié des suspects s’ouvre davantage');
+});
+
 test('l’IA tire à la cadence du modèle réel, en rafales qui ne se ressemblent pas', () => {
   for (const [ai, real] of [['hk416op', 'hk416'], ['mp5op', 'mp5'], ['akH', 'akP'], ['ak74H', 'ak74P'], ['ak', 'akP'], ['ak74E', 'ak74P'], ['uziE', 'uziP'], ['sgE', 'm870']]) {
     eq(WEAPONS[ai].rof, WEAPONS[real].rof, ai + ' : la cadence du ' + WEAPONS[real].name);
@@ -3125,7 +3197,7 @@ test('lunette : à l’arrêt seulement, elle voit et vise plus loin, et resserr
   p.stillT = 1;
   game.fireWeapon(p);
   const b = game.bullets[game.bullets.length - 1];
-  near(b.life * WEAPONS.hk416.speed, WEAPONS.hk416.range * SCOPE.reach, 1e-6, 'la balle porte plus loin');
+  near(b.life * WEAPONS.hk416.speed, BULLET_REACH, 1e-6, 'la balle vole jusqu’au premier obstacle, lunette ou non');
   // un pas, et elle quitte l'œil
   game.input.keys.KeyD = true; g.step(1); game.input.keys.KeyD = false;
   ok(!game.scoped(p) && game.viewOf(p, p.angle) === p.viewRange, 'en mouvement : plus rien');

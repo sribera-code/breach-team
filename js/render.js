@@ -622,15 +622,19 @@ class Renderer {
     ctx.restore();
   }
 
+  // Une balle traverse une pièce en une image : on en voit la trace, de là où elle était à là où elle est (ou à ce qui
+  // l'a arrêtée), plus vive vers la pointe, qui s'efface en TRACER_LIFE s.
   drawBullets() {
     const ctx = this.ctx;
     ctx.lineCap = 'round';
-    for (const b of this.game.bullets) {
-      const l = Math.hypot(b.vx, b.vy), ux = b.vx / l, uy = b.vy / l;
-      const grad = ctx.createLinearGradient(b.x - ux * b.trail, b.y - uy * b.trail, b.x, b.y);
-      grad.addColorStop(0, 'rgba(255,220,140,0)'); grad.addColorStop(1, 'rgba(255,240,200,0.95)');
-      ctx.strokeStyle = grad; ctx.lineWidth = 1.6;
-      ctx.beginPath(); ctx.moveTo(b.x - ux * b.trail, b.y - uy * b.trail); ctx.lineTo(b.x, b.y); ctx.stroke();
+    for (const f of this.game.tracers) {
+      const a = 1 - f.t / TRACER_LIFE;
+      const grad = ctx.createLinearGradient(f.x0, f.y0, f.x1, f.y1);
+      grad.addColorStop(0, 'rgba(255,220,140,0)');
+      grad.addColorStop(0.7, `rgba(255,230,170,${(0.35 * a).toFixed(3)})`);
+      grad.addColorStop(1, `rgba(255,244,210,${(0.95 * a).toFixed(3)})`);
+      ctx.strokeStyle = grad; ctx.lineWidth = f.heavy ? 1.9 : 1.4;
+      ctx.beginPath(); ctx.moveTo(f.x0, f.y0); ctx.lineTo(f.x1, f.y1); ctx.stroke();
     }
   }
 
@@ -866,8 +870,9 @@ class Renderer {
     const g = this.game, p = g.player, ctx = this.ctx;
     const x = this.mouse.sx * this.dpr, y = this.mouse.sy * this.dpr;
     const w = p.weapon;
-    // Le viseur montre l'erreur réelle à la distance du curseur : tan(dispersion) * distance.
-    const spread = g.spreadOf(p);
+    // Le viseur montre l'erreur réelle à la distance du curseur : tan(dispersion) * distance (plus la gerbe d'une
+    // chevrotine).
+    const spread = g.spreadOf(p) + (w.pattern || 0);
     const gap = Math.max(5 * this.dpr, Math.tan(spread) * (p.aimDist || 0) * this.zoom + 3 * this.dpr);
     const len = 10 * this.dpr;
     const color = p.cooking ? 'rgba(239,83,80,0.95)' : p.reloadT > 0 || p.act ? 'rgba(255,170,60,0.95)' : p.walkMode ? 'rgba(140,255,170,0.95)' : 'rgba(255,255,255,0.95)';

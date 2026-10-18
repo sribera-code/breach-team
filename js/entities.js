@@ -1,10 +1,15 @@
 'use strict';
 
-// spread en radians (demi-angle), speed en px/s, gunLen en px (longueur visible du canon).
+// spread en radians (demi-angle) : l'erreur de visée du tireur ; gunLen en px (longueur visible du canon).
 // bloom : dispersion ajoutée à chaque tir (plafonnée à bloomMax), recoil : recul visuel (px caméra)
 // effRange : portée efficace ; au-delà, rangeSpread s'ajoute progressivement (tenue de visée)
-// Armes réelles : calibre, cadence (coups/min), capacité et masse (kg, chargée) reprennent les données constructeur ;
-// les dégâts suivent le calibre, la mobilité découle de la masse.
+// range : portée utile, d'où l'IA ouvre le feu (au plus AI_FIRE_RANGE, voir Game.fireRange) ; la balle, elle, vole
+// jusqu'au premier obstacle (BULLET_REACH au plus).
+// Armes réelles : calibre, cadence (coups/min), capacité, masse (kg, chargée) et vitesse de la balle à la bouche (mps,
+// en m/s, munition de service) reprennent les données constructeur ; une case (U) vaut un mètre, la balle part donc à
+// mps × U px/s (speed). Les dégâts suivent le calibre, la mobilité découle de la masse.
+// pellets : plombs par cartouche ; pattern : demi-ouverture de leur gerbe autour du point visé (chevrotine 00 d'un canon
+// sans choke : quelques centimètres par mètre), qui s'ajoute à l'erreur de visée, la même pour tous les plombs.
 // kind : dessin (Sprites.gun), tint : variante de couleurs, snd : [durée, coupure] du son de tir.
 // reloadType 'shell' : chargement cartouche par cartouche (reload = durée par cartouche), interrompu par un tir.
 // pierce : part des dégâts conservée après avoir traversé une porte (les murs, eux, arrêtent tout).
@@ -15,130 +20,130 @@ const AK74_TINT = { wood: '#5a3519', fore: '#64391b', mag: '#8a4524', brake74: t
 const WEAPONS = {
   // ---- Fusils d'assaut ----
   hk416: {
-    kind: 'rifle', cat: 'ar', name: 'HK416 A5', maker: 'Heckler & Koch', caliber: '5,56×45 mm OTAN', mode: 'Auto', rpm: 850, weight: 3.6,
+    kind: 'rifle', cat: 'ar', name: 'HK416 A5', maker: 'Heckler & Koch', caliber: '5,56×45 mm OTAN', mode: 'Auto', rpm: 850, weight: 3.6, mps: 880,
     note: "Fusil de dotation des forces spéciales françaises. Précis, contrôlable, polyvalent.",
     damage: 30, auto: true, spread: 0.6 * DEG, moveSpread: 3.5 * DEG, bloom: 1.4 * DEG, bloomMax: 9 * DEG, recoil: 4,
-    effRange: 10 * U, rangeSpread: 3 * DEG, mag: 30, reserve: 120, reload: 2.2, pierce: 0.55, speed: 1150, gunLen: 20, heavy: false, range: 16 * U,
+    effRange: 10 * U, rangeSpread: 3 * DEG, mag: 30, reserve: 120, reload: 2.2, pierce: 0.55, gunLen: 20, heavy: false, range: 16 * U,
     snd: [0.1, 2200],
   },
   scarh: {
-    kind: 'rifle', cat: 'ar', name: 'FN SCAR-H CQC', maker: 'FN Herstal', caliber: '7,62×51 mm OTAN', mode: 'Auto', rpm: 600, weight: 4.1,
+    kind: 'rifle', cat: 'ar', name: 'FN SCAR-H CQC', maker: 'FN Herstal', caliber: '7,62×51 mm OTAN', mode: 'Auto', rpm: 600, weight: 4.1, mps: 760,
     note: "Calibre lourd : deux impacts suffisent, mais le recul est sévère en rafale et le chargeur court.",
     tint: { body: '#a38b62', dark: '#8a7450', mag: '#2e2f33', straightMag: true },
     damage: 42, auto: true, spread: 0.5 * DEG, moveSpread: 4.5 * DEG, bloom: 2.6 * DEG, bloomMax: 11 * DEG, recoil: 7,
-    effRange: 12 * U, rangeSpread: 2.5 * DEG, mag: 20, reserve: 80, reload: 2.5, pierce: 0.7, speed: 1250, gunLen: 21, heavy: true, range: 18 * U,
+    effRange: 12 * U, rangeSpread: 2.5 * DEG, mag: 20, reserve: 80, reload: 2.5, pierce: 0.7, gunLen: 21, heavy: true, range: 18 * U,
     snd: [0.16, 1400],
   },
   // ---- Pistolets mitrailleurs ----
   mp5: {
-    kind: 'smg', cat: 'smg', name: 'HK MP5A3', maker: 'Heckler & Koch', caliber: '9×19 mm Parabellum', mode: 'Auto', rpm: 800, weight: 3.1,
+    kind: 'smg', cat: 'smg', name: 'HK MP5A3', maker: 'Heckler & Koch', caliber: '9×19 mm Parabellum', mode: 'Auto', rpm: 800, weight: 3.1, mps: 400,
     note: "La référence des unités d'intervention. Recul très doux, maniable, mais portée limitée.",
     damage: 22, auto: true, spread: 0.9 * DEG, moveSpread: 2 * DEG, bloom: 1 * DEG, bloomMax: 6 * DEG, recoil: 2.5,
-    effRange: 6 * U, rangeSpread: 4 * DEG, mag: 30, reserve: 120, reload: 2.0, pierce: 0.4, speed: 900, gunLen: 16, heavy: false, range: 11 * U,
+    effRange: 6 * U, rangeSpread: 4 * DEG, mag: 30, reserve: 120, reload: 2.0, pierce: 0.4, gunLen: 16, heavy: false, range: 11 * U,
     snd: [0.08, 2600],
   },
   mp7: {
-    kind: 'pdw', cat: 'smg', name: 'HK MP7A1', maker: 'Heckler & Koch', caliber: '4,6×30 mm HK', mode: 'Auto', rpm: 950, weight: 2.1,
+    kind: 'pdw', cat: 'smg', name: 'HK MP7A1', maker: 'Heckler & Koch', caliber: '4,6×30 mm HK', mode: 'Auto', rpm: 950, weight: 2.1, mps: 725,
     note: "Arme de défense compacte à très haute cadence. Munition légère et tendue, chargeur de 40.",
     damage: 19, auto: true, spread: 1 * DEG, moveSpread: 2 * DEG, bloom: 0.9 * DEG, bloomMax: 6.5 * DEG, recoil: 2,
-    effRange: 7 * U, rangeSpread: 3.5 * DEG, mag: 40, reserve: 160, reload: 1.8, pierce: 0.5, pen: 2, speed: 1050, gunLen: 13, heavy: false, range: 12 * U,
+    effRange: 7 * U, rangeSpread: 3.5 * DEG, mag: 40, reserve: 160, reload: 1.8, pierce: 0.5, pen: 2, gunLen: 13, heavy: false, range: 12 * U,
     snd: [0.07, 3000],
   },
   // ---- Fusils à pompe ----
   m870: {
-    kind: 'shotgun', cat: 'sg', name: 'Remington 870', maker: 'Remington', caliber: '12/70 chevrotine 00', mode: 'Pompe', rpm: 75, weight: 3.8,
+    kind: 'shotgun', cat: 'sg', name: 'Remington 870', maker: 'Remington', caliber: '12/70 chevrotine 00', mode: 'Pompe', rpm: 75, weight: 3.8, mps: 400,
     note: "Pompe classique : dévastateur à courte portée, lent à réarmer et à recharger (cartouche par cartouche).",
-    damage: 15, pellets: 9, auto: false, spread: 5.5 * DEG, moveSpread: 3 * DEG, bloom: 3 * DEG, bloomMax: 8 * DEG, recoil: 12,
-    effRange: 4 * U, rangeSpread: 2 * DEG, mag: 6, reserve: 30, reloadType: 'shell', reload: 0.55, pierce: 0.2, speed: 900, gunLen: 22, heavy: true, range: 7 * U,
+    damage: 15, pellets: 9, pattern: 1.5 * DEG, auto: false, spread: 1.2 * DEG, moveSpread: 3 * DEG, bloom: 3 * DEG, bloomMax: 8 * DEG, recoil: 12,
+    effRange: 4 * U, rangeSpread: 2 * DEG, mag: 6, reserve: 30, reloadType: 'shell', reload: 0.55, pierce: 0.2, gunLen: 22, heavy: true, range: 7 * U,
     snd: [0.22, 800],
   },
   m4super90: {
-    kind: 'shotgun', cat: 'sg', name: 'Benelli M4 Super 90', maker: 'Benelli', caliber: '12/70 chevrotine 00', mode: 'Semi', rpm: 240, weight: 4.1,
+    kind: 'shotgun', cat: 'sg', name: 'Benelli M4 Super 90', maker: 'Benelli', caliber: '12/70 chevrotine 00', mode: 'Semi', rpm: 240, weight: 4.1, mps: 400,
     note: "Semi-automatique : enchaîne les tirs bien plus vite qu'un pompe, au prix d'une gerbe plus large.",
     tint: { semi: true },
-    damage: 15, pellets: 9, auto: false, spread: 6.5 * DEG, moveSpread: 3 * DEG, bloom: 4.5 * DEG, bloomMax: 12 * DEG, recoil: 11,
-    effRange: 4 * U, rangeSpread: 2 * DEG, mag: 7, reserve: 28, reloadType: 'shell', reload: 0.5, pierce: 0.2, speed: 900, gunLen: 22, heavy: true, range: 7 * U,
+    damage: 15, pellets: 9, pattern: 2 * DEG, auto: false, spread: 1.4 * DEG, moveSpread: 3 * DEG, bloom: 4.5 * DEG, bloomMax: 12 * DEG, recoil: 11,
+    effRange: 4 * U, rangeSpread: 2 * DEG, mag: 7, reserve: 28, reloadType: 'shell', reload: 0.5, pierce: 0.2, gunLen: 22, heavy: true, range: 7 * U,
     snd: [0.2, 850],
   },
   // ---- Armes de poing ----
   glock17: {
-    kind: 'pistol', cat: 'hg', name: 'Glock 17', maker: 'Glock', caliber: '9×19 mm Parabellum', mode: 'Semi', rpm: 360, weight: 0.9,
+    kind: 'pistol', cat: 'hg', name: 'Glock 17', maker: 'Glock', caliber: '9×19 mm Parabellum', mode: 'Semi', rpm: 360, weight: 0.9, mps: 375,
     note: "Pistolet de service fiable, 17 coups. Plus rapide à manier qu'une arme d'épaule.",
     damage: 22, auto: false, spread: 0.9 * DEG, moveSpread: 3 * DEG, bloom: 2.6 * DEG, bloomMax: 9 * DEG, recoil: 4,
-    effRange: 5 * U, rangeSpread: 4 * DEG, mag: 17, reserve: 51, reload: 1.5, pierce: 0.4, speed: 900, gunLen: 10, heavy: false, range: 10 * U,
+    effRange: 5 * U, rangeSpread: 4 * DEG, mag: 17, reserve: 51, reload: 1.5, pierce: 0.4, gunLen: 10, heavy: false, range: 10 * U,
     snd: [0.07, 2600],
   },
   usp45: {
-    kind: 'pistol', cat: 'hg', name: 'HK USP .45', maker: 'Heckler & Koch', caliber: '.45 ACP', mode: 'Semi', rpm: 270, weight: 1.0,
+    kind: 'pistol', cat: 'hg', name: 'HK USP .45', maker: 'Heckler & Koch', caliber: '.45 ACP', mode: 'Semi', rpm: 270, weight: 1.0, mps: 260,
     note: "Balle lourde et lente : plus d'arrêt, moins de coups et un relèvement plus marqué.",
     tint: { slide: '#2c2f34' },
     damage: 30, auto: false, spread: 0.8 * DEG, moveSpread: 3 * DEG, bloom: 3.6 * DEG, bloomMax: 10 * DEG, recoil: 5.5,
-    effRange: 5 * U, rangeSpread: 4 * DEG, mag: 12, reserve: 48, reload: 1.6, pierce: 0.3, speed: 800, gunLen: 11, heavy: false, range: 10 * U,
+    effRange: 5 * U, rangeSpread: 4 * DEG, mag: 12, reserve: 48, reload: 1.6, pierce: 0.3, gunLen: 11, heavy: false, range: 10 * U,
     snd: [0.1, 1900],
   },
   // ---- Armes du groupe armé, utilisables par le joueur (modes siège et trinômes) ----
   akP: {
-    kind: 'ak', cat: 'ar', name: 'AKM', maker: 'Kalachnikov', caliber: '7,62×39 mm', mode: 'Auto', rpm: 600, weight: 4.3,
+    kind: 'ak', cat: 'ar', name: 'AKM', maker: 'Kalachnikov', caliber: '7,62×39 mm', mode: 'Auto', rpm: 600, weight: 4.3, mps: 715,
     note: "Le fusil du groupe : brutal, dur à tenir en rafale, mais il perce le bois et les gilets.",
     damage: 34, auto: true, spread: 1.1 * DEG, moveSpread: 4.5 * DEG, bloom: 2.4 * DEG, bloomMax: 10.5 * DEG, recoil: 7,
-    effRange: 8.5 * U, rangeSpread: 3.5 * DEG, mag: 30, reserve: 120, reload: 2.6, pierce: 0.6, speed: 950, gunLen: 20, heavy: true, range: 14 * U,
+    effRange: 8.5 * U, rangeSpread: 3.5 * DEG, mag: 30, reserve: 120, reload: 2.6, pierce: 0.6, gunLen: 20, heavy: true, range: 14 * U,
     snd: [0.12, 1700],
   },
   ak74P: {
-    kind: 'ak', cat: 'ar', name: 'AK-74', maker: 'Kalachnikov', caliber: '5,45×39 mm', mode: 'Auto', rpm: 650, weight: 3.6,
+    kind: 'ak', cat: 'ar', name: 'AK-74', maker: 'Kalachnikov', caliber: '5,45×39 mm', mode: 'Auto', rpm: 650, weight: 3.6, mps: 900,
     note: "Le petit calibre de la famille : moins d'arrêt que l'AKM, mais une balle tendue et un frein de bouche qui tient la rafale.",
     tint: AK74_TINT,
     damage: 28, auto: true, spread: 0.9 * DEG, moveSpread: 4 * DEG, bloom: 1.6 * DEG, bloomMax: 8.5 * DEG, recoil: 5,
-    effRange: 9.5 * U, rangeSpread: 3 * DEG, mag: 30, reserve: 120, reload: 2.5, pierce: 0.55, speed: 1100, gunLen: 20, heavy: false, range: 15 * U,
+    effRange: 9.5 * U, rangeSpread: 3 * DEG, mag: 30, reserve: 120, reload: 2.5, pierce: 0.55, gunLen: 20, heavy: false, range: 15 * U,
     snd: [0.1, 2000],
   },
   makarovP: {
-    kind: 'pistol', cat: 'hg', name: 'Makarov PM', maker: 'Ijmach', caliber: '9×18 mm', mode: 'Semi', rpm: 300, weight: 0.8,
+    kind: 'pistol', cat: 'hg', name: 'Makarov PM', maker: 'Ijmach', caliber: '9×18 mm', mode: 'Semi', rpm: 300, weight: 0.8, mps: 315,
     note: "Huit coups, sans plus. De quoi finir un chargeur vide, pas de quoi tenir un couloir.",
     tint: { slide: '#3a3d42' },
     damage: 20, auto: false, spread: 1 * DEG, moveSpread: 3 * DEG, bloom: 3 * DEG, bloomMax: 9 * DEG, recoil: 4,
-    effRange: 4 * U, rangeSpread: 4.5 * DEG, mag: 8, reserve: 40, reload: 1.6, pierce: 0.3, speed: 900, gunLen: 10, heavy: false, range: 9 * U,
+    effRange: 4 * U, rangeSpread: 4.5 * DEG, mag: 8, reserve: 40, reload: 1.6, pierce: 0.3, gunLen: 10, heavy: false, range: 9 * U,
     snd: [0.07, 2400],
   },
   uziP: {
-    kind: 'smg', cat: 'smg', name: 'IMI Uzi', maker: 'Israel Military Industries', caliber: '9×19 mm Parabellum', mode: 'Auto', rpm: 600, weight: 3.7,
+    kind: 'smg', cat: 'smg', name: 'IMI Uzi', maker: 'Israel Military Industries', caliber: '9×19 mm Parabellum', mode: 'Auto', rpm: 600, weight: 3.7, mps: 400,
     note: "Trapue, increvable, increvablement bruyante. Le chargeur dans la crosse tient 32 coups ; sa masse et sa cadence modérée la tiennent en rafale.",
     tint: { body: '#2b2d31', dark: '#1e2024' },
     damage: 22, auto: true, spread: 1.3 * DEG, moveSpread: 2.6 * DEG, bloom: 1.3 * DEG, bloomMax: 7 * DEG, recoil: 2.6,
-    effRange: 5.5 * U, rangeSpread: 4.5 * DEG, mag: 32, reserve: 128, reload: 2.1, pierce: 0.35, speed: 880, gunLen: 13, heavy: false, range: 10 * U,
+    effRange: 5.5 * U, rangeSpread: 4.5 * DEG, mag: 32, reserve: 128, reload: 2.1, pierce: 0.35, gunLen: 13, heavy: false, range: 10 * U,
     snd: [0.08, 2300],
   },
   skorpionP: {
-    kind: 'pdw', cat: 'smg', name: 'Škorpion vz. 61', maker: 'Zbrojovka Brno', caliber: '7,65×17 mm (.32 ACP)', mode: 'Auto', rpm: 850, weight: 1.6,
+    kind: 'pdw', cat: 'smg', name: 'Škorpion vz. 61', maker: 'Zbrojovka Brno', caliber: '7,65×17 mm (.32 ACP)', mode: 'Auto', rpm: 850, weight: 1.6, mps: 320,
     note: "Pistolet mitrailleur de poche : très maniable et très rapide, mais une munition faible.",
     tint: { body: '#3a3a3e', dark: '#26262a' },
     damage: 15, auto: true, spread: 1.9 * DEG, moveSpread: 2.2 * DEG, bloom: 1.4 * DEG, bloomMax: 8 * DEG, recoil: 2,
-    effRange: 4.5 * U, rangeSpread: 5 * DEG, mag: 20, reserve: 100, reload: 1.7, pierce: 0.25, speed: 820, gunLen: 9, heavy: false, range: 8 * U,
+    effRange: 4.5 * U, rangeSpread: 5 * DEG, mag: 20, reserve: 100, reload: 1.7, pierce: 0.25, gunLen: 9, heavy: false, range: 8 * U,
     snd: [0.06, 2900],
   },
   tt33: {
-    kind: 'pistol', cat: 'hg', name: 'Tokarev TT-33', maker: 'Toula', caliber: '7,62×25 mm', mode: 'Semi', rpm: 300, weight: 0.9,
+    kind: 'pistol', cat: 'hg', name: 'Tokarev TT-33', maker: 'Toula', caliber: '7,62×25 mm', mode: 'Semi', rpm: 300, weight: 0.9, mps: 420,
     note: "Munition très rapide : elle perce le bois et les gilets là où un 9 mm s'arrête. Huit coups.",
     tint: { slide: '#4a4136' },
     damage: 26, auto: false, spread: 1 * DEG, moveSpread: 3 * DEG, bloom: 3.2 * DEG, bloomMax: 9 * DEG, recoil: 4.5,
-    effRange: 5 * U, rangeSpread: 4 * DEG, mag: 8, reserve: 32, reload: 1.6, pierce: 0.55, pen: 2, speed: 1100, gunLen: 11, heavy: false, range: 11 * U,
+    effRange: 5 * U, rangeSpread: 4 * DEG, mag: 8, reserve: 32, reload: 1.6, pierce: 0.55, pen: 2, gunLen: 11, heavy: false, range: 11 * U,
     snd: [0.08, 2200],
   },
   // ---- Armes tenues par l'IA : chargeur sans fin, tir en rafales de burst coups séparées de pause s. Leur cadence
   // est celle du modèle réel qu'on ramasse sur le corps (pickup), sauf rof donné.
-  sgE:     { kind: 'shotgun', pickup: 'm870', name: 'Remington 870 scié', damage: 11, pellets: 7, auto: false, spread: 7 * DEG, moveSpread: 4 * DEG, bloom: 3 * DEG, bloomMax: 10 * DEG, effRange: 3 * U, rangeSpread: 3 * DEG, mag: Infinity, reserve: 0, reload: 0, pierce: 0.2, speed: 850, gunLen: 16, heavy: true, burst: 1, pause: 1.3, range: 6 * U, snd: [0.22, 800] },
-  uziE:    { kind: 'smg', pickup: 'uziP', name: 'IMI Uzi', damage: 15, auto: true, spread: 5 * DEG, moveSpread: 4 * DEG, bloom: 2.2 * DEG, bloomMax: 12 * DEG, effRange: 4 * U, rangeSpread: 5 * DEG, mag: Infinity, reserve: 0, reload: 0, pierce: 0.35, speed: 880, gunLen: 13, heavy: false, burst: 6, pause: 1, range: 9 * U, snd: [0.08, 2300] },
+  sgE:     { kind: 'shotgun', pickup: 'm870', name: 'Remington 870 scié', damage: 11, pellets: 7, pattern: 3 * DEG, auto: false, spread: 4 * DEG, moveSpread: 4 * DEG, bloom: 3 * DEG, bloomMax: 10 * DEG, effRange: 3 * U, rangeSpread: 3 * DEG, mag: Infinity, reserve: 0, reload: 0, pierce: 0.2, mps: 330, gunLen: 16, heavy: true, burst: 1, pause: 1.3, range: 6 * U, snd: [0.22, 800] },
+  uziE:    { kind: 'smg', pickup: 'uziP', name: 'IMI Uzi', damage: 15, auto: true, spread: 5 * DEG, moveSpread: 4 * DEG, bloom: 2.2 * DEG, bloomMax: 12 * DEG, effRange: 4 * U, rangeSpread: 5 * DEG, mag: Infinity, reserve: 0, reload: 0, pierce: 0.35, gunLen: 13, heavy: false, burst: 6, pause: 1, range: 9 * U, snd: [0.08, 2300] },
   // ---- Armes de l'équipe d'intervention quand elle donne l'assaut (mode siège) : des tireurs entraînés, en rafales courtes ----
-  hk416op: { kind: 'rifle', pickup: 'hk416', name: 'HK416 A5', damage: 26, auto: true, spread: 1.2 * DEG, moveSpread: 3.5 * DEG, bloom: 1.6 * DEG, bloomMax: 8 * DEG, effRange: 9 * U, rangeSpread: 3 * DEG, mag: Infinity, reserve: 0, reload: 0, pierce: 0.55, speed: 1150, gunLen: 20, heavy: false, burst: 3, pause: 0.6, range: 15 * U, snd: [0.1, 2200] },
-  mp5op:   { kind: 'smg', pickup: 'mp5',   name: 'HK MP5A3', damage: 20, auto: true, spread: 1.4 * DEG, moveSpread: 2 * DEG,   bloom: 1.2 * DEG, bloomMax: 7 * DEG, effRange: 6 * U, rangeSpread: 4 * DEG, mag: Infinity, reserve: 0, reload: 0, pierce: 0.4,  speed: 900,  gunLen: 16, heavy: false, burst: 3, pause: 0.55, range: 11 * U, snd: [0.08, 2600] },
+  hk416op: { kind: 'rifle', pickup: 'hk416', name: 'HK416 A5', damage: 26, auto: true, spread: 1.2 * DEG, moveSpread: 3.5 * DEG, bloom: 1.6 * DEG, bloomMax: 8 * DEG, effRange: 9 * U, rangeSpread: 3 * DEG, mag: Infinity, reserve: 0, reload: 0, pierce: 0.55, gunLen: 20, heavy: false, burst: 3, pause: 0.6, range: 15 * U, snd: [0.1, 2200] },
+  mp5op:   { kind: 'smg', pickup: 'mp5',   name: 'HK MP5A3', damage: 20, auto: true, spread: 1.4 * DEG, moveSpread: 2 * DEG,   bloom: 1.2 * DEG, bloomMax: 7 * DEG, effRange: 6 * U, rangeSpread: 4 * DEG, mag: Infinity, reserve: 0, reload: 0, pierce: 0.4,   gunLen: 16, heavy: false, burst: 3, pause: 0.55, range: 11 * U, snd: [0.08, 2600] },
   // ---- Armes des trinômes autonomes du groupe armé (mode trinômes) : l'AKM et l'AK-74 du joueur, tenus par l'IA ----
-  akH:     { kind: 'ak', pickup: 'akP',   name: 'AKM',   damage: 29, auto: true, spread: 2 * DEG, moveSpread: 4.5 * DEG, bloom: 2 * DEG, bloomMax: 9 * DEG, effRange: 8.5 * U, rangeSpread: 3.5 * DEG, mag: Infinity, reserve: 0, reload: 0, pierce: 0.6,  speed: 950,  gunLen: 20, heavy: true,  burst: 4, pause: 0.8, range: 14 * U, snd: [0.12, 1700] },
-  ak74H:   { kind: 'ak', pickup: 'ak74P', name: 'AK-74', damage: 24, auto: true, tint: AK74_TINT, spread: 1.7 * DEG, moveSpread: 4 * DEG, bloom: 1.4 * DEG, bloomMax: 7.5 * DEG, effRange: 9.5 * U, rangeSpread: 3 * DEG, mag: Infinity, reserve: 0, reload: 0, pierce: 0.55, speed: 1100, gunLen: 20, heavy: false, burst: 4, pause: 0.75, range: 15 * U, snd: [0.1, 2000] },
+  akH:     { kind: 'ak', pickup: 'akP',   name: 'AKM',   damage: 29, auto: true, spread: 2 * DEG, moveSpread: 4.5 * DEG, bloom: 2 * DEG, bloomMax: 9 * DEG, effRange: 8.5 * U, rangeSpread: 3.5 * DEG, mag: Infinity, reserve: 0, reload: 0, pierce: 0.6,   gunLen: 20, heavy: true,  burst: 4, pause: 0.8, range: 14 * U, snd: [0.12, 1700] },
+  ak74H:   { kind: 'ak', pickup: 'ak74P', name: 'AK-74', damage: 24, auto: true, tint: AK74_TINT, spread: 1.7 * DEG, moveSpread: 4 * DEG, bloom: 1.4 * DEG, bloomMax: 7.5 * DEG, effRange: 9.5 * U, rangeSpread: 3 * DEG, mag: Infinity, reserve: 0, reload: 0, pierce: 0.55, gunLen: 20, heavy: false, burst: 4, pause: 0.75, range: 15 * U, snd: [0.1, 2000] },
   // ---- Armes des suspects (mode assaut) : des rafales longues, peu tenues ----
-  ak:      { kind: 'ak', pickup: 'akP',      name: 'AKM',        damage: 18, auto: true,  spread: 4.5 * DEG,   moveSpread: 4 * DEG, bloom: 2 * DEG, bloomMax: 12 * DEG, effRange: 6 * U, rangeSpread: 4 * DEG, mag: Infinity, reserve: 0, reload: 0, pierce: 0.6, speed: 950, gunLen: 20, heavy: false, burst: 5, pause: 0.9, range: 12 * U, snd: [0.12, 1700] },
-  ak74E:   { kind: 'ak', pickup: 'ak74P',    name: 'AK-74',      damage: 15, auto: true, tint: AK74_TINT, spread: 3.8 * DEG, moveSpread: 4 * DEG, bloom: 1.6 * DEG, bloomMax: 10 * DEG, effRange: 7 * U, rangeSpread: 3.5 * DEG, mag: Infinity, reserve: 0, reload: 0, pierce: 0.55, speed: 1100, gunLen: 20, heavy: false, burst: 6, pause: 0.9, range: 13 * U, snd: [0.1, 2000] },
+  ak:      { kind: 'ak', pickup: 'akP',      name: 'AKM',        damage: 18, auto: true,  spread: 4.5 * DEG,   moveSpread: 4 * DEG, bloom: 2 * DEG, bloomMax: 12 * DEG, effRange: 6 * U, rangeSpread: 4 * DEG, mag: Infinity, reserve: 0, reload: 0, pierce: 0.6, gunLen: 20, heavy: false, burst: 5, pause: 0.9, range: 12 * U, snd: [0.12, 1700] },
+  ak74E:   { kind: 'ak', pickup: 'ak74P',    name: 'AK-74',      damage: 15, auto: true, tint: AK74_TINT, spread: 3.8 * DEG, moveSpread: 4 * DEG, bloom: 1.6 * DEG, bloomMax: 10 * DEG, effRange: 7 * U, rangeSpread: 3.5 * DEG, mag: Infinity, reserve: 0, reload: 0, pierce: 0.55, gunLen: 20, heavy: false, burst: 6, pause: 0.9, range: 13 * U, snd: [0.1, 2000] },
   // semi-automatique : deux coups au rythme où il presse la détente (rof), pas à celui de la culasse
-  pistolE: { kind: 'pistol', pickup: 'makarovP',  name: 'Makarov PM', damage: 18, rof: 4, auto: true,  spread: 4 * DEG,   moveSpread: 3 * DEG, bloom: 1.5 * DEG, bloomMax: 9 * DEG, effRange: 4 * U, rangeSpread: 4 * DEG, mag: Infinity, reserve: 0, reload: 0, pierce: 0.3, speed: 900, gunLen: 10, heavy: false, burst: 2, pause: 0.8, range: 8 * U, snd: [0.07, 2400] },
+  pistolE: { kind: 'pistol', pickup: 'makarovP',  name: 'Makarov PM', damage: 18, rof: 4, auto: true,  spread: 4 * DEG,   moveSpread: 3 * DEG, bloom: 1.5 * DEG, bloomMax: 9 * DEG, effRange: 4 * U, rangeSpread: 4 * DEG, mag: Infinity, reserve: 0, reload: 0, pierce: 0.3, gunLen: 10, heavy: false, burst: 2, pause: 0.8, range: 8 * U, snd: [0.07, 2400] },
 };
 // Vitesse du joueur (multiplicateur) tirée de la charge de toutes les armes qu'il porte, en main ou à la bretelle,
 // accessoires compris (Player.weaponLoad) : chaque kilo coûte 3,5 % de vitesse. Réglée pour qu'un HK416 et un Glock
@@ -146,8 +151,8 @@ const WEAPONS = {
 // Le gilet et le bouclier ont leur propre multiplicateur (leur mobility).
 const MOBILITY_MAX = 1.04, MOBILITY_MIN = 0.8;
 const loadMobility = kg => clamp(1.09 - 0.035 * kg, MOBILITY_MIN, MOBILITY_MAX);
-// Cadence de jeu tirée de la cadence réelle (celle du modèle ramassé pour une arme de l'IA) ; portée du coup de feu
-// (en cases, en plein air) selon l'arme : les murs et les portes l'atténuent (voir Game.soundField).
+// Cadence de jeu et vitesse de la balle tirées des données réelles (celles du modèle ramassé pour une arme de l'IA) ;
+// portée du coup de feu (en cases, en plein air) selon l'arme : les murs et les portes l'atténuent (voir Game.soundField).
 // Rafales de l'IA qui porte une arme du joueur (les coéquipiers) : trois coups en automatique, une paire contrôlée en
 // semi-automatique, un coup au fusil à pompe ; puis le temps de ramener l'arme sur la cible, d'autant plus long que le
 // recul est fort (voir Game.endBurst). La pompe, elle, impose déjà son rythme (rof).
@@ -155,6 +160,8 @@ const BURST_PAUSE = { Auto: 0.25, Semi: 0.2, Pompe: 0.1 }, BURST_RECOIL = 0.035;
 for (const w of Object.values(WEAPONS)) {
   if (w.rpm && !w.rof) w.rof = w.rpm / 60;
   if (!w.rof && WEAPONS[w.pickup]) w.rof = WEAPONS[w.pickup].rpm / 60;
+  if (!w.mps && WEAPONS[w.pickup]) w.mps = WEAPONS[w.pickup].mps;
+  w.speed = w.mps * U;
   if (w.burst === undefined) {
     w.burst = w.mode === 'Auto' ? 3 : w.mode === 'Semi' ? 2 : 1;
     w.pause = (BURST_PAUSE[w.mode] || 0.2) + BURST_RECOIL * (w.recoil || 4);
@@ -167,7 +174,7 @@ for (const w of Object.values(WEAPONS)) {
 // et longueur (px) ajoutées. Il freine les gaz, pas la balle : sa vitesse ne bouge pas. Le 5,56, le 7,62 et
 // le 4,6 restent donc supersoniques, sans rien perdre, mais le claquement de la balle s'entend encore à quelques
 // cases. Pour qu'un 9 mm se taise, il faut une munition subsonique (subsonic: 'load', 147 gr à 300 m/s au lieu
-// de 124 gr à 360 m/s) : plus lente, elle frappe un peu moins fort et porte moins loin (SUBSONIC). Le .45 ACP
+// de 124 gr à 375 m/s) : plus lente, elle frappe un peu moins fort et porte moins loin (SUBSONIC). Le .45 ACP
 // est subsonique d'origine (subsonic: 'native') : il se tait sans rien perdre. Pas de silencieux sur un fusil à pompe.
 // Groupe armé, en trinômes seulement (SQUAD_KIT) : PBS-1 sur l'AKM et PBS-4 sur l'AK-74, chacun avec sa munition
 // subsonique (7,62 « US », 5,45 7U1) ; un manchon de 9 mm pour l'Uzi ; celui d'origine du Škorpion, dont le 7,65
@@ -184,8 +191,9 @@ const SUPPRESSORS = {
   uziP:      { noise: 2.5, weight: 0.4,  len: 6, subsonic: 'load' },
   skorpionP: { noise: 2,   weight: 0.25, len: 5, subsonic: 'native' },
 };
-// Munition subsonique : multiplicateurs des dégâts, de la portée efficace, de la portée et de la vitesse de la balle.
-const SUBSONIC = { damage: 0.9, effRange: 0.85, range: 0.9, speed: 0.85 };
+// Munition subsonique : multiplicateurs des dégâts, de la portée efficace et de la portée utile ; la balle, sous la
+// vitesse du son (343 m/s), part à mps m/s, quel que soit le calibre (9 mm de 147 gr, 7,62 « US », 5,45 7U1).
+const SUBSONIC = { damage: 0.9, effRange: 0.85, range: 0.9, mps: 300 };
 // Module laser (masse en kg) : il lui faut un rail, que n'ont ni l'Uzi, ni le Škorpion, ni le Makarov, ni le Tokarev,
 // et les AK seulement en trinômes (garde-main à rails, voir SQUAD_KIT). Le point montre où part la balle sans
 // épauler : la dispersion due au déplacement est multipliée par LASER_MOVE, et la gêne de la tenue d'une main
@@ -235,7 +243,7 @@ const SCOPES = {
   ak74P: { name: 'PSO-1 4×24', weight: 0.6, side: true },
 };
 // Effet de la lunette en service : délai pour poser l'œil après s'être arrêté (s), multiplicateur de la dispersion de
-// base, de la portée efficace et de la portée de la balle (reach), et de la vue dans l'axe de l'arme (sight, sur ±half).
+// base, de la portée efficace (reach), et de la vue dans l'axe de l'arme (sight, sur ±half).
 // Pour viser plus loin, la vue glisse vers le point visé, qui ne bouge pas : elle se centre à lead du chemin entre le
 // tireur et lui, sans s'écarter du tireur de plus de look de la demi-largeur (ou demi-hauteur) de l'écran
 // (voir Renderer.updateCamera).
@@ -270,7 +278,7 @@ function fittedDef(key, acc) {
     if (s.subsonic === 'load') {
       Object.assign(d, {
         damage: Math.round(w.damage * SUBSONIC.damage), effRange: w.effRange * SUBSONIC.effRange,
-        range: w.range * SUBSONIC.range, speed: w.speed * SUBSONIC.speed,
+        range: w.range * SUBSONIC.range, mps: Math.min(w.mps, SUBSONIC.mps), speed: Math.min(w.mps, SUBSONIC.mps) * U,
       });
     }
     d.tint.sup = s.len;
