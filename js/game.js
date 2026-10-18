@@ -104,6 +104,11 @@ const ALARM_TIME = 3, ALARM_REACT = 0.7;
 // Trinômes : un contact signalé par un équipier reste une destination SQUAD_CONTACT s ; un trinôme qui avance attend
 // celui des siens resté à plus de SQUAD_SPREAD derrière.
 const SQUAD_CONTACT = 20, SQUAD_SPREAD = 4 * U;
+// Agents autonomes : un secteur à ratisser compte comme vu dès qu'un homme passe à SWEEP_SEEN, la vue dégagée ; le
+// suivant est le plus proche à pied, de SWEEP_AHEAD plus volontiers devant que derrière. Un trinôme garde son contact
+// CONTACT_HOLD s : un bruit ne le remplace que s'il est plus proche, et jamais une vue fraîche. Arrivé sur un contact sans
+// rien y trouver, il fouille les alentours SQUAD_SEARCH s avant de reprendre le ratissage.
+const SWEEP_SEEN = 3 * U, SWEEP_AHEAD = 1.5 * U, CONTACT_HOLD = 4, SQUAD_SEARCH = 2;
 // Trinômes : deux entrées « à l'écart » l'une de l'autre ne se voient pas, ou sont à plus de SQUAD_APART (au-delà de la
 // vue d'un opérateur).
 const SQUAD_APART = 16 * U;
@@ -615,19 +620,20 @@ class Game {
     const ally = others.find(b => b !== foeA && b !== foeB && apart(b, foeA) && apart(b, foeB)) || b0;
     const taken = this.ops.map(o => ({ x: o.x, y: o.y }));
     this.mates.push(...this.spawnSquad(ally, 'ops', mine, taken).members);
-    const a = this.spawnSquad(foeA, 'enemy', theirs).members;
-    this.enemies = [...a, ...this.spawnSquad(foeB, 'enemy', theirs, foeB === foeA ? a : []).members];
+    const a = this.spawnSquad(foeA, 'enemy', theirs), b = this.spawnSquad(foeB, 'enemy', theirs, foeB === foeA ? a.members : []);
+    b.sectors = a.sectors; // les deux trinômes d'en face se partagent le bâtiment (voir pickSector)
+    this.enemies = [...a.members, ...b.members];
   }
 
   // Un trinôme autonome derrière l'ouverture b : trois opérateurs (flashs, une charge, colonnes) ou trois hommes du
-  // groupe armé (deux grenades à fragmentation chacun, et des accessoires sur leur arme), qui balaient leurs propres
-  // secteurs depuis leur entrée et partagent ce qu'ils apprennent (group.contact). Celui de votre camp porte un nom,
-  // comme vos coéquipiers.
+  // groupe armé (deux grenades à fragmentation chacun, et des accessoires sur leur arme), qui ratissent ensemble les
+  // secteurs de leur liste (group.sweepTo, voir sweepGoal) et partagent ce qu'ils apprennent (group.contact). Celui de
+  // votre camp porte un nom, comme vos coéquipiers.
   // opts.pts : leurs places, déjà choisies (une base de la guerre totale) ; opts.names : les noms de ceux de votre camp.
   spawnSquad(b, team, camp, taken, opts = {}) {
     const police = camp === 'police', pts = opts.pts || this.breachFile(b, 3, taken);
     const weps = dealWeapons(police ? OPERATOR_POOL : MILITANT_POOL, 3), kits = police ? null : dealWeapons(MILITANT_KITS, 3);
-    const group = { team, camp, breach: b, contact: null, members: [], sectors: this.buildSectors(null, b.inside) };
+    const group = { team, camp, breach: b, contact: null, search: null, sweepTo: null, members: [], sectors: this.buildSectors(null, b.inside) };
     pts.forEach((q, k) => {
       const a = police ? new Operator(q.x, q.y, b.angle, weps[k]) : new Enemy(q.x, q.y, b.angle, weps[k]);
       if (police) a.charges = k < WAVE_CHARGES ? 1 : 0;
@@ -1059,7 +1065,7 @@ class Game {
     const src = b.from, toward = Math.atan2(src.y - e.y, src.x - e.x);
     e.alertAngle = toward;
     e.suspicion = Math.min(2, (e.suspicion || 0) + LASER_ALARM);
-    if (e.hunter) { this.know(e, src.x, src.y); return; }
+    if (e.hunter) { this.know(e, src.x, src.y, src); return; }
     if (e.state !== 'investigate') e.homeAngle = toward;
     if (e.suspicion >= SUSPICION_GO && e.state !== 'investigate') this.investigate(e, src.x, src.y, 0.6);
   }
@@ -2645,7 +2651,7 @@ class Game {
       const ally = !!source && source.team === m.team;
       if (m.hunter) {
         const I = level(m);
-        if (I > 0 && !(ally && !ALLY_ALARM.has(kind))) this.hearNoise(m, x, y, I, K, ally);
+        if (I > 0 && !(ally && !ALLY_ALARM.has(kind))) this.hearNoise(m, x, y, I, K, ally, source);
         continue;
       }
       if (ally) continue;
@@ -2659,7 +2665,7 @@ class Game {
       if (I <= 0) continue;
       const ally = !!source && source.team === e.team;
       if (ally && !ALLY_ALARM.has(kind)) continue;
-      if (this.hearNoise(e, x, y, I, K, ally)) goers.push({ e, I });
+      if (this.hearNoise(e, x, y, I, K, ally, source)) goers.push({ e, I });
     }
     if (goers.length) {
       // au plus RESPONDERS à la fois sur un même bruit : les plus proches à l'oreille d'abord
@@ -2730,7 +2736,7 @@ class Game {
 
   // Un suspect (ou un opérateur) entend un bruit d'intensité I : il s'inquiète, se tourne vers lui, et
   // dit s'il voudrait aller voir (noise choisit ensuite qui y va vraiment).
-  hearNoise(e, x, y, I, K, ally) {
+  hearNoise(e, x, y, I, K, ally, source) {
     const s = I * K.w;
     // une rafale compte moins que des bruits distincts : c'est la répétition qui inquiète
     const gain = this.time - e.heardT < 0.4 ? 0.35 : 1;
@@ -2739,9 +2745,16 @@ class Game {
     if (s < HEAR_TURN) return false;
     const toward = Math.atan2(y - e.y, x - e.x);
     if (e.hunter) {
+      if (ally) {
+        // les siens qui tirent tout près, d'un autre trinôme : on vient en renfort sur ce qu'ils ont trouvé (on ne se
+        // retourne pas vers eux : ce n'est pas là qu'est l'adversaire)
+        const c = source && source.group && source.group !== e.group && source.group.contact;
+        if (K === NOISE_KINDS.shot && s >= HEAR_GO && c && this.time - c.t < CONTACT_HOLD) this.know(e, c.x, c.y);
+        return false;
+      }
       // l'intervention (ou un trinôme) converge sur ce qu'elle entend du camp d'en face (un impact ou une grenade
       // qui rebondit ne disent pas où est le tireur)
-      if (!ally && K !== NOISE_KINDS.impact && K !== NOISE_KINDS.bounce && (K.important || s >= HEAR_GO)) this.know(e, x, y);
+      if (K !== NOISE_KINDS.impact && K !== NOISE_KINDS.bounce && (K.important || s >= HEAR_GO)) this.know(e, x, y);
       if (e.noiseT <= 0) { e.noiseT = 1; e.alertAngle = toward; }
       return false;
     }
@@ -2986,15 +2999,28 @@ class Game {
   teamOf(a) { return a.team === 'ops' ? this.ops : this.enemies; }
   foesOf(a) { return a.team === 'ops' ? this.enemies : this.vip ? [...this.ops, this.vip] : this.ops; }
 
-  // Un agent autonome apprend où est l'adversaire (vu, entendu, son laser) : son trinôme le sait aussitôt.
-  know(e, x, y) {
+  // Un agent autonome apprend où est l'adversaire (seen : celui qu'il voit, lui ou son laser ; rien s'il l'entend) :
+  // son trinôme le sait aussitôt, à moins de tenir mieux depuis moins de CONTACT_HOLD s. Ce qu'on voit passe avant ce
+  // qu'on entend ; un second adversaire en vue ne remplace pas le premier tant qu'on voit encore celui-ci ; un bruit
+  // ailleurs ne remplace un bruit que s'il est plus proche. Sans quoi chaque coup de feu de la bataille ferait changer
+  // le trinôme de cap.
+  know(e, x, y, seen) {
     e.lastKnown = { x, y };
-    if (e.group) e.group.contact = { x, y, t: this.time };
+    const g = e.group;
+    if (!g) return;
+    const c = g.contact, age = c ? this.time - c.t : Infinity;
+    if (age < CONTACT_HOLD) {
+      if (c.seen && !seen) return;
+      if (seen ? c.foe && c.foe !== seen && age < 0.5
+        : dist(c.x, c.y, x, y) > 2 * U && dist(e.x, e.y, x, y) > dist(e.x, e.y, c.x, c.y) - U) return;
+    }
+    g.contact = { x, y, t: this.time, seen: !!seen, foe: seen || null };
   }
 
   // Progression d'un agent autonome : l'équipe d'intervention du siège, ou un trinôme (d'un camp comme de l'autre).
-  // Il avance vers le dernier contact (le sien, ou celui que son trinôme a signalé), sinon vers le prochain secteur
-  // à nettoyer, et s'arrête pour tirer dès qu'il voit. Un trinôme reste groupé (waitsForGroup).
+  // Seul, il avance vers le dernier contact, sinon vers le prochain secteur à nettoyer ; en trinôme, tous vont où va le
+  // trinôme (son contact, la fouille qui suit, le secteur choisi pour tous). Il s'arrête pour tirer dès qu'il voit. Un
+  // trinôme reste groupé (waitsForGroup).
   updateAssault(e, dt) {
     if (!e.alive) return;
     e.noiseT -= dt;
@@ -3003,13 +3029,14 @@ class Game {
     this.enemyCombat(e, dt);
     if (e.stun > 0) return;
     if (!e.target) this.spotLaser(e, dt);
+    this.markSwept(e, dt);
     e.repathT -= dt;
     const h = e.escorting;
     if (h && (!h.alive || h.evacuated || h.escort !== e)) { e.escorting = null; e.exit = null; }
     // en colonne sur une porte : il tient son poste (voir updateAiStack)
     if (e.entry) { this.stackStep(e, dt); return; }
     if (e.target) {
-      this.know(e, e.target.x, e.target.y);
+      this.know(e, e.target.x, e.target.y, e.target);
       if (e.blockedLine) {
         // otage dans l'axe : on cherche un angle dégagé plutôt que de tirer à travers
         const spot = this.firingSpot(e, e.target);
@@ -3033,21 +3060,27 @@ class Game {
     const g = e.group;
     let goal = e.lastKnown;
     if (goal && dist(e.x, e.y, goal.x, goal.y) < 1.2 * U) { e.lastKnown = null; goal = null; }
-    // le contact signalé par le trinôme : on y va ensemble, et on l'oublie une fois sur place (ou trop ancien)
-    if (!goal && g && g.contact) {
-      if (this.time - g.contact.t > SQUAD_CONTACT || dist(e.x, e.y, g.contact.x, g.contact.y) < 1.2 * U) g.contact = null;
-      else goal = g.contact;
+    if (g) {
+      // en trinôme, ce que l'un sait, tous le savent (voir know) : on va ensemble au contact, on fouille là où il
+      // n'a rien donné, et seulement ensuite on reprend le ratissage
+      if (this.searchStep(g, e, dt)) return;
+      goal = this.contactGoal(g, e) || g.search;
     }
     if (!goal) goal = this.assaultGoal(e);
     if (!goal) { this.moveAlong(e, dt); return; }
-    if (!e.path.length || e.repathT <= 0) {
+    // un nouveau but : on y part aussitôt, sans finir le chemin de l'ancien (path.to : le but de ce chemin-ci ; un
+    // chemin tracé ailleurs, vers une cible ou un poste, n'en a pas)
+    const to = e.path.to;
+    if (!e.path.length || e.repathT <= 0 || !to || dist(to.x, to.y, goal.x, goal.y) > 1.5 * U) {
       e.path = this.pathTo(e, goal.x, goal.y);
+      e.path.to = { x: goal.x, y: goal.y };
       e.repathT = 1.2;
       // point injoignable (au ras d'un mur, derrière un meuble) : on l'oublie et on reprend le ratissage (un secteur
       // injoignable compte comme fait)
       if (!e.path.length && dist(e.x, e.y, goal.x, goal.y) > 1.2 * U) {
         if (goal === e.lastKnown) e.lastKnown = null;
         if (g && goal === g.contact) g.contact = null;
+        if (g && goal === g.search) g.search = null;
         if (goal.done === false) goal.done = true;
       }
     }
@@ -3377,10 +3410,8 @@ class Game {
     return true;
   }
 
-  // Prochain secteur à nettoyer ; quand tout est passé, on recommence le tour (en guerre totale, dans l'autre sens :
-  // on remonte son couloir).
+  // Les otages repérés que personne n'emmène encore (c'est leur mission), sinon le prochain secteur à ratisser.
   assaultGoal(e) {
-    // priorité aux otages repérés que personne n'emmène encore : c'est leur mission
     let best = null, bd = Infinity;
     for (const h of this.hostages) {
       if (!h.alive || h.evacuated || h.escort || h.exiting || !h.found) continue;
@@ -3388,20 +3419,103 @@ class Game {
       if (d < bd) { bd = d; best = h; }
     }
     if (best) return { x: best.x, y: best.y };
-    // chaque trinôme a ses secteurs, du plus proche de son entrée au plus lointain ; l'intervention du siège les partage
-    const secs = (e.group && e.group.sectors) || (this.siege && this.siege.sectors) || [];
-    let all = true;
-    for (const g of secs) {
-      if (g.done) continue;
-      all = false;
-      if (dist(e.x, e.y, g.x, g.y) < 1.4 * U) { g.done = true; continue; }
-      return g;
-    }
-    if (all) {
-      for (const g of secs) g.done = false;
-      if (e.group && e.group.pingpong) secs.reverse();
-    }
+    return this.sweepGoal(e);
+  }
+
+  // Le contact du trinôme, tant qu'il vaut quelque chose : le premier arrivé dessus sans rien voir le lève, et le
+  // trinôme fouille les alentours (searchStep).
+  contactGoal(g, e) {
+    const c = g.contact;
+    if (!c) return null;
+    if (this.time - c.t > SQUAD_CONTACT) { g.contact = null; return null; }
+    if (dist(e.x, e.y, c.x, c.y) >= 1.2 * U) return c;
+    g.contact = null;
+    for (const o of g.members) if (o.lastKnown && dist(o.lastKnown.x, o.lastKnown.y, c.x, c.y) < 2 * U) o.lastKnown = null;
+    g.search = { x: c.x, y: c.y, dir: e.angle, until: this.time + SQUAD_SEARCH };
     return null;
+  }
+
+  // Fouille : le trinôme s'arrête SQUAD_SEARCH s là où le contact n'a rien donné, chacun regardant de son côté (celui
+  // qui traîne à plus de 2,5 cases rejoint d'abord). Un nouveau contact l'interrompt. true : il fouille sur place.
+  searchStep(g, e, dt) {
+    const s = g.search;
+    if (!s) return false;
+    if (this.time >= s.until || g.contact) { g.search = null; return false; }
+    if (dist(e.x, e.y, s.x, s.y) > 2.5 * U) return false;
+    e.path = []; e.moving = false;
+    const k = g.members.indexOf(e);
+    if (e.alertAngle === null) turnToward(e, s.dir + (k - 1) * 2.1 + Math.sin(this.time * 1.5 + k) * 0.6, e.turnRate * 0.4, dt);
+    return true;
+  }
+
+  // Les secteurs à ratisser d'un agent autonome : ceux de son trinôme, ou ceux que se partage l'intervention du siège.
+  sectorsOf(e) { return (e.group && e.group.sectors) || (this.siege && this.siege.sectors) || []; }
+
+  // Quatre fois par seconde, les secteurs que l'agent a sous les yeux (à moins de SWEEP_SEEN, la vue dégagée) ou qu'il
+  // touche presque sont ratissés : on ne va pas toucher chaque recoin d'une pièce qu'on voit déjà.
+  markSwept(e, dt) {
+    if ((e.sectorT = (e.sectorT || 0) - dt) > 0) return;
+    e.sectorT = 0.25;
+    for (const s of this.sectorsOf(e)) {
+      if (s.done) continue;
+      const d = dist(e.x, e.y, s.x, s.y);
+      if (d < 1.4 * U || (d < SWEEP_SEEN && this.map.hasLOS(e.x, e.y, s.x, s.y))) s.done = true;
+    }
+  }
+
+  // Le secteur à ratisser, choisi pour tout le trinôme (pour l'agent seul, au siège) et gardé jusqu'à ce qu'il soit vu :
+  // tous les hommes vont au même endroit, et l'on ne change pas d'avis en route.
+  sweepGoal(e) {
+    const own = e.group || e, secs = this.sectorsOf(e);
+    if (own.sweepTo && !own.sweepTo.done && secs.includes(own.sweepTo)) return own.sweepTo;
+    if (!secs.length || this.time < (own.pickAt || 0)) return null;
+    own.sweepTo = this.pickSector(own, e, secs);
+    if (!own.sweepTo) own.pickAt = this.time + 1; // rien de joignable : on ne recalcule pas à chaque image
+    return own.sweepTo;
+  }
+
+  // Le secteur suivant, vu de l'homme le plus au centre du trinôme : le plus proche à pied (walkField), de SWEEP_AHEAD
+  // plus volontiers dans le sens de la marche ; quand d'autres de son camp ratissent la même liste (l'autre trinôme
+  // d'en face, ou vous avec le vôtre), parmi ceux qui sont plus près de lui que d'eux. Un couloir de la guerre totale se
+  // parcourt dans l'ordre : on le rejoint au plus près et l'on continue vers l'avant, puis, au bout, dans l'autre sens.
+  // Tout ratissé, on recommence.
+  pickSector(own, e, secs) {
+    const m = this.map, at = this.anchorOf(own, e);
+    if (!secs.some(s => !s.done)) {
+      for (const s of secs) s.done = false;
+      if (own.pingpong) secs.reverse();
+    }
+    const f = m.walkField(at.x, at.y), cell = s => Math.floor(s.y / TILE) * m.w + Math.floor(s.x / TILE);
+    if (own.pingpong) {
+      let k = 0;
+      secs.forEach((s, i) => { if (dist(s.x, s.y, at.x, at.y) < dist(secs[k].x, secs[k].y, at.x, at.y)) k = i; });
+      secs.forEach((s, i) => { if (i < k || f[cell(s)] === Infinity) s.done = true; });
+      return secs.find(s => !s.done) || null;
+    }
+    const others = (this.squads ? this.squads.groups : []).filter(o => o !== own && o.sectors === secs).map(o => this.anchorOf(o)).filter(Boolean);
+    if (this.squads && !this.war && own.team === 'ops' && this.player.alive) others.push(this.player);
+    const fo = others.map(o => m.walkField(o.x, o.y));
+    let best = null, bs = Infinity, any = null, as = Infinity;
+    for (const s of secs) {
+      if (s.done) continue;
+      const i = cell(s), d = f[i];
+      if (d === Infinity) { s.done = true; continue; } // injoignable
+      const sc = own.sectorDir === undefined ? d : d - SWEEP_AHEAD * Math.cos(angleDiff(Math.atan2(s.y - at.y, s.x - at.x), own.sectorDir));
+      if (sc < as) { as = sc; any = s; }
+      if (fo.some(o => o[i] + U < d)) continue; // plus près d'un autre des siens : à lui
+      if (sc < bs) { bs = sc; best = s; }
+    }
+    const pick = best || any;
+    if (pick) own.sectorDir = Math.atan2(pick.y - at.y, pick.x - at.x);
+    return pick;
+  }
+
+  // Où se tient un trinôme : celui de ses hommes debout le plus près de leur centre (l'agent lui-même, hors trinôme).
+  anchorOf(own, e) {
+    const ms = own.members ? own.members.filter(o => o.alive && o.group === own) : [e];
+    if (!ms.length) return null;
+    const cx = ms.reduce((s, o) => s + o.x, 0) / ms.length, cy = ms.reduce((s, o) => s + o.y, 0) / ms.length;
+    return ms.reduce((b, o) => (dist(o.x, o.y, cx, cy) < dist(b.x, b.y, cx, cy) ? o : b));
   }
 
   updateEnemy(e, dt) {

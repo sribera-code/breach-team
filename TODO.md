@@ -5,6 +5,11 @@ de chaque section.
 
 ## Mode siège
 
+- **L'intervention ratisse mieux depuis le 18 octobre** : le secteur suivant est le plus proche à pied et une pièce vue
+  compte comme fouillée. En parties simulées de 100 s où les défenseurs restent immobiles et ne tirent pas, elle
+  évacue tous les otages sur les dix cartes, ce qu'elle ne faisait pas toujours avant, et fait 8 demi-tours par minute
+  au lieu de 11. Le siège est donc plus dur à tenir : l'équilibre (préparation, vagues) est à reprendre en jeu.
+
 - **Équilibrage à faire.** Tout est en dur dans `SIEGE_WAVES` et `Game.startSiege` (10 s de préparation,
   3 vagues de 3 opérateurs contre 9 défenseurs, 6 s de répit après une vague éliminée, 30 s au plus entre deux
   vagues) et dans les armes `hk416op` / `mp5op`. Aucune de ces valeurs
@@ -38,10 +43,18 @@ de chaque section.
   réaction, champ de vision, grenades), les armes `akH` / `ak74H`, `MILITANT_KITS`, `WAVE_CHARGES`, `AI_STACK_*`.
 - **Les lots d'accessoires de l'IA sont tirés au hasard, pas choisis** : un homme ne monte pas un silencieux parce
   qu'il veut surprendre, ni ne coupe son laser pour se cacher. Les lasers de l'IA restent allumés en permanence.
-- **Les trinômes autonomes ne se répartissent pas le bâtiment** : chacun balaie ses secteurs depuis son entrée, sans
-  savoir ce que l'autre trinôme de son camp a déjà nettoyé, et un contact n'est partagé qu'au sein d'un trinôme.
+- **Ratissage et contacts réglés à l'estime** (`SWEEP_SEEN`, `SWEEP_AHEAD`, `CONTACT_HOLD`, `SQUAD_SEARCH` en tête de
+  `js/game.js`). En parties simulées de deux minutes (le joueur immobile et hors jeu), un homme d'un trinôme autonome fait
+  4 à 5 demi-tours par minute au lieu de 18, et les deux camps se rencontrent vers la septième seconde au lieu de la
+  trentième. Les demi-tours restants viennent presque tous du ratissage : on entre dans une pièce sans issue, on en
+  ressort. Rien n'a été joué à la main.
+- **Les deux trinômes d'en face se partagent le ratissage, pas leurs contacts** : l'un ne vient au secours de l'autre
+  que s'il entend ses coups de feu de près (`HEAR_GO`). Le second trinôme de votre camp vous laisse votre part du
+  bâtiment, mais ne sait pas ce que vous avez vu, et ne vous suit pas.
 - **Le groupe armé ne se met jamais en colonne** et n'entre pas à la grenade : il franchit les portes comme il vient.
 - **Pas de réapparition ni de manches** : une seule manche, à l'élimination.
+- **Les trinômes ne se replient pas** : blessé ou en infériorité, un trinôme continue d'avancer ; personne ne tient un
+  angle en attendant l'adversaire, ni ne couvre l'arrière quand le trinôme marche.
 
 ## Guerre totale
 
@@ -209,6 +222,16 @@ de chaque section.
 
 ## Fait depuis la dernière version
 
+IA des agents autonomes (trinômes, guerre totale, intervention du siège) : le secteur suivant est le plus proche à
+pied, choisi pour tout le trinôme et gardé jusqu'à ce qu'on l'ait vu, au lieu du premier de la liste à vol d'oiseau
+de l'entrée, qui faisait zigzaguer d'un bord à l'autre ; une pièce qu'on a sous les yeux compte comme ratissée ; les deux
+trinômes d'en face se partagent le bâtiment ; un contact se garde (une vue avant un bruit, le plus proche d'abord), on
+fouille là où il n'a rien donné, et l'on vient en renfort des siens qui se battent tout près · armes : vitesse réelle
+des balles (de 260 à 900 m/s), qui volent jusqu'au premier obstacle et laissent une trace fugace ; gerbe de chevrotine
+serrée autour du point visé ; munition subsonique à 300 m/s ; la fiche du briefing affiche la vitesse de la balle.
+
+Version précédente :
+
 Mode guerre totale : deux armées de trois trinômes, cinq minutes de combat sur des champs de bataille en plein air
 (Village, Port, Usine), un trinôme anéanti revient de sa base six secondes plus tard, le vôtre compris ; l'armée qui
 abat le plus d'adversaires l'emporte (égalité possible) · chaque mode a ses cartes : le Musée pour l'assaut, la Mairie
@@ -219,7 +242,7 @@ grenades de l'intervention se choisit au briefing (trois flashs, mixte deux flas
 fragmentations ; `N` change de grenade en main) · l'IA n'ouvre plus le feu au-delà de neuf cases, et l'écran montre au
 moins sept cases en hauteur, la vue décalée vers le curseur : plus de tir venu du hors-champ.
 
-Version précédente :
+Avant encore :
 
 Deux cartes en plein air, plus grandes (Maison de maître, Corps de ferme) : herbe, gravier, terrasse, haies, arbres,
 bassin, entrées du terrain au bord de la carte · mode trinômes : deux trinômes contre deux, l'intervention contre le groupe armé, dans le camp de son choix ; votre

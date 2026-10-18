@@ -486,6 +486,36 @@ class GameMap {
     return null;
   }
 
+  // Distances à pied (px) depuis (x, y) jusqu'à chaque case fine (Infinity : hors d'atteinte). Mêmes règles que
+  // findPath : 8 directions sans couper les coins, une porte se franchit droit et coûte un peu plus, même fermée
+  // (on l'ouvre en passant).
+  walkField(x, y) {
+    const w = this.w, N = w * this.h, d = new Float32Array(N).fill(Infinity), closed = new Uint8Array(N);
+    const sx = Math.floor(x / TILE), sy = Math.floor(y / TILE);
+    if (!this.inBounds(sx, sy)) return d;
+    const open = new MinHeap(), start = sy * w + sx;
+    d[start] = 0;
+    open.push(0, start);
+    while (open.size) {
+      const ck = open.pop();
+      if (closed[ck]) continue;
+      closed[ck] = 1;
+      const cx = ck % w, cy = (ck / w) | 0, curDoor = this.doorAt.has(ck);
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        if (!dx && !dy) continue;
+        const nx = cx + dx, ny = cy + dy;
+        if (!this.inBounds(nx, ny) || this.blocksMove(nx, ny)) continue;
+        const nk = ny * w + nx;
+        if (closed[nk]) continue;
+        const diag = dx !== 0 && dy !== 0, door = this.doorAt.has(nk);
+        if (diag && (this.blocksMove(cx + dx, cy) || this.blocksMove(cx, cy + dy) || curDoor || door)) continue;
+        const nd = d[ck] + TILE * ((diag ? 1.414 : 1) + (door ? 1 : 0));
+        if (nd < d[nk]) { d[nk] = nd; open.push(nd, nk); }
+      }
+    }
+    return d;
+  }
+
   segmentFree(ax, ay, bx, by, r) {
     const allowed = new Set([
       Math.floor(ay / TILE) * this.w + Math.floor(ax / TILE),

@@ -3435,6 +3435,116 @@ test('trinômes : le second trinôme de votre camp tire sur l’adversaire et pa
   ok(grp.contact && b.group === grp, 'un coup de feu d’en face entendu : le trinôme sait d’où');
 });
 
+test('trinômes : un trinôme autonome ratisse le bâtiment au plus près, sans changer d’avis en route', () => {
+  for (let lvl = 0; lvl < SQUAD_LEVELS.length; lvl++) {
+    const g = mkGame({ mode: 'squads', level: lvl });
+    const game = g.game, tag = SQUAD_LEVELS[lvl].name;
+    game.enemies = [];
+    const grp = game.mates.find(m => m.hunter).group, secs = grp.sectors, seen = new Set();
+    let prev = null, fickle = 0;
+    for (let i = 0; i < 60 * 60; i++) {
+      game.update(1 / 60);
+      for (const s of secs) if (s.done) seen.add(s);
+      // un secteur choisi n'est quitté qu'une fois vu (ou la liste reprise à zéro, tout étant vu)
+      if (prev && grp.sweepTo !== prev && !prev.done && seen.size < secs.length) fickle++;
+      prev = grp.sweepTo;
+    }
+    eq(fickle, 0, tag + ' : jamais de changement d’avis en route');
+    ok(seen.size >= secs.length * 0.6, tag + ' : en une minute, ' + seen.size + ' secteurs vus sur ' + secs.length);
+  }
+});
+
+test('trinômes : les deux trinômes d’en face se partagent le bâtiment', () => {
+  const g = mkGame({ mode: 'squads' });
+  const game = g.game, map = game.map;
+  game.mates.filter(m => m.hunter).forEach(m => { m.alive = false; });
+  game.enemies.forEach(e => { e.viewRange = 0; }); // personne ne les dérange : ils ratissent
+  const [a, b] = [...new Set(game.enemies.map(e => e.group))];
+  ok(a.sectors === b.sectors, 'une seule liste pour les deux');
+  const cell = s => Math.floor(s.y / TILE) * map.w + Math.floor(s.x / TILE), picks = [];
+  const pick = game.pickSector.bind(game);
+  game.pickSector = (own, e, secs) => {
+    const other = own === a ? b : a, at = game.anchorOf(own, e), ot = game.anchorOf(other), s = pick(own, e, secs);
+    if (s && ot) picks.push({ mine: map.walkField(at.x, at.y)[cell(s)], theirs: map.walkField(ot.x, ot.y)[cell(s)] });
+    return s;
+  };
+  let apart = 0, both = 0;
+  for (let i = 0; i < 60 * 20; i++) {
+    game.update(1 / 60);
+    if (a.sweepTo && b.sweepTo) { both++; if (a.sweepTo !== b.sweepTo) apart++; }
+  }
+  ok(picks.length >= 6, picks.length + ' secteurs choisis');
+  const theirs = picks.filter(q => q.mine > q.theirs + U).length;
+  ok(theirs <= picks.length * 0.25, 'chacun prend ce qui est plus près de lui que de l’autre (' + theirs + ' exceptions sur ' + picks.length + ')');
+  eq(apart, both, 'jamais le même secteur pour les deux');
+});
+
+test('trinômes : un contact se garde — une vue avant un bruit, le plus proche d’abord', () => {
+  const g = mkGame({ mode: 'squads' });
+  const game = g.game;
+  const [a, b] = game.mates.filter(m => m.hunter), grp = a.group, [foe, foe2] = game.enemies;
+  grp.contact = null;
+  game.know(a, a.x + 6 * U, a.y);
+  ok(grp.contact && !grp.contact.seen, 'un bruit entendu devient le contact');
+  game.know(a, a.x - 12 * U, a.y);
+  near(grp.contact.x, a.x + 6 * U, 0.01, 'un bruit plus lointain ailleurs ne détourne pas le trinôme');
+  game.know(a, a.x + 3 * U, a.y + U);
+  near(grp.contact.x, a.x + 3 * U, 0.01, 'un bruit nettement plus proche, si');
+  game.know(b, foe.x, foe.y, foe);
+  ok(grp.contact.seen && grp.contact.foe === foe, 'ce qu’on voit remplace ce qu’on entend');
+  game.know(a, a.x + U, a.y);
+  eq(grp.contact.foe, foe, 'et passe avant, même un bruit tout proche');
+  game.know(b, foe2.x, foe2.y, foe2);
+  eq(grp.contact.foe, foe, 'un second adversaire en vue ne prend pas la place du premier, qu’on voit encore');
+  game.time += 0.6;
+  game.know(b, foe2.x, foe2.y, foe2);
+  eq(grp.contact.foe, foe2, 'le premier perdu de vue, le second devient le contact');
+  game.time += CONTACT_HOLD + 0.1;
+  game.know(a, a.x - 12 * U, a.y);
+  near(grp.contact.x, a.x - 12 * U, 0.01, 'un contact trop vieux cède au premier bruit venu');
+});
+
+test('trinômes : arrivé sur un contact vide, le trinôme fouille les alentours, puis reprend le ratissage', () => {
+  const g = mkGame({ mode: 'squads' });
+  const game = g.game;
+  game.enemies = [];
+  const auto = game.mates.filter(m => m.hunter), grp = auto[0].group;
+  const spot = freeSpotsAround(game, auto[0], 24).filter(q => dist(q.x, q.y, auto[0].x, auto[0].y) > 2 * U).pop();
+  ok(spot, 'un point à quelques pas');
+  grp.contact = { x: spot.x, y: spot.y, t: game.time, seen: false, foe: null };
+  for (let i = 0; i < 60 * 8 && !grp.search; i++) game.update(1 / 60);
+  ok(grp.search, 'arrivé sur place sans rien voir, il fouille');
+  eq(grp.contact, null, 'le contact est levé');
+  for (let i = 0; i < 60; i++) game.update(1 / 60);
+  const here = auto.filter(m => m.alive && dist(m.x, m.y, grp.search.x, grp.search.y) <= 2.5 * U);
+  game.update(1 / 60);
+  ok(here.length && here.every(m => !m.moving), 'ceux qui sont arrivés restent sur place');
+  if (here.length > 1) ok(here.some(m => here.some(o => Math.abs(angleDiff(m.angle, o.angle)) > 45 * DEG)), 'chacun regarde de son côté');
+  for (let i = 0; i < (SQUAD_SEARCH + 0.5) * 60; i++) game.update(1 / 60);
+  eq(grp.search, null, 'la fouille finie');
+  for (let i = 0; i < 60; i++) game.update(1 / 60);
+  ok(grp.sweepTo && auto.some(m => m.moving), 'il reprend le ratissage');
+});
+
+test('trinômes : un trinôme qui entend les siens se battre tout près vient en renfort', () => {
+  const g = mkGame({ mode: 'squads' });
+  const game = g.game;
+  const [a, b] = [...new Set(game.enemies.map(e => e.group))];
+  const shooter = a.members[0], listener = b.members[0];
+  const s = spotAt(game, listener, 6 * U);
+  ok(s, 'une place à six cases de lui, en vue');
+  Object.assign(shooter, { x: s.x, y: s.y });
+  const fight = { x: s.x + 3 * U, y: s.y, t: game.time, seen: true, foe: game.player };
+  a.contact = fight; b.contact = null;
+  // portée à peine plus grande que la distance au plus proche d'entre eux : on l'entend, mais faiblement (sous HEAR_GO)
+  const nearest = Math.min(...b.members.map(m => dist(m.x, m.y, s.x, s.y)));
+  game.noise(shooter.x, shooter.y, 1.15 * nearest, shooter, 'shot');
+  eq(b.contact, null, 'à peine audible, rien');
+  game.noise(shooter.x, shooter.y, 16 * U, shooter, 'shot');
+  ok(b.contact && b.contact.x === fight.x && b.contact.y === fight.y, 'tout près : il prend le contact de l’autre trinôme');
+  ok(listener.alertAngle === null, 'sans se retourner vers les siens');
+});
+
 test('trinômes : en face aussi, une balle touche qui se trouve sur sa trajectoire, ami ou ennemi', () => {
   const shoot = mode => {
     const g = mkGame({ mode });

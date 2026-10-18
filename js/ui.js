@@ -909,8 +909,9 @@ class UI {
       contre deux, l'intervention contre le groupe armé ; au briefing, vous
       choisissez votre camp et votre ouverture. Vous menez votre trinôme (vous et deux coéquipiers, avec les ordres
       habituels) ; le second trinôme de votre camp entre par l'ouverture la plus proche et progresse seul, et les deux
-      d'en face entrent par les plus éloignées. Chaque trinôme autonome balaie le bâtiment depuis son entrée, converge sur
-      ce qu'il entend, partage ses contacts et reste groupé ; ceux de l'intervention se mettent de temps en temps en
+      d'en face entrent par les plus éloignées. Chaque trinôme autonome ratisse le bâtiment pièce par pièce (les deux d'en face
+      se le partagent), converge sur ce qu'il voit ou entend en gardant le cap sur le plus proche, fouille là où il n'a
+      rien trouvé, partage ses contacts et reste groupé ; ceux de l'intervention se mettent de temps en temps en
       colonne sur une porte et entrent porte ouverte, à la flash ou à la charge, ceux du groupe armé lancent leur grenade
       à fragmentation là où ils vous savent. Ni otage ni sommation. Si vous tombez, vous reprenez la main dans un
       coéquipier, puis, quand votre trinôme n'est plus, dans un homme de l'autre. Le premier camp entièrement hors de
