@@ -5,6 +5,8 @@
 const CARD_SCALE = 0.62;
 // Marge autour du plan du briefing, en petites cases.
 const PLAN_PAD = 3;
+// Siège : durée de l'annonce d'une vague au centre de l'écran, en secondes.
+const WAVE_BANNER = 3;
 // Petites icônes vectorielles, dessinées par le code comme tout le reste : accessoires et gilets (repère 24 × 16).
 // Elles prennent la couleur du texte (classes f : forme pleine, t : trait) ; le laser et la lampe gardent leur rayon.
 const ICONS = {
@@ -29,20 +31,34 @@ class UI {
     this.$ = id => document.getElementById(id);
     this.overlay = this.$('overlay');
     this.panel = this.$('overlayPanel');
-    game.on('level', () => { this.hideOverlay(); this.$('levelName').textContent = `${MODES[game.mode].name} — ${game.def.name}`; this.update(); });
+    game.on('level', () => {
+      this.hideOverlay();
+      this.$('levelName').textContent = `${MODES[game.mode].name} — ${game.def.name}`;
+      // stratégie : le HUD de l'opérateur cède la place à celui de l'armée
+      const hud = this.$('hud');
+      if (hud) hud.classList.toggle('strategy', !!game.strat);
+      this._strat = null;
+      this.update();
+    });
     game.on('over', r => setTimeout(() => this.showEnd(r), 900));
     game.on('pause', () => { if (game.paused) this.showPause(); else this.hideOverlay(); });
   }
 
   update() {
     const g = this.game, p = g.player;
-    // guerre totale : le temps qui reste, pas celui qui passe
-    this.$('timer').textContent = fmtTime(g.war ? Math.max(0, WAR_TIME - g.time) : g.time);
+    // guerre totale : le temps qui reste, pas celui qui passe (la stratégie d'assaut n'a pas de limite de temps)
+    this.$('timer').textContent = fmtTime(g.war && !g.war.defense ? Math.max(0, WAR_TIME - g.time) : g.time);
     const alive = g.enemies.filter(e => e.alive).length;
     const held = g.hostages.filter(h => h.alive && !h.evacuated).length;
-    if (g.war) {
-      // guerre totale : le décompte des deux armées, et quand revient votre trinôme s'il est anéanti
-      const W = g.war, back = W.respawn.ops[0];
+    if (g.war && g.war.defense) {
+      // stratégie : assaut : ce qui tient encore le terrain, et ce qui reste de votre armée (sans renforts)
+      const W = g.war, left = g.enemies.filter(Game.active).length, mine = g.mates.filter(m => m.alive).length;
+      const up = W.slots.ops.filter(s => g.stratAlive(s)).length;
+      this.$('objective').textContent = `Groupe armé : ${left} / ${W.defense.total} · Votre armée : ${mine} debout, ${up} trinôme${up > 1 ? 's' : ''}${g.alarm ? ' · Alerte générale' : ''}`;
+    } else if (g.war) {
+      // guerre totale : le décompte des deux armées, et quand revient votre trinôme s'il est anéanti (en stratégie, le
+      // premier de vos trinômes à revenir)
+      const W = g.war, backs = W.respawn.ops.filter(t => t !== null), back = g.strat ? (backs.length ? Math.min(...backs) : null) : W.respawn.ops[0];
       const mine = g.ops.filter(o => o.alive).length;
       this.$('objective').textContent = `Score : ${W.kills.ops} – ${W.kills.enemy} · Votre armée : ${mine} debout · En face : ${alive}`
         + (back !== null ? ` · Renforts dans ${Math.max(0, Math.ceil(back - g.time))} s` : '');
@@ -126,6 +142,77 @@ class UI {
     this.$('ammoReserve').textContent = s.reserve;
     ammo.classList.toggle('low', s.mag <= Math.ceil(w.mag * 0.2));
     this.$('message').textContent = g.message.t > 0 ? g.message.text : '';
+    if (g.strat) this.updateStrategy();
+    this.updateWave();
+  }
+
+  // Stratégie, en bas à gauche : vos trois trinômes, leur numéro, la santé de chacun de leurs hommes, ce qu'ils font et
+  // ce qui leur reste (grenades, charges) ; ceux que vous avez choisis sont encadrés.
+  updateStrategy() {
+    const g = this.game, box = this.$('stratBox');
+    if (!box) return;
+    const W = g.war, S = g.strat;
+    const rows = W.slots.ops.map((grp, k) => {
+      const col = STRAT_COLORS[k], up = g.stratAlive(grp);
+      const men = (grp ? grp.members : []).map(m => {
+        const v = m.alive ? Math.round(100 * m.hp / m.maxHp) : 0;
+        return `<i class="${m.alive ? '' : 'down'}"><b style="width:${v}%;background:${v > 60 ? '#4caf50' : v > 30 ? '#ffb300' : '#ef5350'}"></b></i>`;
+      }).join('');
+      const alive = up ? grp.members.filter(m => m.alive && m.group === grp) : [];
+      const nades = alive.reduce((n, m) => n + Math.max(0, m.flashbangs || 0), 0), charges = alive.reduce((n, m) => n + (m.charges || 0), 0);
+      const kit = !up ? '' : g.camp === 'armed' ? `Grenades ${nades}` : `Flash ${nades} · Charge ${charges}`;
+      return `<div class="srow${S.sel.has(k) ? ' sel' : ''}${up ? '' : ' out'}"><span class="skey" style="background:${col}">${k + 1}</span><span class="sname" style="color:${col}">${grp ? grp.label : '—'}</span><span class="smen">${men}</span><span class="sorder">${this.stratStatus(grp, k)}</span><span class="skit">${kit}</span></div>`;
+    }).join('');
+    const html = `<div class="label">VOTRE ARMÉE${S.frozen ? ' · <b>PAUSE TACTIQUE</b>' : ''}</div>${rows}`;
+    if (html !== this._strat) { this._strat = html; box.innerHTML = html; }
+  }
+
+  // Ce que fait un trinôme de votre armée, en deux ou trois mots.
+  stratStatus(grp, k) {
+    const g = this.game;
+    if (!g.stratAlive(grp)) {
+      const at = g.war.respawn.ops[k];
+      return at === null || at === Infinity ? 'Anéanti' : `Anéanti — retour dans ${Math.max(0, Math.ceil(at - g.time))} s`;
+    }
+    const men = grp.members.filter(m => m.alive && m.group === grp), o = grp.order, pace = grp.rush ? ' · course' : '';
+    if (men.some(m => m.entry)) return 'En colonne';
+    if (men.some(m => m.clear)) return 'Entre';
+    if (men.some(m => m.target)) return 'Au contact';
+    if (men.some(m => m.act && m.act.type === 'grenade')) return g.camp === 'armed' ? 'Lance une grenade' : 'Lance une flash';
+    if (!o) return (g.war.defense ? 'Ratisse le terrain' : 'Ratisse son couloir') + pace;
+    if (o.type === 'hold') return 'Tient';
+    if (o.type === 'attack') return 'À l’assaut';
+    if (o.type === 'stack') return 'Vers la porte';
+    return (grp.queue.length ? `En route (+${grp.queue.length})` : 'En route') + pace;
+  }
+
+  // Siège, en grand au centre de l'écran : la préparation, l'arrivée de chaque vague (WAVE_BANNER s, par quelle
+  // ouverture) et, une fois une vague repoussée, le compte à rebours de la suivante.
+  updateWave() {
+    const el = this.$('waveBanner');
+    if (!el) return;
+    const g = this.game, s = g.siege;
+    let title = '', sub = '', count = null, cls = '';
+    // stratégie : la pause tactique, au même endroit
+    if (g.strat && g.strat.frozen && !g.over) { title = 'Pause tactique'; sub = 'Donnez vos ordres — Espace pour reprendre'; }
+    if (s && !g.over) {
+      const n = s.waves.length, arr = s.arrival;
+      if (s.prep > 0) { title = 'Préparation'; sub = "Prenez position — l'assaut dans"; count = s.prep; }
+      else if (s.wave < n && !g.enemies.some(e => e.alive)) {
+        title = `Vague ${s.wave} / ${n} repoussée`; sub = `Vague ${s.wave + 1} / ${n} dans`; count = s.nextWave;
+      } else if (arr && g.time - arr.at < WAVE_BANNER) {
+        title = `Vague ${s.wave} / ${n}`; cls = 'alert';
+        sub = `${s.wave === 1 ? "L'assaut commence" : 'Ils entrent'} — ${g.map.breachLabel(arr.breach)}`;
+      }
+    }
+    // caché, le texte reste en place le temps du fondu
+    if (!title) { el.classList.remove('on'); this._waveKey = null; return; }
+    const sec = count === null ? null : Math.max(0, Math.ceil(count));
+    const key = [title, sub, sec, cls].join('|');
+    if (key === this._waveKey) return;
+    this._waveKey = key;
+    el.className = ['on', cls, sec !== null && sec <= 3 && 'soon'].filter(Boolean).join(' ');
+    el.innerHTML = `<div class="wtitle">${title}</div><div class="wsub">${sub}</div><div class="wcount">${sec === null ? '' : `${sec}<small>s</small>`}</div>`;
   }
 
   static icon(name) { return `<svg class="ico" viewBox="0 0 24 16" aria-hidden="true">${ICONS[name]}</svg>`; }
@@ -174,7 +261,7 @@ class UI {
       bar.style.background = m.hp > 60 ? '#4caf50' : m.hp > 30 ? '#ffb300' : '#ef5350';
       let s = m.vip ? (!m.alive ? 'Tué' : g.escort.safe ? 'En sécurité' : m.duckT > 0 ? 'À terre' : m.escort ? 'Suit' : 'À couvert')
         : !m.alive ? 'À terre' : m.stun > 0 ? 'Aveuglé' : m.act ? (m.act.type === 'grenade' && m.nade === 'frag' ? 'Lance une grenade' : acts[m.act.type] || 'Ouvre la porte') : m.target ? (m.blockedLine ? 'Axe bouché' : 'Au contact') : m.reloadT > 0 ? 'Recharge'
-        : m.hunter ? (m.entry ? 'En colonne' : m.clear ? 'Entre' : 'Progresse')
+        : m.hunter ? (m.entry ? 'En colonne' : m.clear ? 'Entre' : m.group && g.leaderOf(m.group) !== m ? 'Suit' : 'En tête')
         : m.order === 'stack' ? orders.stack
         : m.coverAngle !== null ? (m.order === 'move' ? 'Se déplace ▸ couvre' : 'Couvre') : orders[m.order];
       el.querySelector('.morder').textContent = s;
@@ -220,17 +307,35 @@ class UI {
         le plus d'adversaires l'emporte. ${g.def.briefing || ''}`;
   }
 
+  // Texte d'ambiance de la stratégie, selon le camp ; la carte ajoute le sien.
+  strategyBriefing() {
+    const g = this.game, min = Math.round(WAR_TIME / 60);
+    if (g.defense) {
+      return `Le groupe armé tient le terrain : ${DEFENSE_RATIO * 9} hommes postés partout hors des abords de votre base,
+        surtout dans les bâtiments, quelques-uns en ronde ; celui qui vous voit et tient ${ALARM_TIME} secondes donne l'alerte
+        générale. Vous commandez de haut trois trinômes d'intervention, qui attendent vos ordres à la base ; sans ordre, ils se
+        partagent le ratissage du terrain. Ni renforts ni limite de temps : la mission est accomplie quand le groupe armé est
+        entièrement neutralisé, et échoue quand vos trois trinômes sont anéantis. ${g.def.briefing || ''}`;
+    }
+    return `Deux armées de trois trinômes, ${g.camp === 'armed' ? "la vôtre, celle du groupe armé, contre l'intervention" : "la vôtre, celle de l'intervention, contre le groupe armé"}.
+      Vous ne vous battez pas : vous commandez de haut vos trois trinômes, qui attendent vos ordres à la base. Choisissez-les,
+      envoyez-les, faites-les tenir, attaquer${g.camp === 'armed' ? '' : ' ou entrer en colonne'} ; sans ordre, un trinôme ratisse
+      seul son couloir. Un trinôme anéanti revient de la base ${WAR_RESPAWN} s plus tard. Au bout de ${min} minutes, l'armée qui a
+      abattu le plus d'adversaires l'emporte. ${g.def.briefing || ''}`;
+  }
+
   // Ce que le briefing (et la pause) raconte de la mission.
   briefText() {
     const g = this.game;
-    return g.mode === 'siege' ? (g.def.siegeBriefing || this.siegeBriefing()) : g.war ? this.warBriefing()
+    return g.mode === 'siege' ? (g.def.siegeBriefing || this.siegeBriefing()) : g.strat ? this.strategyBriefing() : g.war ? this.warBriefing()
       : g.squads ? `${this.squadsBriefing()} ${g.def.briefing || ''}` : g.def.briefing;
   }
 
   // Où l'on en est des trois écrans de départ : le mode, la carte, l'équipement. Les deux premiers se rouvrent d'un clic.
-  static steps(at, mode, map) {
+  // (gear : le nom de la troisième étape, « Armée » en stratégie, où l'on ne s'équipe pas)
+  static steps(at, mode, map, gear = 'Équipement') {
     const s = (n, label, id) => (n === at ? `<b>${n}. ${label}</b>` : id ? `<button class="crumb" id="${id}">${n}. ${label}</button>` : `<span>${n}. ${label}</span>`);
-    return `<div class="steps">${s(1, mode ? `Mode : ${mode}` : 'Mode', at > 1 ? 'ovModes' : null)}<i>›</i>${s(2, map ? `Carte : ${map}` : 'Carte', at > 2 ? 'ovLevels' : null)}<i>›</i>${s(3, 'Équipement')}</div>`;
+    return `<div class="steps">${s(1, mode ? `Mode : ${mode}` : 'Mode', at > 1 ? 'ovModes' : null)}<i>›</i>${s(2, map ? `Carte : ${map}` : 'Carte', at > 2 ? 'ovLevels' : null)}<i>›</i>${s(3, gear)}</div>`;
   }
 
   // Premier écran : le mode de jeu, puis la carte (showLevels), puis l'équipement (showBriefing). Les deux camps d'un
@@ -262,11 +367,8 @@ class UI {
     g.paused = true;
     const siege = g.mode === 'siege', escort = g.mode === 'escort', squads = !!g.squads, war = !!g.war, armed = g.camp === 'armed';
     const M = MODES[g.mode];
-    this.showOverlay(`<div class="brief-head"><h1>${g.def.name} <small>${M.name}</small></h1>${UI.steps(3, M.name, g.def.name)}</div>
-      <p class="brief-text">${this.briefText()}</p>
-      <div class="brief-cols">
-        <section class="brief-col">${siege ? this.buildingPlan() : escort ? this.routePlan() : war ? this.basePicker(this.campRow()) : this.entryPicker(squads ? this.campRow() : this.powerRow())}</section>
-        <section class="brief-col">
+    // en stratégie, on ne s'équipe pas : on passe en revue son armée et ses commandes
+    const middle = g.strat ? this.armyList() : `
           <h2>Équipement</h2>
           <div class="loadout">
             ${['ar', 'smg', 'sg'].map(c => this.weaponGroup(c, MODES[g.mode].primaries, 'primary')).join('')}
@@ -275,11 +377,17 @@ class UI {
           </div>
           <h2>Accessoires</h2>
           <div id="waccs"></div>
-          ${armed ? (squads ? `<div class="suprow">${this.crewKit()}</div>` : '') : `<div class="suprow">${this.vestPicker()}</div><div class="suprow">${this.nadePicker()}</div><div class="suprow">${this.teamPicker()}</div>`}
+          ${armed ? (squads ? `<div class="suprow">${this.crewKit()}</div>` : '') : `<div class="suprow">${this.vestPicker()}</div><div class="suprow">${this.nadePicker()}</div><div class="suprow">${this.teamPicker()}</div>`}`;
+    const right = g.strat ? `<h2>Commandes</h2>${UI.commandList(armed, g.defense)}` : '<h2>Caractéristiques</h2><div id="wsum" class="wsum"></div><div id="wdetail"></div>';
+    this.showOverlay(`<div class="brief-head"><h1>${g.def.name} <small>${M.name}</small></h1>${UI.steps(3, M.name, g.def.name, g.strat ? 'Armée' : 'Équipement')}</div>
+      <p class="brief-text">${this.briefText()}</p>
+      <div class="brief-cols">
+        <section class="brief-col">${siege ? this.buildingPlan() : escort ? this.routePlan() : war ? this.basePicker(g.defense ? this.defenseNote() : this.campRow()) : this.entryPicker(squads ? this.campRow() : this.powerRow())}</section>
+        <section class="brief-col">${middle}
         </section>
-        <section class="brief-col brief-specs"><div class="brief-specs-in"><h2>Caractéristiques</h2><div id="wsum" class="wsum"></div><div id="wdetail"></div></div></section>
+        <section class="brief-col brief-specs"><div class="brief-specs-in">${right}</div></section>
       </div>
-      <div class="row"><button class="primary" id="ovGo">${siege ? 'Prendre position' : escort ? "Lancer l'exfiltration" : war ? 'Au combat' : squads ? 'Engager' : "Lancer l'assaut"}</button><button id="ovHelp">Commandes</button></div>`);
+      <div class="row"><button class="primary" id="ovGo">${siege ? 'Prendre position' : escort ? "Lancer l'exfiltration" : war && !g.defense ? 'Au combat' : squads && !g.defense ? 'Engager' : "Lancer l'assaut"}</button><button id="ovHelp">Commandes</button></div>`);
     this.panel.classList.add('wide', 'brief');
     this.panel.querySelector('#ovModes').onclick = () => this.showModes(() => this.showBriefing());
     // camp des trinômes et de la guerre totale : l'autre variante du mode, avec son équipement
@@ -311,7 +419,7 @@ class UI {
       const k = b.dataset.key, slot = b.dataset.slot;
       b.onclick = () => { g.setLoadout(slot === 'primary' ? { primary: k, shield: null } : { [slot]: k }); this.refreshLoadout(); };
     });
-    this.refreshLoadout();
+    if (!g.strat) this.refreshLoadout();
     this.panel.querySelector('#ovGo').onclick = () => {
       Sound.init();
       if (g.over) g.restart(); // mission déjà gagnée ou perdue : on repart de zéro plutôt que de rester figé
@@ -346,13 +454,65 @@ class UI {
     return `<h2>Point d'entrée</h2><canvas class="plan pick" id="ovPlan" title="Cliquez une ouverture pour entrer par là"></canvas>${legend}<div class="entries">${hasard}${btns}</div>${extra}`;
   }
 
-  // Trinômes et guerre totale : le camp que l'on mène (chacun son équipement, gardé à part), et d'où viennent les autres.
+  // Stratégie : assaut : pas de camp à choisir (vous menez l'intervention) ; ce qui vous attend, sous le plan.
+  defenseNote() {
+    return `<div class="powerrow"><small>Vos trois trinômes partent de la base choisie. Le groupe armé, ${DEFENSE_RATIO} fois plus nombreux, tient tout le
+      reste du terrain, à ${Math.round(DEFENSE_CLEAR / U)} cases au moins de votre base ; ses postes changent à chaque partie et ne se voient qu'une fois dans
+      le champ de vision de vos hommes.</small></div>`;
+  }
+
+  // Trinômes, guerre totale et stratégie : le camp que l'on mène (chacun son équipement, gardé à part), et d'où viennent
+  // les autres.
   campRow() {
     const g = this.game, police = MODES[g.mode].variantOf || g.mode, armed = Object.keys(MODES).find(m => MODES[m].variantOf === police);
     const btn = (mode, label, tip) => `<button class="supbtn campbtn${g.mode === mode ? ' sel' : ''}" data-mode="${mode}" title="${tip}">${label}</button>`;
-    return `<div class="powerrow"><div class="suprow"><span class="rowlabel">Camp</span>${btn(police, '🛡 Intervention', 'Flashs ou grenades à fragmentation (au choix), charges de brèche, fibre, gilet ; en face, le groupe armé et ses grenades à fragmentation.')}${btn(armed, '☠ Groupe armé', "Grenades à fragmentation ; en face, l'intervention, ses flashs, ses charges et ses colonnes.")}</div>
-      <small>${g.war ? 'Vos deux autres trinômes partent de votre base, sur les flancs ; l\'armée d\'en face, de l\'autre base.'
+    const tips = g.strat ? ["Vos trinômes ont des flashs, une charge de brèche chacun et entrent en colonne ; en face, le groupe armé et ses grenades à fragmentation.", "Vos trinômes ont des grenades à fragmentation ; en face, l'intervention, ses flashs, ses charges et ses colonnes."]
+      : ['Flashs ou grenades à fragmentation (au choix), charges de brèche, fibre, gilet ; en face, le groupe armé et ses grenades à fragmentation.', "Grenades à fragmentation ; en face, l'intervention, ses flashs, ses charges et ses colonnes."];
+    return `<div class="powerrow"><div class="suprow"><span class="rowlabel">Camp</span>${btn(police, '🛡 Intervention', tips[0])}${btn(armed, '☠ Groupe armé', tips[1])}</div>
+      <small>${g.strat ? "Vos trois trinômes attendent vos ordres à votre base ; l'armée d'en face part de l'autre."
+        : g.war ? 'Vos deux autres trinômes partent de votre base, sur les flancs ; l\'armée d\'en face, de l\'autre base.'
         : "Votre second trinôme entre par l'ouverture la plus proche de la vôtre, les deux d'en face par les plus éloignées."}</small></div>`;
+  }
+
+  // Stratégie : vos trois trinômes, leur couleur, leur couloir de départ, et l'arme de chacun avec ses accessoires.
+  armyList() {
+    const g = this.game, lanes = ['un flanc', 'le centre', "l'autre flanc"];
+    const names = { sup: 'silencieux', laser: 'laser', light: 'lampe', grip: 'poignée', mag: 'chargeur long', scope: 'lunette' };
+    const rows = g.war.slots.ops.map((grp, k) => {
+      if (!grp) return '';
+      const men = grp.members.map(m => {
+        const w = m.weapon, on = Object.keys(names).filter(n => w.acc && w.acc[n]).map(n => names[n]);
+        return `${m.name} : ${w.name}${on.length ? ` (${on.join(', ')})` : ''}`;
+      }).join(' · ');
+      const alone = g.defense ? 'Sans ordre, il ratisse le terrain avec les deux autres.' : `Sans ordre, il ratisse ${lanes[Game.warLane('ops', k)]}.`;
+      return `<div class="armyrow"><span class="skey" style="background:${grp.color}">${k + 1}</span><div><b style="color:${grp.color}">Trinôme ${grp.label}</b><small>${alone}</small><small>${men}</small></div></div>`;
+    }).join('');
+    const kit = g.camp === 'armed' ? 'deux grenades à fragmentation par homme' : 'deux flashs par homme et une charge de brèche par trinôme';
+    return `<h2>Votre armée</h2><div class="army">${rows}</div>
+      <p class="brief-note">Ils emportent ${kit}. Vous ne vous battez pas vous-même : vous commandez, l'équipement ne se choisit pas. ${g.defense
+        ? 'Pas de renforts : un trinôme anéanti ne revient pas.' : 'Un trinôme anéanti revient de la base sous le même numéro.'}</p>`;
+  }
+
+  // Stratégie : les commandes, à la place des fiches d'armes du briefing (armed : le groupe armé, sans colonne ni charge ;
+  // defense : la stratégie d'assaut, où l'on ratisse tout le terrain).
+  static commandList(armed, defense) {
+    const rows = [
+      ['Clic gauche', "choisir un trinôme (clic sur l'un de ses hommes) ; glissé : un rectangle, tous ceux qui y sont ; Maj : en plus"],
+      ['1, 2, 3', 'choisir ce trinôme (Maj : en plus) ; deux fois de suite : la vue y va'],
+      ['A', "toute l'armée"],
+      ['Clic droit', "y aller ; maintenu et tiré : la direction à tenir à l'arrivée ; Maj : après le déplacement en cours"],
+      ['… sur un adversaire', "l'attaquer : ils le poursuivent tant que l'armée le voit"],
+      armed ? ['… sur une porte fermée', 'la franchir en l’ouvrant'] : ['… sur une porte fermée', "en colonne de part et d'autre, puis entrée (à la flash ou à la charge s'ils en ont)"],
+      ['H', "tenir la position : ils tirent sur ce qu'ils voient, sans poursuivre"],
+      ['R', defense ? 'plus d’ordre : les trinômes se partagent le ratissage du terrain' : 'plus d’ordre : le trinôme ratisse seul son couloir'],
+      ['C', 'au pas de course (plus vite, mais on les entend) ou au pas'],
+      ['G', armed ? 'grenade à fragmentation au curseur' : 'flash au curseur ; sur une porte fermée : entrée à la flash'],
+      !armed && ['B', 'sur une porte fermée : entrée à la charge'],
+      ['Espace', "pause tactique : le temps s'arrête, les ordres se donnent"],
+      ['ZQSD, flèches, bords', 'déplacer la vue ; molette : zoom ; F : centrer sur les trinômes choisis'],
+      ['M', 'minimap ; un clic dessus y emmène la vue, un clic droit y envoie les trinômes choisis'],
+    ].filter(Boolean);
+    return `<dl class="cmds">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl>`;
   }
 
   // Gilet pare-balles : tous ceux du mode côte à côte, celui qu'on porte en surbrillance ; ce qu'il arrête en
@@ -702,9 +862,11 @@ class UI {
     const g = this.game, M = MODES[g.mode];
     g.paused = true;
     const siege = g.mode === 'siege', escort = g.mode === 'escort', war = !!M.war, squads = !!M.squads && !war;
-    let html = `<h1>${M.name} — choisissez la carte</h1>${UI.steps(2, M.name)}<p>${siege
+    let html = `<h1>${M.name} — choisissez la carte</h1>${UI.steps(2, M.name, null, M.strategy ? 'Armée' : undefined)}<p>${siege
       ? `Objectif : repousser les ${SIEGE_WAVES.length} vagues d'assaut avec vos otages vivants et entre vos mains.`
       : escort ? "Objectif : conduire le VIP vivant du point A au point B, à travers les pièces tenues par le commando. Inutile de neutraliser tout le monde."
+      : M.defense ? `Objectif : commander de haut vos trois trinômes et neutraliser les ${DEFENSE_RATIO * 9} hommes du groupe armé retranchés sur le terrain. Pas de renforts : chaque trinôme anéanti est perdu.`
+      : M.strategy ? `Objectif : commander vos trois trinômes de haut et abattre plus d'adversaires que l'armée d'en face en ${Math.round(WAR_TIME / 60)} minutes. Chaque trinôme anéanti revient de sa base.`
       : war ? `Objectif : abattre plus d'adversaires que l'armée d'en face en ${Math.round(WAR_TIME / 60)} minutes. Chaque trinôme anéanti revient de sa base.`
       : squads ? "Objectif : deux trinômes contre deux, l'intervention contre le groupe armé. Le premier camp entièrement hors de combat a perdu."
       : "Objectif : neutraliser tous les suspects, sans perdre toute l'équipe ni tuer d'otage. Escorter les otages dehors, par une porte extérieure ou une fenêtre, les met à l'abri en attendant."}</p>
@@ -717,7 +879,7 @@ class UI {
       const h = txt.split('').filter(c => c === 'H').length;
       // en plein air, on arrive par les entrées du terrain (O) ; ailleurs, par les portes extérieures et les fenêtres
       const ent = txt.split('').filter(c => (l.outdoor ? 'O' : 'XW').includes(c)).length;
-      const what = war ? '2 bases · 3 trinômes contre 3' : squads ? `${ent} ouvertures · 2 trinômes contre 2`
+      const what = M.defense ? `votre base · vos 3 trinômes contre ${DEFENSE_RATIO * 9} retranchés` : M.strategy ? '2 bases · vos 3 trinômes contre 3' : war ? '2 bases · 3 trinômes contre 3' : squads ? `${ent} ouvertures · 2 trinômes contre 2`
         : `${siege ? ent + ' entrées à surveiller' : n + ' suspects'} · ${escort ? 'VIP à conduire de A à B' : h + ' otages'}`;
       html += `<button class="levelbtn${i === g.levelIndex ? ' sel' : ''}" data-i="${i}"><canvas></canvas>
         <span class="lname">${i + 1}. ${l.name}${war ? ' <em>· champ de bataille</em>' : l.outdoor ? ' <em>· plein air</em>' : ''}</span><small>${what}</small></button>`;
@@ -799,7 +961,7 @@ class UI {
 
   showPause() {
     const g = this.game;
-    this.showOverlay(`<h1>Pause</h1><p>${g.war ? this.warBriefing() : g.squads ? this.squadsBriefing() : g.def.briefing}</p>
+    this.showOverlay(`<h1>Pause</h1><p>${g.strat ? this.strategyBriefing() : g.war ? this.warBriefing() : g.squads ? this.squadsBriefing() : g.def.briefing}</p>
       <div class="row"><button class="primary" id="ovResume">Reprendre</button><button id="ovRestart">↺ Recommencer</button><button id="ovLevels">Cartes</button><button id="ovModes">Modes</button><button id="ovHelp">Aide</button></div>`);
     this.panel.querySelector('#ovResume').onclick = () => g.setPaused(false);
     this.panel.querySelector('#ovRestart').onclick = () => { g.restart(); this.showBriefing(); };
@@ -813,10 +975,13 @@ class UI {
     const win = result === 'win', draw = result === 'draw';
     const siege = !!g.siege, escort = !!g.escort, war = !!g.war, squads = !!g.squads && !war, armed = g.camp === 'armed';
     const W = g.war, tally = W ? `${W.kills.ops} adversaires abattus contre ${W.kills.enemy}` : '';
+    const D = W && W.defense;
     const title = siege ? (win ? 'Assaut repoussé' : 'Bâtiment repris') : escort ? (win ? 'VIP exfiltré' : 'Mission échouée')
+      : D ? (win ? 'Terrain repris' : 'Mission échouée')
       : war ? (win ? 'Bataille remportée' : draw ? 'Égalité' : 'Bataille perdue')
       : squads ? (win ? 'Engagement remporté' : 'Engagement perdu') : (win ? 'Mission accomplie' : 'Mission échouée');
-    const intro = war ? (win ? `Votre armée l'emporte : ${tally}.` : draw ? `Personne ne l'emporte : ${tally}.` : g.loseReason)
+    const intro = D ? (win ? `Les ${D.total} hommes du groupe armé sont neutralisés : le terrain est à vous.` : g.loseReason)
+      : war ? (win ? `Votre armée l'emporte : ${tally}.` : draw ? `Personne ne l'emporte : ${tally}.` : g.loseReason)
       : win
       ? (siege ? 'Toutes les vagues sont repoussées : les négociations aboutissent.'
         : escort ? (g.vip.hp < g.vip.maxHp ? 'Le VIP est arrivé au point B, blessé mais vivant.' : 'Le VIP est arrivé sain et sauf au point B.')
@@ -828,12 +993,12 @@ class UI {
     const sc = g.score || g.scoreReport(result), rec = g.record;
     const best = rec ? (rec.beaten ? (rec.prev === null ? 'Première note sur cette mission' : `Nouveau record (avant : ${rec.prev})`) : `Record : ${rec.prev}`) : '';
     const pts = n => (n > 0 ? '+' : n < 0 ? '−' : '') + Math.abs(n);
-    const html = `<h1 class="${win ? 'win' : draw ? 'draw' : 'lose'}">${title}</h1>
-      <p>${intro}</p>
-      <div class="score"><div class="grade grade-${sc.grade}" id="endGrade">${sc.grade}</div>
-        <div class="score-sum"><b id="endScore">${sc.total} / 100</b>${best ? `<small>${best}</small>` : ''}</div>
-        <div class="score-lines">${sc.lines.map(l => `<span>${l.label}</span><span class="sd">${l.detail}</span><b class="${l.pts < 0 ? 'neg' : ''}">${pts(l.pts)}</b>`).join('')}</div></div>
-      <div class="stats">
+    // stratégie : vous n'avez pas tiré un coup, le bilan est celui de l'armée
+    const stats = g.strat ? `
+        <span>Temps</span><b>${fmtTime(g.time)}</b>
+        <span>${D ? 'Groupe armé neutralisé' : 'Abattus par votre armée'}</span><b id="endKills">${D ? `${W.kills.ops} / ${D.total}` : W.kills.ops}</b>
+        <span>Pertes de votre armée</span><b>${W.kills.enemy}</b>
+        <span>Trinômes anéantis</span><b>${W.lost}</b>` : `
         <span>Temps</span><b>${fmtTime(g.time)}</b>
         <span>${siege ? 'Opérateurs neutralisés' : war ? 'Abattus par votre armée / par vous' : squads ? 'Adversaires neutralisés' : 'Suspects abattus / arrêtés'}</span><b id="endKills">${war ? `${W.kills.ops} / ${W.mine}` : siege || squads ? `${s.kills} / ${g.enemies.length}` : `${s.kills} / ${s.arrests}`}</b>
         <span>Tirs / touchés</span><b>${s.shots} / ${s.hits}</b>
@@ -843,7 +1008,13 @@ class UI {
         ${war ? `<span>Votre trinôme revenu de la base</span><b>${W.reinforce} fois</b>`
           : squads ? '' : escort ? `<span>Santé du VIP</span><b id="endVip">${g.vip.alive ? Math.round(100 * g.vip.hp / g.vip.maxHp) + ' %' : 'tué'}</b>`
           : `<span>Otages tués</span><b id="endHostagesKilled">${g.hostages.filter(h => !h.alive).length} / ${g.hostages.length}</b>
-        <span>${siege ? "Otages évacués par l'intervention" : 'Otages évacués'}</span><b id="endHostagesOut">${out} / ${g.hostages.length}</b>`}
+        <span>${siege ? "Otages évacués par l'intervention" : 'Otages évacués'}</span><b id="endHostagesOut">${out} / ${g.hostages.length}</b>`}`;
+    const html = `<h1 class="${win ? 'win' : draw ? 'draw' : 'lose'}">${title}</h1>
+      <p>${intro}</p>
+      <div class="score"><div class="grade grade-${sc.grade}" id="endGrade">${sc.grade}</div>
+        <div class="score-sum"><b id="endScore">${sc.total} / 100</b>${best ? `<small>${best}</small>` : ''}</div>
+        <div class="score-lines">${sc.lines.map(l => `<span>${l.label}</span><span class="sd">${l.detail}</span><b class="${l.pts < 0 ? 'neg' : ''}">${pts(l.pts)}</b>`).join('')}</div></div>
+      <div class="stats">${stats}
       </div>
       <div class="row">
         <button id="ovRetry">↺ Rejouer</button>
@@ -925,6 +1096,28 @@ class UI {
       décompte) ; chaque homme abattu compte un point pour l'armée d'en face, et l'armée qui a le plus de points l'emporte,
       à égalité personne. Le champ de bataille est connu d'avance : la minimap le montre en entier, mais l'adversaire ne se
       voit que dans le champ de vision de votre armée.</p>
+      <p><b>Mode stratégie</b> : la même bataille, sur les mêmes champs de bataille, mais vous n'y incarnez personne : vue de
+      haut, vous commandez les trois trinômes de votre armée, chacun sa couleur et son numéro. Au départ, ils attendent vos
+      ordres à la base. Le <kbd>clic gauche</kbd> sur l'un de vos hommes choisit son trinôme (glissé : tous ceux du rectangle ;
+      <kbd>Maj</kbd> : en plus), de même que <kbd>1</kbd>, <kbd>2</kbd>, <kbd>3</kbd> (deux fois de suite, la vue y va) et
+      <kbd>A</kbd> (toute l'armée). Le <kbd>clic droit</kbd> les envoie : en file derrière leur chef, au pas, sans bruit, ils
+      tirent sur ce qu'ils voient en route et tiennent le point d'arrivée, en ligne, face à leur direction de marche ou à
+      celle que vous tracez en maintenant le clic. Avec <kbd>Maj</kbd>, le point s'ajoute à la suite du déplacement en cours.
+      Sur un adversaire en vue, ils l'attaquent et le poursuivent ; sur une porte fermée, l'intervention se met en colonne et
+      entre (à la flash ou à la charge si elle en a encore ; <kbd>G</kbd> ou <kbd>B</kbd> sur la porte imposent l'une ou
+      l'autre), le groupe armé la franchit. <kbd>H</kbd> : tenir là où ils sont ; <kbd>R</kbd> : plus d'ordre, le trinôme
+      ratisse seul son couloir comme en guerre totale ; <kbd>C</kbd> : au pas de course (on les entend) ou au pas ;
+      <kbd>G</kbd> ailleurs : une grenade vers le curseur, lancée par celui qui a une trajectoire libre. <kbd>Espace</kbd>
+      arrête le temps (pause tactique) sans empêcher de donner des ordres. La vue se déplace avec <kbd>ZQSD</kbd>, les flèches ou
+      les bords de l'écran, la molette zoome (de toute la carte jusqu'au cadrage du jeu à pied), <kbd>F</kbd> la centre sur les
+      trinômes choisis, et un clic sur la minimap l'y emmène (un clic droit y envoie les trinômes). Un trinôme anéanti revient
+      de la base ${WAR_RESPAWN} secondes plus tard sous le même numéro, et attend vos ordres.</p>
+      <p><b>Stratégie : assaut</b> : les mêmes commandes et les mêmes champs de bataille, mais en face, pas d'armée : un
+      groupe armé ${DEFENSE_RATIO} fois plus nombreux que vos neuf hommes, retranché sur tout le terrain hors des abords de votre
+      base, surtout dans les bâtiments. Comme les suspects de l'assaut, chacun tient son poste (quelques-uns font des rondes),
+      vient voir ce qu'il entend, et celui qui vous voit sans être abattu donne l'alerte générale. Vous commandez trois trinômes
+      d'intervention ; sans ordre (<kbd>R</kbd>), ils se partagent le ratissage du terrain. Ni renforts ni limite de temps :
+      la mission est accomplie quand tout le groupe armé est neutralisé, et échoue quand vos trois trinômes sont anéantis.</p>
       <p><b>Pour commencer</b> : choisissez le mode, puis la carte (chaque mode a les siennes), puis l'équipement au briefing.
       Le fil en haut du briefing ramène au choix du mode ou de la carte ; en pause et en fin de partie, « Cartes » et
       « Modes » aussi.</p>

@@ -46,6 +46,18 @@ button.primary:hover { background: #38945d; }
 .mode.laser { background: #a8322b; color: #fff; display: none; margin-left: 6px; }
 .mode.laser.on { display: inline-block; }
 .mode.laser.off { background: #3a4250; color: #8e99a6; text-decoration: line-through; }
+/* siège : préparation, arrivée des vagues et compte à rebours, au centre de l'écran (un peu au-dessus du joueur) */
+#waveBanner { position: absolute; left: 50%; top: 34%; transform: translate(-50%, -50%); padding: 12px 34px 14px; text-align: center; white-space: nowrap; background: rgba(5,7,9,0.6); border: 1px solid rgba(255,210,122,0.3); border-radius: 8px; opacity: 0; transition: opacity 0.3s; }
+#waveBanner.on { opacity: 1; }
+#waveBanner .wtitle { font-size: 26px; font-weight: 800; letter-spacing: 2px; text-transform: uppercase; color: #ffd27a; text-shadow: 0 2px 6px #000; }
+#waveBanner .wsub { font-size: 16px; font-weight: 600; color: #d7dbe0; margin-top: 2px; }
+#waveBanner .wcount { font-family: Consolas, monospace; font-size: 54px; font-weight: 700; line-height: 1.1; color: #fff; text-shadow: 0 2px 8px #000; }
+#waveBanner .wcount:empty { display: none; }
+#waveBanner .wcount small { font-size: 22px; color: #9aa4b1; margin-left: 4px; }
+#waveBanner.soon .wcount { color: #ff7043; }
+#waveBanner.alert { border-color: rgba(239,106,90,0.7); animation: wavePulse 0.5s ease-in-out 6 alternate; }
+#waveBanner.alert .wtitle { color: #ef6a5a; }
+@keyframes wavePulse { from { box-shadow: 0 0 0 rgba(239,106,90,0); } to { box-shadow: 0 0 28px rgba(239,106,90,0.55); } }
 #message { flex: 1; text-align: center; font-size: 20px; font-weight: 700; color: #fff; text-shadow: 0 2px 6px #000; padding: 0 20px 6px; min-height: 30px; }
 #weaponBox { text-align: right; max-width: 420px; }
 #weaponName { color: #d7dbe0; font-weight: 600; }
@@ -55,6 +67,35 @@ button.primary:hover { background: #38945d; }
 #ammo span { font-size: 18px; color: #9aa4b1; }
 #ammo.low b { color: #ff7043; }
 #reloadHint { font-size: 11px; color: #8e99a6; }
+/* stratégie : pas d'opérateur à vous, mais vos trois trinômes (à gauche) et les commandes (à droite) */
+#stratBox, #stratHint { display: none; }
+#hud.strategy #hpBox, #hud.strategy #weaponBox { display: none; }
+#hud.strategy #stratBox, #hud.strategy #stratHint { display: block; }
+#stratBox { width: 470px; }
+#stratBox .label b { color: #64b5f6; letter-spacing: 2px; }
+.srow { display: grid; grid-template-columns: 18px 64px 96px minmax(0, 1fr) auto; align-items: center; gap: 8px; margin-top: 3px; padding: 3px 6px; font-size: 12px; border: 1px solid transparent; border-radius: 4px; }
+.srow.sel { border-color: rgba(255,255,255,0.45); background: rgba(255,255,255,0.07); }
+.srow.out { opacity: 0.5; }
+.skey { display: inline-block; width: 18px; height: 18px; border-radius: 3px; color: #0b0d10; font-weight: 800; text-align: center; line-height: 18px; }
+.sname { font-weight: 700; letter-spacing: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.smen { display: flex; gap: 3px; }
+.smen i { flex: 1; height: 6px; background: rgba(0,0,0,0.5); border: 1px solid #3a4250; border-radius: 3px; overflow: hidden; }
+.smen i b { display: block; height: 100%; }
+.smen i.down { opacity: 0.35; }
+.sorder { color: #d7dbe0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.skit { color: #8e99a6; font-size: 11px; white-space: nowrap; }
+#stratHint { max-width: 520px; text-align: right; font-size: 11px; line-height: 1.55; color: #8e99a6; }
+#stratHint b { color: #c9d1da; font-weight: 600; }
+/* briefing de la stratégie : votre armée, et les commandes à la place des fiches */
+.army { display: grid; gap: 8px; }
+.armyrow { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 10px; align-items: start; padding: 8px 10px; background: #11151a; border: 1px solid #2c3540; border-radius: 6px; }
+.armyrow .skey { margin-top: 1px; }
+.armyrow b { font-size: 14px; letter-spacing: 1px; }
+.armyrow small { display: block; color: #9aa4b1; font-size: 12px; line-height: 1.45; margin-top: 2px; }
+.cmds { margin: 0; display: grid; grid-template-columns: auto minmax(0, 1fr); align-content: start; gap: 5px 12px; font-size: 12.5px; line-height: 1.4; overflow-y: auto; }
+.brief-specs-in .cmds { flex: 1; min-height: 0; }
+.cmds dt { color: #ffd27a; font-weight: 600; white-space: nowrap; }
+.cmds dd { margin: 0; color: #aab3bf; }
 
 #overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.65); display: flex; align-items: center; justify-content: center; z-index: 10; }
 #overlay.hidden { display: none; }

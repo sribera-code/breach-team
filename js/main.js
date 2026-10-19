@@ -37,7 +37,7 @@
     if (e.button === 2) { inp.pressed.Mouse2 = true; inp.mouse.rdown = true; }
   });
   window.addEventListener('mouseup', e => {
-    if (e.button === 0) inp.mouse.down = false;
+    if (e.button === 0 && inp.mouse.down) { inp.mouse.down = false; inp.pressed.Mouse0Up = true; }
     if (e.button === 2 && inp.mouse.rdown) { inp.mouse.rdown = false; inp.pressed.Mouse2Up = true; }
   });
   canvas.addEventListener('contextmenu', e => e.preventDefault());
@@ -65,8 +65,12 @@
     const dt = Math.min(0.05, (now - last) / 1000);
     last = now;
     if (locked() && ui.isOpen()) document.exitPointerLock();
+    renderer.locked = locked(); // (stratégie : la vue glisse quand le curseur bute sur un bord)
     const m = renderer.aimWorld();
     inp.mouse.x = m.x; inp.mouse.y = m.y;
+    // pixels du monde par pixel d'écran (tolérance d'un clic), et curseur sur la minimap (stratégie : la vue y va)
+    inp.mouse.ppx = renderer.dpr / renderer.zoom;
+    inp.mouse.mini = renderer.overMinimap();
     game.update(dt);
     renderer.draw(dt);
     ui.update();

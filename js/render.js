@@ -14,6 +14,10 @@ const actStyle = a => (a.act ? { act: { type: a.act.type, k: a.act.t / a.act.dur
 // axes. Viser vers le bord de l'écran montre ainsi au moins une fois et demie VIEW_HALF devant soi : plus loin que
 // AI_FIRE_RANGE, d'où l'adversaire ouvre le feu.
 const VIEW_HALF = 7 * U, LOOK_AHEAD = 0.4, LOOK_MAX = 0.5;
+// Stratégie : la vue de départ montre STRAT_VIEW de champ de bataille en hauteur ; la molette zoome par crans de
+// STRAT_ZOOM_STEP, de toute la carte jusqu'au cadrage du jeu à pied ; les touches et les bords de l'écran (souris
+// verrouillée, à STRAT_EDGE px) font glisser la vue à STRAT_PAN px d'écran par seconde.
+const STRAT_VIEW = 30 * U, STRAT_ZOOM_STEP = 1.15, STRAT_PAN = 900, STRAT_EDGE = 14;
 // Teinte des sols sur les plans réduits, dans l'ordre de FLOOR (js/map.js).
 const MINI_FLOORS = ['#2f3742', '#3a3327', '#2d3a3d', '#3d2a30', '#403d37', '#343b42', '#2c3d26', '#46413a', '#3e3b35', '#26292e'];
 // Rendu canvas : calque statique (sols, murs, mobilier), décalques, entités, brouillard, HUD canvas.
@@ -47,8 +51,20 @@ class Renderer {
     this.dpr = window.devicePixelRatio || 1;
     this.canvas.width = Math.max(1, Math.floor(r.width * this.dpr));
     this.canvas.height = Math.max(1, Math.floor(r.height * this.dpr));
-    // à la largeur, sans montrer moins de VIEW_HALF en hauteur (ni descendre sous 1,1 dans une toute petite fenêtre)
-    this.zoom = this.dpr * Math.max(1.1, Math.min(1.9 * clamp(r.width / 1280, 0.75, 1.3), r.height / (2 * VIEW_HALF)));
+    this.fitZoom();
+  }
+
+  // À pied : à la largeur, sans montrer moins de VIEW_HALF en hauteur (ni descendre sous 1,1 dans une toute petite
+  // fenêtre). En stratégie, ce cadrage est le zoom le plus fort ; le plus faible montre toute la carte ; reset : la vue
+  // de départ (STRAT_VIEW en hauteur), sinon le zoom choisi, gardé dans ces bornes.
+  fitZoom(reset) {
+    const W = this.canvas.width / this.dpr, H = this.canvas.height / this.dpr, g = this.game;
+    const foot = this.dpr * Math.max(1.1, Math.min(1.9 * clamp(W / 1280, 0.75, 1.3), H / (2 * VIEW_HALF)));
+    if (!g.strat || !g.map) { this.zoom = foot; return; }
+    this.zoomMax = foot;
+    this.zoomMin = Math.min(foot, this.dpr * 0.95 * Math.min(W / (g.map.w * TILE), H / (g.map.h * TILE)));
+    this.zoom = clamp(reset || !this.stratZoomed ? this.dpr * H / STRAT_VIEW : this.zoom, this.zoomMin, this.zoomMax);
+    this.stratZoomed = true;
   }
 
   buildStatic() {
@@ -72,9 +88,21 @@ class Renderer {
     for (const p of m.props) Sprites.paintProp(ctx, p);
     this.decalC.getContext('2d').clearRect(0, 0, W, H);
     this.buildMinimap();
+    // (en stratégie, la vue de départ, sur votre base)
+    this.fitZoom(true);
+    this.scopeAim = null;
     this.cam.x = this.game.player.x; this.cam.y = this.game.player.y;
+    if (this.game.strat) this.clampCam();
     this.tx = this.canvas.width / 2 - this.cam.x * this.zoom;
     this.ty = this.canvas.height / 2 - this.cam.y * this.zoom;
+  }
+
+  // Stratégie : la vue ne sort guère de la carte (deux cases de marge), et la centre si elle la montre tout entière.
+  clampCam() {
+    const m = this.game.map, hw = this.canvas.width / 2 / this.zoom, hh = this.canvas.height / 2 / this.zoom;
+    const fit = (c, half, size) => (size + 4 * U > 2 * half ? clamp(c, half - 2 * U, size - half + 2 * U) : size / 2);
+    this.cam.x = fit(this.cam.x, hw, m.w * TILE);
+    this.cam.y = fit(this.cam.y, hh, m.h * TILE);
   }
 
   // Plan réduit : une petite case de la grille fine devient un carré de miniScale pixels.
@@ -174,9 +202,23 @@ class Renderer {
     return { x: (px - this.tx) / this.zoom, y: (py - this.ty) / this.zoom };
   }
 
-  // Point visé, dans le monde : sous le curseur, ou, lunette à l'œil, le point tenu (scopeAim).
+  // Point visé, dans le monde : sous le curseur, ou, lunette à l'œil, le point tenu (scopeAim). En stratégie, le curseur
+  // posé sur la minimap vise le point de la carte qu'il y montre (on peut donner un ordre de là).
   aimWorld() {
-    return this.scopeAim ? { x: this.scopeAim.x, y: this.scopeAim.y } : this.toWorld(this.mouse.sx, this.mouse.sy);
+    if (this.scopeAim) return { x: this.scopeAim.x, y: this.scopeAim.y };
+    if (this.overMinimap()) {
+      const r = this.miniRect, m = this.game.map;
+      return { x: (this.mouse.sx * this.dpr - r.x) / r.w * m.w * TILE, y: (this.mouse.sy * this.dpr - r.y) / r.h * m.h * TILE };
+    }
+    return this.toWorld(this.mouse.sx, this.mouse.sy);
+  }
+
+  // Stratégie : le curseur est-il sur la minimap (dépliée) ?
+  overMinimap() {
+    const r = this.miniRect, g = this.game;
+    if (!r || !g.strat || !g.minimap) return false;
+    const x = this.mouse.sx * this.dpr, y = this.mouse.sy * this.dpr;
+    return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
   }
 
   // Mouvement de la souris (dx, dy en px CSS ; x, y : position du curseur système). Souris verrouillée (locked), le
@@ -192,9 +234,44 @@ class Renderer {
     } else { this.mouse.sx = x; this.mouse.sy = y; }
   }
 
+  // Stratégie : la vue est libre. Molette : zoom vers le curseur (le point dessous ne bouge pas) ; ZQSD, flèches et bords
+  // de l'écran : elle glisse ; elle rejoint le point demandé par le jeu (strat.camTo : minimap, F, numéro tapé deux fois).
+  stratCamera(dt) {
+    const g = this.game, S = g.strat, k = g.input.keys, d = this.dpr, W = this.canvas.width, H = this.canvas.height;
+    if (S.zoom) {
+      const at = this.toWorld(this.mouse.sx, this.mouse.sy);
+      this.zoom = clamp(this.zoom * Math.pow(STRAT_ZOOM_STEP, S.zoom), this.zoomMin, this.zoomMax);
+      S.zoom = 0;
+      this.cam.x = at.x - (this.mouse.sx * d - W / 2) / this.zoom;
+      this.cam.y = at.y - (this.mouse.sy * d - H / 2) / this.zoom;
+    }
+    let vx = (k.KeyD || k.ArrowRight ? 1 : 0) - (k.KeyA || k.ArrowLeft ? 1 : 0);
+    let vy = (k.KeyS || k.ArrowDown ? 1 : 0) - (k.KeyW || k.ArrowUp ? 1 : 0);
+    if (this.locked && !this.overMinimap()) {
+      const e = STRAT_EDGE * d, x = this.mouse.sx * d, y = this.mouse.sy * d;
+      if (x <= e) vx = -1; else if (x >= W - e - 1) vx = 1;
+      if (y <= e) vy = -1; else if (y >= H - e - 1) vy = 1;
+    }
+    if (vx || vy) {
+      S.camTo = null;
+      const sp = STRAT_PAN * d / this.zoom * dt / Math.hypot(vx, vy);
+      this.cam.x += vx * sp; this.cam.y += vy * sp;
+    }
+    const to = S.camTo;
+    if (to) {
+      const kk = to.now ? 1 : 1 - Math.pow(0.0005, dt);
+      this.cam.x = lerp(this.cam.x, to.x, kk); this.cam.y = lerp(this.cam.y, to.y, kk);
+      if (to.now || dist(this.cam.x, this.cam.y, to.x, to.y) < 2) S.camTo = null;
+    }
+    this.clampCam();
+    this.tx = W / 2 - this.cam.x * this.zoom;
+    this.ty = H / 2 - this.cam.y * this.zoom;
+  }
+
   updateCamera(dt) {
     const g = this.game, p = g.player;
     if (!isFinite(this.cam.x) || !isFinite(this.cam.y)) { this.cam.x = p.x; this.cam.y = p.y; }
+    if (g.strat) { this.stratCamera(dt); return; }
     const k = 1 - Math.pow(0.001, dt);
     if (g.scoped(p)) {
       // Lunette à l'œil : le point visé reste où il est, et la vue glisse vers lui (à mi-chemin du tireur, SCOPE.lead,
@@ -248,6 +325,7 @@ class Renderer {
     this.drawBodies();
     this.drawDoors();
     this.drawCharges();
+    if (g.strat) this.drawStratUnder();
     for (const h of g.hostages) {
       if (!this.hostageShown(h)) continue;
       if (h.standing) Sprites.hostageStanding(ctx, h); else Sprites.hostage(ctx, h);
@@ -261,10 +339,14 @@ class Renderer {
     }
     this.drawGrenades();
     ctx.save(); this.clipToVision(); this.drawBullets(); ctx.restore();
-    for (const a of [...g.ops, ...g.enemies]) a.walk = (a.walk || 0) + (a.alive && a.moving ? dt * (a.walkMode ? 8 : 13) : 0);
-    for (const h of g.hostages) if (h.moving) h.walk += dt * 10;
+    // (pause tactique : tout est figé, les jambes aussi)
+    const still = !!(g.strat && g.strat.frozen);
+    for (const a of [...g.ops, ...g.enemies]) a.walk = (a.walk || 0) + (a.alive && a.moving && !still ? dt * (a.walkMode ? 8 : 13) : 0);
+    for (const h of g.hostages) if (h.moving && !still) h.walk += dt * 10;
     if (g.orderMarker) this.drawOrderMarker(g.orderMarker);
     if (g.orderDrag) this.drawOrderDrag(g.orderDrag);
+    // vue de haut : les noms ne se lisent plus, on ne les écrit que de près (le numéro du trinôme les remplace)
+    const names = !g.strat || this.zoom / this.dpr >= 1.5;
     for (const mt of g.mates) {
       const st = { ...mt.style, ...gunStyle(mt.weapon), ...shieldStyle(mt), ...actStyle(mt) };
       if (mt.dying) Sprites.dying(ctx, mt, st, mt.dying);
@@ -272,7 +354,7 @@ class Renderer {
         const k = this.kickOffset(mt);
         Sprites.character(ctx, mt.x + k.x, mt.y + k.y, mt.angle, st, mt.muzzleT, mt.walk, mt.moving);
         ctx.fillStyle = mt.accent; ctx.font = 'bold 7px sans-serif'; ctx.textAlign = 'center';
-        ctx.fillText(mt.name.toUpperCase(), mt.x, mt.y - 17);
+        if (names) ctx.fillText(mt.name.toUpperCase(), mt.x, mt.y - 17);
         // rappel discret de la direction imposée, tant qu'il n'a pas de contact
         if (mt.coverAngle !== null && !mt.target && !mt.hunter) {
           const cs = Math.cos(mt.coverAngle), sn = Math.sin(mt.coverAngle);
@@ -302,14 +384,180 @@ class Renderer {
     this.drawFog();
     if (g.dark) this.drawGlimpsed();
     this.drawFlashes();
+    if (g.strat) this.drawStratOrders();
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    this.drawVignette();
-    this.drawBlind();
-    this.drawHeard();
-    this.drawCrosshair();
+    if (g.strat) this.drawStratScreen();
+    else {
+      this.drawVignette();
+      this.drawBlind();
+      this.drawHeard();
+      this.drawCrosshair();
+    }
     if (g.minimap) this.drawMinimap();
-    for (const a of [...g.ops, ...g.enemies]) if (a.muzzleT > 0) a.muzzleT -= dt;
+    if (g.strat) this.drawStratCursor();
+    if (!still) for (const a of [...g.ops, ...g.enemies]) if (a.muzzleT > 0) a.muzzleT -= dt;
+  }
+
+  // ---- Stratégie ----
+  // Sous les personnages : un anneau à la couleur de son trinôme sous chacun de vos hommes (plus vif s'il est choisi), un
+  // anneau rouge sous chaque adversaire en vue, et ce que le curseur désigne. Épaisseurs en pixels d'écran.
+  drawStratUnder() {
+    const g = this.game, S = g.strat, ctx = this.ctx, px = this.dpr / this.zoom, h = S.hover;
+    ctx.save();
+    g.war.slots.ops.forEach((grp, k) => {
+      if (!grp) return;
+      const sel = S.sel.has(k);
+      for (const m of grp.members) {
+        if (!m.alive || m.group !== grp) continue;
+        if (sel) {
+          ctx.globalAlpha = 0.18; ctx.fillStyle = grp.color;
+          ctx.beginPath(); ctx.arc(m.x, m.y, m.radius + 5, 0, TAU); ctx.fill();
+        }
+        ctx.globalAlpha = sel ? 1 : 0.55; ctx.strokeStyle = grp.color; ctx.lineWidth = (sel ? 2.2 : 1.3) * px;
+        ctx.beginPath(); ctx.arc(m.x, m.y, m.radius + 4, 0, TAU); ctx.stroke();
+      }
+    });
+    ctx.lineWidth = 1.5 * px;
+    for (const e of g.enemies) {
+      if (!e.alive || !e.visible) continue;
+      const hot = h && h.kind === 'foe' && h.foe === e && S.sel.size;
+      ctx.globalAlpha = hot ? 1 : 0.6; ctx.strokeStyle = '#ef5350'; ctx.lineWidth = (hot ? 2.5 : 1.5) * px;
+      ctx.beginPath(); ctx.arc(e.x, e.y, e.radius + 4, 0, TAU); ctx.stroke();
+    }
+    if (h && h.kind === 'own') {
+      ctx.globalAlpha = 0.9; ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.2 * px;
+      ctx.beginPath(); ctx.arc(h.unit.x, h.unit.y, h.unit.radius + 7, 0, TAU); ctx.stroke();
+    }
+    if (h && h.kind === 'door' && S.sel.size) {
+      // la porte visée : un cadre ambre (colonne, ou passage pour le groupe armé)
+      const d = h.door, L = d.len * TILE / 2 + 3;
+      ctx.globalAlpha = 0.9; ctx.strokeStyle = '#ffb347'; ctx.lineWidth = 2 * px;
+      ctx.strokeRect(d.cx - (d.horizontal ? L : 10), d.cy - (d.horizontal ? 10 : L), d.horizontal ? 2 * L : 20, d.horizontal ? 20 : 2 * L);
+    }
+    ctx.restore();
+  }
+
+  // Les ordres en cours, par-dessus le brouillard : du chef de file à son but, puis aux étapes suivantes, à la couleur du
+  // trinôme (vifs pour ceux qu'on a choisis) ; un point tenu, avec la direction à tenir ; l'adversaire attaqué, en rouge ;
+  // la porte d'une colonne. Et l'ordre en train d'être tracé (clic droit maintenu).
+  drawStratOrders() {
+    const g = this.game, S = g.strat, ctx = this.ctx, px = this.dpr / this.zoom;
+    ctx.save();
+    ctx.lineCap = 'round';
+    g.war.slots.ops.forEach((grp, k) => {
+      const o = grp && grp.order, lead = o && g.leaderOf(grp);
+      if (!lead) return;
+      const sel = S.sel.has(k), col = o.type === 'attack' ? '#ef5350' : grp.color;
+      const pts = o.type === 'stack' ? [o.st ? { x: o.door.cx, y: o.door.cy } : o.front] : [o, ...grp.queue];
+      ctx.globalAlpha = sel ? 0.85 : 0.3;
+      ctx.strokeStyle = col; ctx.lineWidth = 1.6 * px; ctx.setLineDash([6 * px, 5 * px]);
+      if (o.type !== 'hold') {
+        ctx.beginPath(); ctx.moveTo(lead.x, lead.y);
+        for (const q of pts) ctx.lineTo(q.x, q.y);
+        ctx.stroke();
+      }
+      ctx.setLineDash([]);
+      ctx.fillStyle = col;
+      for (const q of pts.slice(0, -1)) { ctx.beginPath(); ctx.arc(q.x, q.y, 3 * px, 0, TAU); ctx.fill(); }
+      const end = pts[pts.length - 1];
+      if (o.type === 'attack') {
+        // réticule sur la cible
+        const r = 9 * px;
+        ctx.lineWidth = 1.8 * px;
+        ctx.beginPath(); ctx.arc(end.x, end.y, r, 0, TAU); ctx.stroke();
+        ctx.beginPath();
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { ctx.moveTo(end.x + dx * r * 0.5, end.y + dy * r * 0.5); ctx.lineTo(end.x + dx * r * 1.5, end.y + dy * r * 1.5); }
+        ctx.stroke();
+      } else if (o.type === 'stack') {
+        const d = o.door, L = d.len * TILE / 2 + 3;
+        ctx.lineWidth = 2 * px;
+        ctx.strokeRect(d.cx - (d.horizontal ? L : 9), d.cy - (d.horizontal ? 9 : L), d.horizontal ? 2 * L : 18, d.horizontal ? 18 : 2 * L);
+      } else if (sel || o.type !== 'hold') {
+        const last = grp.queue.length ? grp.queue[grp.queue.length - 1] : o;
+        ctx.lineWidth = 1.5 * px;
+        ctx.beginPath(); ctx.arc(end.x, end.y, 6 * px + 3, 0, TAU); ctx.stroke();
+        if (last.angle !== undefined && last.angle !== null) this.drawCoverArrow(end.x, end.y, last.angle, col, sel ? 0.75 : 0.3);
+      }
+    });
+    // ordre en cours de tracé : son point et, tiré, la direction à tenir
+    if (S.aim && g.input.mouse.rdown) {
+      ctx.globalAlpha = 0.9; ctx.strokeStyle = '#7fd18a'; ctx.lineWidth = 1.5 * px; ctx.setLineDash([4 * px, 3 * px]);
+      ctx.beginPath(); ctx.arc(S.aim.x, S.aim.y, 9 * px + 3, 0, TAU); ctx.stroke();
+      ctx.setLineDash([]);
+      if (S.aim.angle !== null) this.drawCoverArrow(S.aim.x, S.aim.y, S.aim.angle, '#7fd18a', 0.9);
+    }
+    ctx.restore();
+  }
+
+  // À l'écran : le numéro de chaque trinôme au-dessus de son chef de file, la santé de vos hommes choisis, le rectangle de
+  // sélection, et un liseré bleu pendant la pause tactique.
+  drawStratScreen() {
+    const g = this.game, S = g.strat, ctx = this.ctx, d = this.dpr;
+    const scr = (x, y) => ({ x: x * this.zoom + this.tx, y: y * this.zoom + this.ty });
+    ctx.save();
+    g.war.slots.ops.forEach((grp, k) => {
+      const lead = grp && g.leaderOf(grp);
+      if (!lead) return;
+      const sel = S.sel.has(k);
+      for (const m of grp.members) {
+        if (!sel || !m.alive || m.group !== grp) continue;
+        const q = scr(m.x, m.y), w = 18 * d, y = q.y + (m.radius + 7) * this.zoom;
+        ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(q.x - w / 2 - d, y - d, w + 2 * d, 4 * d);
+        ctx.fillStyle = m.hp > 60 ? '#4caf50' : m.hp > 30 ? '#ffb300' : '#ef5350';
+        ctx.fillRect(q.x - w / 2, y, w * m.hp / m.maxHp, 2 * d);
+      }
+      const q = scr(lead.x, lead.y), s = 13 * d, x = q.x - s / 2, y = q.y - (lead.radius + 8) * this.zoom - s;
+      ctx.globalAlpha = sel ? 1 : 0.75;
+      ctx.fillStyle = grp.color; ctx.fillRect(x, y, s, s);
+      ctx.strokeStyle = sel ? '#fff' : 'rgba(0,0,0,0.7)'; ctx.lineWidth = (sel ? 1.5 : 1) * d; ctx.strokeRect(x, y, s, s);
+      ctx.fillStyle = '#0b0d10'; ctx.font = `bold ${Math.round(10 * d)}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(String(k + 1), q.x, y + s / 2 + 0.5 * d);
+      ctx.globalAlpha = 1;
+    });
+    const b = S.box;
+    if (b && (Math.abs(b.x1 - b.x0) > 0 || Math.abs(b.y1 - b.y0) > 0)) {
+      const p = scr(Math.min(b.x0, b.x1), Math.min(b.y0, b.y1)), q = scr(Math.max(b.x0, b.x1), Math.max(b.y0, b.y1));
+      ctx.fillStyle = 'rgba(127,209,138,0.1)'; ctx.fillRect(p.x, p.y, q.x - p.x, q.y - p.y);
+      ctx.strokeStyle = 'rgba(127,209,138,0.85)'; ctx.lineWidth = d; ctx.strokeRect(p.x + 0.5, p.y + 0.5, q.x - p.x, q.y - p.y);
+    }
+    if (S.frozen) {
+      ctx.strokeStyle = 'rgba(100,181,246,0.55)'; ctx.lineWidth = 6 * d;
+      ctx.strokeRect(3 * d, 3 * d, this.canvas.width - 6 * d, this.canvas.height - 6 * d);
+    }
+    ctx.restore();
+  }
+
+  // Le curseur du commandant : une flèche ; un réticule rouge sur un adversaire (attaquer), un cadre ambre sur une porte
+  // fermée (colonne ou passage), dès qu'un trinôme est choisi.
+  drawStratCursor() {
+    const g = this.game, S = g.strat, ctx = this.ctx, d = this.dpr, h = S.hover, sel = S.sel.size > 0;
+    const x = this.mouse.sx * d, y = this.mouse.sy * d;
+    ctx.save();
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    if (sel && h && h.kind === 'foe') {
+      const r = 9 * d;
+      for (const [w, c] of [[4.5, 'rgba(0,0,0,0.6)'], [2.2, '#ef5350']]) {
+        ctx.strokeStyle = c; ctx.lineWidth = w * d;
+        ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.stroke();
+        ctx.beginPath();
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { ctx.moveTo(x + dx * r * 0.45, y + dy * r * 0.45); ctx.lineTo(x + dx * r * 1.6, y + dy * r * 1.6); }
+        ctx.stroke();
+      }
+    } else {
+      const col = sel && h && h.kind === 'door' ? '#ffb347' : '#ffffff';
+      ctx.beginPath();
+      ctx.moveTo(x, y); ctx.lineTo(x, y + 17 * d); ctx.lineTo(x + 4.5 * d, y + 13 * d); ctx.lineTo(x + 8 * d, y + 20 * d);
+      ctx.lineTo(x + 11 * d, y + 18.5 * d); ctx.lineTo(x + 7.5 * d, y + 11.8 * d); ctx.lineTo(x + 12.5 * d, y + 11.8 * d);
+      ctx.closePath();
+      ctx.fillStyle = col; ctx.fill();
+      ctx.strokeStyle = 'rgba(0,0,0,0.8)'; ctx.lineWidth = 1.4 * d; ctx.stroke();
+      if (col !== '#ffffff') { // porte : un petit battant à côté de la flèche
+        ctx.fillStyle = col; ctx.fillRect(x + 14 * d, y + 4 * d, 3 * d, 12 * d);
+        ctx.strokeRect(x + 14 * d, y + 4 * d, 3 * d, 12 * d);
+      }
+    }
+    ctx.restore();
   }
 
   drawDoors() {
@@ -432,7 +680,7 @@ class Renderer {
   drawBodies() {
     const g = this.game;
     for (const e of g.enemies) if (!e.alive && !e.dying && e.bodySeen) Sprites.body(this.ctx, e, this.enemyStyle(e));
-    if (!g.player.alive && !g.player.dying) Sprites.body(this.ctx, g.player, { ...(g.player.style || STYLE_PLAYER), ...gunStyle(g.player.weapon), ...shieldStyle(g.player), plates: !!(g.player.vest && g.player.vest.plate) });
+    if (!g.player.alive && !g.player.dying && !g.player.commander) Sprites.body(this.ctx, g.player, { ...(g.player.style || STYLE_PLAYER), ...gunStyle(g.player.weapon), ...shieldStyle(g.player), plates: !!(g.player.vest && g.player.vest.plate) });
     for (const mt of g.mates) if (!mt.alive && !mt.dying) Sprites.body(this.ctx, mt, { ...mt.style, ...gunStyle(mt.weapon), ...shieldStyle(mt) });
     for (const h of g.hostages) if (!h.alive && h.bodySeen) Sprites.body(this.ctx, h, h.style || STYLE_HOSTAGE);
   }
@@ -850,11 +1098,20 @@ class Renderer {
       t.lineTo(px + Math.cos(a - 2.5) * 4, py + Math.sin(a - 2.5) * 4);
       t.closePath(); t.fill();
     }
+    // stratégie : vos trinômes choisis, cerclés de blanc
+    if (g.strat) {
+      t.strokeStyle = '#fff'; t.lineWidth = 1;
+      g.war.slots.ops.forEach((grp, k) => {
+        if (!grp || !g.strat.sel.has(k)) return;
+        for (const mt of grp.members) if (mt.alive && mt.group === grp) { t.beginPath(); t.arc(mt.x / TILE * s, mt.y / TILE * s, 3.5, 0, TAU); t.stroke(); }
+      });
+    }
     // cadre à l'écran, en haut à droite
     const scale = clamp(this.canvas.width * 0.22 / this.miniTmpC.width, 0.4, 1.6);
     const w = this.miniTmpC.width * scale, h = this.miniTmpC.height * scale;
     // sous la barre du haut du HUD, pour ne pas croiser le chrono
     const pad = 10 * this.dpr, x0 = this.canvas.width - w - pad, y0 = 40 * this.dpr;
+    this.miniRect = { x: x0, y: y0, w, h }; // (stratégie : un clic dessus y emmène la vue)
     ctx.save();
     ctx.globalAlpha = 0.9;
     ctx.fillStyle = 'rgba(8,10,13,0.72)';
@@ -863,6 +1120,12 @@ class Renderer {
     ctx.strokeRect(x0 - 3.5, y0 - 3.5, w + 7, h + 7);
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(this.miniTmpC, x0, y0, w, h);
+    if (g.strat) {
+      // la partie de la carte à l'écran
+      const v = this.viewRect(), k = w / (m.w * TILE);
+      ctx.globalAlpha = 0.8; ctx.strokeStyle = '#fff'; ctx.lineWidth = this.dpr;
+      ctx.strokeRect(x0 + v.x * k, y0 + v.y * k, v.w * k, v.h * k);
+    }
     ctx.restore();
   }
 

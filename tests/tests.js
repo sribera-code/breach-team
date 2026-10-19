@@ -1696,6 +1696,33 @@ test('siège : la minimap signale la pièce où entre chaque vague', () => {
   ok(s.arrival !== first && s.arrival.at > first.at, 'nouvelle arrivée pour la vague suivante');
 });
 
+test('siège : préparation, arrivée des vagues et compte à rebours au centre de l’écran', () => {
+  const g = mkGame({ mode: 'siege' });
+  const game = g.game, s = game.siege, el = g.ui.$('waveBanner');
+  const part = c => el.querySelector('.' + c).textContent;
+  const on = () => el.classList.contains('on');
+  g.step(1);
+  ok(on() && part('wtitle') === 'Préparation', 'préparation affichée : ' + part('wtitle'));
+  eq(part('wcount'), '10s', 'compte à rebours de la préparation');
+  s.prep = 0.01; g.step(2);
+  game.enemies.forEach(e => { e.hp = e.maxHp = 1e9; });
+  ok(on() && el.classList.contains('alert'), 'arrivée de la vague annoncée');
+  eq(part('wtitle'), 'Vague 1 / ' + s.waves.length, 'numéro de la vague');
+  ok(part('wsub').includes(game.map.breachLabel(s.arrival.breach)), 'par quelle ouverture : ' + part('wsub'));
+  eq(game.message.t > 0 ? game.message.text : '', '', 'plus de doublon en bas de l’écran');
+  g.step(Math.ceil(WAVE_BANNER * 60) + 2);
+  ok(!on(), 'l’annonce s’efface tant que la vague tient');
+  game.enemies.forEach(e => { e.alive = false; });
+  g.step(1);
+  ok(on() && part('wtitle') === 'Vague 1 / ' + s.waves.length + ' repoussée', 'vague repoussée : ' + part('wtitle'));
+  eq(part('wcount'), Math.ceil(s.nextWave) + 's', 'compte à rebours de la suivante');
+  g.step(Math.ceil(s.nextWave * 60) + 2);
+  eq(part('wtitle'), 'Vague 2 / ' + s.waves.length, 'la suivante est annoncée à son tour');
+  const a = mkGame({ mode: 'assault' });
+  a.step(1);
+  ok(!a.ui.$('waveBanner').classList.contains('on'), 'rien hors du siège');
+});
+
 // Porte intérieure avec du champ libre des deux côtés : deux points à 1,5 case de part et d'autre.
 function doorWithRoom(game) {
   for (const d of game.map.doors) {
@@ -3442,7 +3469,8 @@ test('trinômes : un trinôme autonome ratisse le bâtiment au plus près, sans 
     game.enemies = [];
     const grp = game.mates.find(m => m.hunter).group, secs = grp.sectors, seen = new Set();
     let prev = null, fickle = 0;
-    for (let i = 0; i < 60 * 60; i++) {
+    // (le trinôme avance au pas, en marquant les portes : deux minutes)
+    for (let i = 0; i < 120 * 60; i++) {
       game.update(1 / 60);
       for (const s of secs) if (s.done) seen.add(s);
       // un secteur choisi n'est quitté qu'une fois vu (ou la liste reprise à zéro, tout étant vu)
@@ -3450,7 +3478,7 @@ test('trinômes : un trinôme autonome ratisse le bâtiment au plus près, sans 
       prev = grp.sweepTo;
     }
     eq(fickle, 0, tag + ' : jamais de changement d’avis en route');
-    ok(seen.size >= secs.length * 0.6, tag + ' : en une minute, ' + seen.size + ' secteurs vus sur ' + secs.length);
+    ok(seen.size >= secs.length * 0.6, tag + ' : en deux minutes, ' + seen.size + ' secteurs vus sur ' + secs.length);
   }
 });
 
@@ -3522,8 +3550,135 @@ test('trinômes : arrivé sur un contact vide, le trinôme fouille les alentours
   if (here.length > 1) ok(here.some(m => here.some(o => Math.abs(angleDiff(m.angle, o.angle)) > 45 * DEG)), 'chacun regarde de son côté');
   for (let i = 0; i < (SQUAD_SEARCH + 0.5) * 60; i++) game.update(1 / 60);
   eq(grp.search, null, 'la fouille finie');
-  for (let i = 0; i < 60; i++) game.update(1 / 60);
-  ok(grp.sweepTo && auto.some(m => m.moving), 'il reprend le ratissage');
+  // (il repart derrière son chef, ou se met d'abord en colonne sur une porte fermée toute proche)
+  let resumed = false;
+  for (let i = 0; i < 60 * 2; i++) { game.update(1 / 60); resumed = resumed || auto.some(m => m.moving || m.entry); }
+  ok(grp.sweepTo && resumed, 'il reprend le ratissage');
+});
+
+test('trinômes : un trinôme autonome avance en file derrière son chef, au pas, sans bruit, les flancs couverts', () => {
+  const g = mkGame({ mode: 'squadsArmed' }); // (le groupe armé ne se met pas en colonne : il marche davantage)
+  const game = g.game;
+  game.enemies = [];
+  const auto = game.mates.filter(m => m.hunter), grp = auto[0].group, [lead, f1, f2] = auto;
+  eq(game.leaderOf(grp), lead, 'le premier entré mène');
+  g.step(1);
+  const said = [...document.querySelectorAll('#squad .mate.auto .morder')].map(el => el.textContent);
+  ok(said[0] === 'En tête' && said[1] === 'Suit' && said[2] === 'Suit', 'le HUD montre qui mène et qui suit (' + said.join(', ') + ')');
+  let steps = 0;
+  const noise = game.noise.bind(game);
+  game.noise = (x, y, R, src, kind) => { if (src === lead && kind === 'step') steps++; noise(x, y, R, src, kind); };
+  let n = 0, straight = 0, behind = 0, near = 0, fast = 0, watch = 0, covered = 0, sides = 0;
+  const heads = [];
+  for (let i = 0; i < 60 * 30; i++) {
+    const x0 = lead.x, y0 = lead.y, s0 = steps;
+    game.update(1 / 60);
+    heads.push(lead.moveDir);
+    // (en colonne sur une porte, chacun tient son poste : on ne regarde que la marche)
+    if (auto.some(a => a.entry || a.clear)) steps = s0;
+    if (!lead.moving || auto.some(a => a.entry || a.clear) || grp.search) continue;
+    n++;
+    if (dist(x0, y0, lead.x, lead.y) > lead.speed * SQUAD_PACE / 60 + 1) fast++; // (un équipier qui le frôle le pousse un peu)
+    const h = lead.moveDir, along = f => (f.x - lead.x) * Math.cos(h) + (f.y - lead.y) * Math.sin(h);
+    // (dans un virage, la file met un moment à se reformer : on la regarde en ligne droite)
+    if (heads.length > 60 && Math.abs(angleDiff(heads[heads.length - 61], h)) < 30 * DEG) {
+      straight++;
+      if (along(f1) < 0.3 * U && along(f2) < 0.3 * U) behind++;
+    }
+    if (dist(f1.x, f1.y, lead.x, lead.y) <= SQUAD_SPREAD && dist(f2.x, f2.y, lead.x, lead.y) <= SQUAD_SPREAD) near++;
+    // en marche à sa place, chacun regarde son côté : le second à gauche, le dernier à droite (ou derrière)
+    if (f1.moving && f2.moving && f1.alertAngle === null && f2.alertAngle === null) {
+      watch++;
+      const o1 = angleDiff(h, f1.angle), o2 = angleDiff(h, f2.angle);
+      if (Math.abs(o1) > 25 * DEG && Math.abs(o2) > 25 * DEG) covered++;
+      if (o1 < 0 && (o2 > 0 || Math.abs(o2) > 150 * DEG)) sides++;
+    }
+  }
+  ok(n > 60 * 8, 'il marche (' + (n / 60).toFixed(1) + ' s sur 30)');
+  ok(fast <= n * 0.02, 'le chef avance au pas, hors combat (' + fast + ' images plus vite)');
+  eq(steps, 0, 'au pas, on ne l’entend pas');
+  ok(straight > 60 * 4 && behind >= straight * 0.85, 'les deux autres le suivent, derrière lui (' + Math.round(100 * behind / straight) + ' % de ' + (straight / 60).toFixed(1) + ' s en ligne droite)');
+  ok(near >= n * 0.9, 'à quelques pas (' + Math.round(100 * near / n) + ' %)');
+  ok(watch > 60 && covered >= watch * 0.7, 'en marche, ses équipiers ne regardent pas tous devant (' + covered + ' / ' + watch + ')');
+  ok(sides >= watch * 0.6, 'chacun son côté (' + sides + ' / ' + watch + ')');
+});
+
+test('trinômes : le chef marque un temps avant de franchir une porte, attend les siens, et tombé, le suivant prend la tête', () => {
+  const g = mkGame({ mode: 'squadsArmed' }); // (le groupe armé ne se met pas en colonne : on regarde la marche seule)
+  const game = g.game, map = game.map, foe = game.enemies[0];
+  game.enemies = [];
+  const auto = game.mates.filter(m => m.hunter), grp = auto[0].group, [lead, f1, f2] = auto;
+  // une porte intérieure ouverte, avec de la place de part et d'autre
+  const across = (d, k) => ({ x: d.cx + (d.horizontal ? 0 : k * U), y: d.cy + (d.horizontal ? k * U : 0) });
+  const free = (d, k) => map.circleFree(across(d, k).x, across(d, k).y, 12, true);
+  const d = map.doors.find(d => !map.breaches.some(b => b.door === d) && [-3.2, -2.4, -1.6, -0.8, 0.8, 1.6, 2.6].every(k => free(d, k)));
+  ok(d, 'une porte dégagée');
+  setDoor(d, 1);
+  [[lead, -1.6], [f1, -2.4], [f2, -3.2]].forEach(([a, k]) => { Object.assign(a, across(d, k)); a.path = []; a.angle = a.moveDir = Math.atan2(d.cy - a.y, d.cx - a.x); });
+  const to = across(d, 2.6);
+  grp.contact = { x: to.x, y: to.y, t: game.time, seen: false, foe: null };
+  grp.sweepTo = null; grp.search = null;
+  const side = a => Math.sign(d.horizontal ? a.y - d.cy : a.x - d.cx);
+  let held = 0, heldFar = 0, crossed = false;
+  for (let i = 0; i < 60 * 5 && !crossed; i++) {
+    game.update(1 / 60);
+    if (lead.holdT > 0 && !lead.moving) { held++; if (dist(lead.x, lead.y, d.cx, d.cy) > 1.7 * U) heldFar++; }
+    crossed = side(lead) > 0 && dist(lead.x, lead.y, d.cx, d.cy) > 0.8 * U;
+  }
+  ok(crossed, 'il passe la porte');
+  ok(held >= SQUAD_DOOR_PAUSE * 60 * 0.8 && held <= SQUAD_DOOR_PAUSE * 60 + 2, 'après un temps sur le seuil (' + (held / 60).toFixed(2) + ' s)');
+  eq(heldFar, 0, 'sur le seuil, pas avant');
+  // un équipier sonné reste en arrière : le chef l'attend, SQUAD_WAIT s au plus
+  game.time += SQUAD_CONTACT; // (le contact est passé : on reprend le ratissage)
+  f2.stun = 60; f2.path = [];
+  let lag = null, still = 0, gone = false;
+  for (let i = 0; i < 60 * 20 && !gone; i++) {
+    game.update(1 / 60);
+    const far = dist(lead.x, lead.y, f2.x, f2.y) > SQUAD_SPREAD;
+    if (lag === null && far) lag = game.time;
+    if (lag !== null && game.time - lag < SQUAD_WAIT - 0.2 && !lead.moving) still++;
+    gone = lag !== null && game.time - lag > SQUAD_WAIT + 3;
+  }
+  ok(lag !== null, 'le trinôme s’éloigne de son équipier sonné');
+  ok(still >= (SQUAD_WAIT - 0.2) * 60 * 0.85, 'le chef l’attend (' + (still / 60).toFixed(1) + ' s)');
+  ok(dist(lead.x, lead.y, f2.x, f2.y) > SQUAD_SPREAD + U, 'puis repart sans lui');
+  ok(dist(f1.x, f1.y, lead.x, lead.y) <= SQUAD_SPREAD, 'l’autre toujours derrière lui');
+  // le chef tombe : le suivant mène, le dernier le suit
+  game.damage(lead, 1e10, foe, 0);
+  eq(game.leaderOf(grp), f1, 'le second prend la tête');
+  f2.stun = 0;
+  const start = { x: f1.x, y: f1.y };
+  let close = 0;
+  for (let i = 0; i < 60 * 15; i++) {
+    game.update(1 / 60);
+    if (dist(f1.x, f1.y, f2.x, f2.y) <= SQUAD_SPREAD) close++;
+  }
+  ok(dist(f1.x, f1.y, start.x, start.y) > 3 * U, 'le nouveau chef reprend le ratissage');
+  ok(close >= 60 * 15 * 0.7, 'le dernier le suit (' + (close / 60).toFixed(1) + ' s sur 15)');
+});
+
+test('trinômes : au contact, ceux qui ne voient pas l’adversaire viennent à hauteur du chef et tirent aussi', () => {
+  for (const mode of ['squads', 'squadsArmed']) {
+    const g = mkGame({ mode });
+    const game = g.game;
+    const auto = game.mates.filter(m => m.hunter), grp = auto[0].group, [lead, f1, f2] = auto, foe = game.enemies[0];
+    game.enemies = [foe];
+    Object.assign(foe, { viewRange: 0, hp: 1e6, maxHp: 1e6, act: null });
+    const spot = spotAt(game, lead, 5 * U);
+    ok(spot, mode + ' : une place en vue du chef');
+    Object.assign(foe, spot);
+    game.updateAssault = (e, dt) => (e === foe ? null : Game.prototype.updateAssault.call(game, e, dt)); // il ne bouge pas
+    const a = Math.atan2(foe.y - lead.y, foe.x - lead.x);
+    lead.angle = a;
+    // les deux autres en file derrière lui, le regard ailleurs
+    [[f1, SQUAD_FILE[0]], [f2, SQUAD_FILE[1]]].forEach(([f, off]) => { Object.assign(f, game.formationPos(f, lead, off, a)); f.angle = a + Math.PI; f.path = []; });
+    const shots = new Map();
+    const fire = game.fireWeapon.bind(game);
+    game.fireWeapon = s => { shots.set(s, (shots.get(s) || 0) + 1); fire(s); };
+    for (let i = 0; i < 60 * 4; i++) game.update(1 / 60);
+    ok(shots.get(lead) > 0, mode + ' : le chef tire');
+    ok(shots.get(f1) > 0 && shots.get(f2) > 0, mode + ' : ses équipiers aussi (' + (shots.get(f1) || 0) + ', ' + (shots.get(f2) || 0) + ' coups)');
+  }
 });
 
 test('trinômes : un trinôme qui entend les siens se battre tout près vient en renfort', () => {
@@ -3979,7 +4134,8 @@ test('escorte : HUD, briefing et missions montrent le VIP et le chemin de A à B
   eq(UI.compass(U, 0), 'tout près', 'boussole');
   ui.showModes();
   const modes = [...ui.panel.querySelectorAll('.modebtn')];
-  eq(modes.length, 5, 'cinq modes');
+  eq(modes.length, Object.keys(MODES).filter(m => !MODES[m].variantOf).length, 'une carte par mode (les deux camps d’un mode n’en ont qu’une)');
+  ok(modes.some(b => b.dataset.mode === 'strategyAssault'), 'la stratégie d’assaut a la sienne');
   ok(modes.find(b => b.dataset.mode === 'escort').classList.contains('sel'), 'escorte sélectionnée');
   ui.showBriefing();
   eq(ui.panel.querySelectorAll('.entrybtn').length, 0, 'pas de choix d’entrée : on part du point A');
@@ -4253,6 +4409,467 @@ test('chaque champ de bataille se joue sans exception, des deux côtés', () => 
   }
 });
 
+// ---------------------------------------------------------------- stratégie
+// Une partie de stratégie ; calm : sans adversaire ni renforts, pour mesurer les ordres au calme.
+function mkStrat(opts = {}) {
+  const g = mkGame({ mode: 'strategy', ...opts });
+  if (opts.calm) { g.game.enemies = []; g.game.updateWar = () => {}; }
+  return g;
+}
+// Un clic du commandant au point (x, y) du monde : gauche (button 0) ou droit (2), Maj enfoncée ou non.
+function clickAt(g, x, y, button = 0, shift = false) {
+  const inp = g.game.input;
+  inp.mouse.x = x; inp.mouse.y = y; inp.mouse.down = false; inp.mouse.rdown = false;
+  inp.keys.ShiftLeft = shift;
+  Object.assign(inp.pressed, button ? { Mouse2: true, Mouse2Up: true } : { Mouse0: true, Mouse0Up: true });
+  g.step(1);
+  inp.keys.ShiftLeft = false;
+}
+const stratKey = (g, code, shift = false) => { g.game.input.keys.ShiftLeft = shift; g.press(code); g.game.input.keys.ShiftLeft = false; };
+// Ses hommes debout, et le temps simulé (sans dessin) jusqu'à ce que cond soit vraie, max s au plus.
+const upOf = grp => grp.members.filter(m => m.alive && m.group === grp);
+function simUntil(game, cond, max) {
+  for (let i = 0; i < max * 60; i++) { if (cond()) return true; game.update(1 / 60); }
+  return cond();
+}
+// Un point libre du champ de bataille, à n cases de votre base vers l'autre, décalé de lat cases sur le côté.
+function fieldPoint(game, n, lat = 0) {
+  const h = game.war.bases.ops, f = game.war.bases.enemy, a = Math.atan2(f.cy - h.cy, f.cx - h.cx);
+  return game.freeSpotNear(h.cx + Math.cos(a) * n * U - Math.sin(a) * lat * U, h.cy + Math.sin(a) * n * U + Math.cos(a) * lat * U);
+}
+
+test('stratégie : trois trinômes à vos ordres de chaque côté, vous hors du terrain, vue de haut', () => {
+  for (const mode of ['strategy', 'strategyArmed']) for (let lvl = 0; lvl < WAR_LEVELS.length; lvl++) {
+    const g = mkGame({ mode, level: lvl, entry: lvl % 2 });
+    const game = g.game, W = game.war, tag = mode + ' / ' + WAR_LEVELS[lvl].name;
+    ok(game.strat && W && game.squads, tag + ' : une bataille de guerre totale, commandée');
+    ok(game.player.commander && !game.player.alive && !game.mates.includes(game.player), tag + ' : vous n’êtes pas sur le terrain');
+    eq(game.crew.length, 0, tag + ' : pas de coéquipier à suivre');
+    eq(armyOf(game, 'ops').length, 9, tag + ' : neuf hommes de votre côté');
+    eq(armyOf(game, 'enemy').length, 9, tag + ' : neuf en face');
+    W.slots.ops.forEach((s, k) => {
+      ok(s.members.length === 3 && s.members.every(m => m.hunter && m.team === 'ops' && m.accent === STRAT_COLORS[k]), tag + ' : trinôme ' + (k + 1) + ', à sa couleur');
+      eq(s.label, STRAT_DEFS[game.camp][k][0].name, tag + ' : nommé d’après son chef');
+      ok(s.order && s.order.type === 'hold' && s.members.every(m => dist(m.x, m.y, W.bases.ops.cx, W.bases.ops.cy) < 6 * U), tag + ' : il attend vos ordres à la base');
+    });
+    eq(new Set(armyOf(game, 'ops').map(m => m.name)).size, 9, tag + ' : chacun son nom');
+    ok(g.r.zoom < g.r.zoomMax && g.r.canvas.height / g.r.zoom >= 25 * U, tag + ' : la vue montre le champ de bataille de haut');
+    ok(document.getElementById('hud').classList.contains('strategy'), tag + ' : le HUD de l’armée');
+    eq(document.querySelectorAll('#stratBox .srow').length, 3, tag + ' : une ligne par trinôme');
+    const at = armyOf(game, 'ops').map(m => ({ x: m.x, y: m.y }));
+    game.enemies = []; game.updateWar = () => {};
+    g.step(120);
+    ok(armyOf(game, 'ops').every((m, i) => dist(m.x, m.y, at[i].x, at[i].y) < 2 * U), tag + ' : sans ordre, ils restent à la base');
+  }
+});
+
+test('stratégie : on choisit au clic, au rectangle, au clavier ; clic droit : le trinôme y va et tient en ligne', () => {
+  const g = mkStrat({ calm: true });
+  const game = g.game, W = game.war, S = game.strat, [a, b, c] = W.slots.ops;
+  clickAt(g, b.members[1].x, b.members[1].y);
+  ok(S.sel.size === 1 && S.sel.has(1), 'un clic sur un homme choisit son trinôme');
+  const empty = fieldPoint(game, 12, 6);
+  clickAt(g, empty.x, empty.y);
+  eq(S.sel.size, 0, 'un clic dans le vide ne choisit plus rien');
+  // rectangle autour de toute l'armée
+  const xs = armyOf(game, 'ops').map(m => m.x), ys = armyOf(game, 'ops').map(m => m.y), inp = game.input;
+  inp.mouse.x = Math.min(...xs) - U; inp.mouse.y = Math.min(...ys) - U; inp.mouse.down = true; inp.pressed.Mouse0 = true; g.step(1);
+  inp.mouse.x = Math.max(...xs) + U; inp.mouse.y = Math.max(...ys) + U; g.step(1);
+  ok(S.box && S.box.x1 > S.box.x0, 'le rectangle se trace');
+  inp.mouse.down = false; inp.pressed.Mouse0Up = true; g.step(1);
+  eq([...S.sel].sort().join(), '0,1,2', 'un rectangle choisit tous ceux qui y sont');
+  stratKey(g, 'Digit2');
+  eq([...S.sel].join(), '1', '2 : le deuxième seul');
+  stratKey(g, 'Digit3', true);
+  eq([...S.sel].sort().join(), '1,2', 'Maj + 3 : le troisième en plus');
+  stratKey(g, 'KeyQ');
+  eq(S.sel.size, 3, 'A : toute l’armée');
+  stratKey(g, 'Digit1');
+  // clic droit : le premier trinôme y va, en file, et tient en ligne à l'arrivée, face à sa marche
+  const p = fieldPoint(game, 10);
+  ok(p, 'un point libre devant la base');
+  clickAt(g, p.x, p.y, 2);
+  ok(a.order.type === 'move' && dist(a.order.x, a.order.y, p.x, p.y) < U, 'ordre de déplacement');
+  ok(b.order.type === 'hold' && c.order.type === 'hold', 'les autres n’ont pas bougé d’ordre');
+  ok(/en route/.test(game.message.text), 'il répond');
+  ok(simUntil(game, () => a.order.type === 'hold', 40), 'il arrive (' + Math.round(dist(game.leaderOf(a).x, game.leaderOf(a).y, p.x, p.y) / U) + ' cases du but)');
+  const lead = game.leaderOf(a);
+  ok(dist(lead.x, lead.y, p.x, p.y) < STRAT_LEASH, 'le chef tient le point');
+  g.step(120);
+  ok(upOf(a).every(m => dist(m.x, m.y, lead.x, lead.y) < 2.5 * U), 'les siens à sa hauteur');
+  const ang = a.order.angle, side = upOf(a).filter(m => m !== lead).map(m => Math.sin(Math.atan2(m.y - lead.y, m.x - lead.x) - ang));
+  ok(side.length === 2 && side[0] * side[1] < 0, 'en ligne, un de chaque côté du chef');
+  ok(upOf(a).every(m => Math.abs(angleDiff(m.angle, ang)) < 70 * DEG), 'tous tournés vers la direction de marche');
+  ok(upOf(b).every(m => dist(m.x, m.y, W.bases.ops.cx, W.bases.ops.cy) < 6 * U), 'les autres sont restés à la base');
+});
+
+test('stratégie : plusieurs trinômes envoyés ensemble se rangent côte à côte, sans se croiser', () => {
+  const g = mkStrat({ calm: true });
+  const game = g.game, W = game.war;
+  stratKey(g, 'KeyQ');
+  const p = fieldPoint(game, 11);
+  clickAt(g, p.x, p.y, 2);
+  const pts = W.slots.ops.map(s => s.order);
+  ok(pts.every(o => o.type === 'move'), 'les trois sont envoyés');
+  ok(pts.every((o, i) => pts.every((q, j) => j <= i || dist(o.x, o.y, q.x, q.y) > 1.5 * U)), 'chacun son point, écartés');
+  ok(simUntil(game, () => W.slots.ops.every(s => s.order.type === 'hold'), 45), 'tous arrivent');
+  const all = armyOf(game, 'ops');
+  ok(all.every((m, i) => all.every((o, j) => j <= i || dist(m.x, m.y, o.x, o.y) > 14)), 'personne l’un sur l’autre');
+});
+
+test('stratégie : Maj + clic droit enchaîne les étapes, H tient, R rend son couloir au trinôme, C le fait courir', () => {
+  const g = mkStrat({ calm: true });
+  const game = g.game, [a] = game.war.slots.ops;
+  stratKey(g, 'Digit1');
+  const p1 = fieldPoint(game, 7, -3), p2 = fieldPoint(game, 11, 3);
+  clickAt(g, p1.x, p1.y, 2);
+  clickAt(g, p2.x, p2.y, 2, true);
+  ok(a.order.type === 'move' && a.queue.length === 1 && dist(a.queue[0].x, a.queue[0].y, p2.x, p2.y) < U, 'deux étapes');
+  ok(simUntil(game, () => a.queue.length === 0, 30), 'la première faite, il enchaîne');
+  ok(a.order.type === 'move' && dist(a.order.x, a.order.y, p2.x, p2.y) < U, 'vers la seconde');
+  ok(simUntil(game, () => a.order.type === 'hold', 30), 'puis il tient');
+  near(dist(game.leaderOf(a).x, game.leaderOf(a).y, p2.x, p2.y), 0, STRAT_LEASH, 'au second point');
+  // H en route : on s'arrête net
+  const p3 = fieldPoint(game, 3);
+  clickAt(g, p3.x, p3.y, 2);
+  game.update(1); // (une seconde de marche)
+  g.press('KeyH');
+  const l = game.leaderOf(a);
+  ok(a.order.type === 'hold' && dist(a.order.x, a.order.y, l.x, l.y) < 1, 'H : il tient là où il est');
+  // C : au pas de course
+  g.press('KeyC');
+  ok(a.rush && /course/.test(game.message.text), 'C : au pas de course');
+  // R : plus d'ordre, il ratisse son couloir
+  g.press('KeyR');
+  ok(a.order === null && a.queue.length === 0, 'R : plus d’ordre');
+  const before = { x: l.x, y: l.y };
+  for (let i = 0; i < 60 * 6; i++) game.update(1 / 60);
+  ok(a.sweepTo && dist(l.x, l.y, before.x, before.y) > U, 'il repart ratisser seul');
+});
+
+test('stratégie : clic droit sur un adversaire en vue, le trinôme l’attaque ; abattu, il tient', () => {
+  const g = mkStrat({ noEnemyAI: true });
+  const game = g.game, W = game.war, [a] = W.slots.ops;
+  game.updateWar = () => {};
+  const foe = W.slots.enemy[0].members[0];
+  game.enemies = [foe];
+  foe.hunter = false; // (immobile et muet : noEnemyAI)
+  const lead = game.leaderOf(a), q = fieldPoint(game, 9);
+  Object.assign(foe, { x: q.x, y: q.y, hp: 300, maxHp: 300 });
+  for (const m of upOf(a)) m.angle = Math.atan2(q.y - m.y, q.x - m.x);
+  g.step(2);
+  ok(foe.visible, 'l’adversaire est en vue');
+  stratKey(g, 'Digit1');
+  clickAt(g, foe.x, foe.y, 2);
+  ok(a.order.type === 'attack' && a.order.foe === foe, 'ordre d’attaque');
+  ok(a.contact && a.contact.foe === foe, 'le trinôme sait qui');
+  ok(simUntil(game, () => !foe.alive, 25), 'il est abattu');
+  g.step(2);
+  ok(a.order.type === 'hold' && /cible abattue/.test(game.message.text), 'le trinôme tient, et le dit');
+  eq(W.kills.ops, 1, 'un point pour votre armée');
+  ok(lead.alive, '(le chef est debout)');
+});
+
+// Le trinôme k amené devant la porte d, du côté side, sans personne d'autre autour.
+function nearDoor(game, k, d, side) {
+  const grp = game.war.slots.ops[k], taken = [];
+  for (const m of upOf(grp)) {
+    const ix = d.horizontal ? 0 : -side, iy = d.horizontal ? -side : 0;
+    let s = null;
+    for (let r = 2; r <= 6 && !s; r++) {
+      const c = game.freeSpotNear(d.cx - ix * r * U * 0.8, d.cy - iy * r * U * 0.8, 6);
+      if (c && taken.every(t => dist(t.x, t.y, c.x, c.y) > 26)) s = c;
+    }
+    m.x = s.x; m.y = s.y; taken.push(s);
+  }
+  const l = game.leaderOf(grp);
+  grp.order = { type: 'hold', x: l.x, y: l.y, angle: 0 };
+}
+// La porte fermée la plus proche de votre base, et votre côté.
+function homeDoor(game) {
+  const b = game.war.bases.ops, d = nearestDoorTo(game.map, b.cx, b.cy);
+  return { d, side: Math.sign(d.horizontal ? b.cy - d.cy : b.cx - d.cx) || 1 };
+}
+const across = (d, o) => (d.horizontal ? o.y - d.cy : o.x - d.cx);
+
+test('stratégie : sur une porte fermée, l’intervention se met en colonne et entre ; le groupe armé la passe', () => {
+  for (const [mode, key] of [['strategy', null], ['strategy', 'KeyB'], ['strategy', 'KeyG'], ['strategyArmed', null]]) {
+    const g = mkGame({ mode, level: 0 });
+    const game = g.game, [a] = game.war.slots.ops, tag = mode + (key ? ' / ' + key : '');
+    game.enemies = []; game.updateWar = () => {};
+    const { d, side } = homeDoor(game);
+    ok(d && !game.map.doorPassable(d), tag + ' : une porte fermée près de la base');
+    nearDoor(game, 0, d, side);
+    stratKey(g, 'Digit1');
+    if (key) { game.input.mouse.x = d.cx; game.input.mouse.y = d.cy; g.step(1); g.press(key); }
+    else clickAt(g, d.cx, d.cy, 2);
+    if (mode === 'strategyArmed') ok(a.order.type === 'move' && Math.sign(across(d, a.order)) === -side, tag + ' : on passe de l’autre côté');
+    else ok(a.order.type === 'stack' && a.order.door === d && a.order.tactic === (key === 'KeyB' ? 'charge' : key === 'KeyG' ? 'flash' : 'auto'), tag + ' : ordre de colonne (' + a.order.type + ')');
+    let stacked = false, flashed = false;
+    const inside = () => upOf(a).some(m => Math.sign(across(d, m)) === -side && Math.abs(across(d, m)) > U);
+    for (let i = 0; i < 60 * 35 && !(inside() && a.order.type === 'hold'); i++) {
+      game.update(1 / 60);
+      if (upOf(a).some(m => m.entry)) stacked = true;
+      if (game.grenades.length) flashed = true;
+    }
+    if (mode === 'strategy') ok(stacked, tag + ' : ils se sont mis en colonne');
+    if (key === 'KeyB') ok(d.broken, tag + ' : la charge a soufflé la porte');
+    if (key === 'KeyG') ok(flashed, tag + ' : une flash est partie dans la pièce');
+    ok(d.broken || game.map.doorPassable(d), tag + ' : la porte est ouverte');
+    ok(inside(), tag + ' : ils sont entrés');
+    ok(a.order.type === 'hold', tag + ' : ils tiennent la pièce (' + (a.order && a.order.type) + ')');
+  }
+});
+
+test('stratégie : G lance une grenade au curseur ; Espace arrête le temps, pas les ordres', () => {
+  const g = mkStrat({ calm: true });
+  const game = g.game, S = game.strat, [a] = game.war.slots.ops;
+  const before = upOf(a).reduce((n, m) => n + m.flashbangs, 0);
+  g.press('KeyG');
+  ok(/Aucun trinôme/.test(game.message.text), 'G sans trinôme choisi : on le dit');
+  stratKey(g, 'Digit1');
+  const lead = game.leaderOf(a), q = game.freeSpotNear(lead.x + Math.cos(a.order.angle) * 4 * U, lead.y + Math.sin(a.order.angle) * 4 * U);
+  game.input.mouse.x = q.x; game.input.mouse.y = q.y;
+  g.press('KeyG');
+  eq(upOf(a).reduce((n, m) => n + m.flashbangs, 0), before - 1, 'une grenade de moins');
+  ok(upOf(a).some(m => m.act && m.act.type === 'grenade'), 'un homme la lance');
+  ok(simUntil(game, () => game.grenades.length > 0, 2), 'elle part');
+  const gr = game.grenades[0], d0 = dist(gr.x, gr.y, q.x, q.y);
+  ok(gr.thrower.group === a, 'lancée par l’un des siens');
+  game.update(0.1);
+  ok(dist(gr.x, gr.y, q.x, q.y) < d0 - 0.3 * U, 'vers le curseur');
+  // pause tactique
+  g.press('Space');
+  ok(S.frozen, 'Espace : pause tactique');
+  const t = game.time, gx = game.grenades[0].x;
+  g.step(30);
+  ok(game.time === t && game.grenades[0].x === gx, 'le temps est arrêté');
+  ok(/Pause tactique/.test(document.getElementById('waveBanner').textContent), 'et c’est affiché');
+  const p = fieldPoint(game, 9);
+  clickAt(g, p.x, p.y, 2);
+  ok(a.order.type === 'move', 'un ordre passe quand même');
+  g.press('Space');
+  ok(!S.frozen, 'Espace à nouveau : on reprend');
+  g.step(10);
+  ok(game.time > t, 'le temps repart');
+});
+
+test('stratégie : un trinôme anéanti revient sous son numéro, toujours choisi, et attend à la base', () => {
+  const g = mkStrat();
+  const game = g.game, W = game.war, S = game.strat;
+  for (const s of [...W.slots.ops, ...W.slots.enemy]) for (const m of s.members) m.viewRange = 0;
+  stratKey(g, 'Digit2');
+  const old = W.slots.ops[1], foe = W.slots.enemy[0].members[0];
+  old.members.forEach(m => game.damage(m, 1e9, foe, 0));
+  g.step(2);
+  eq(W.lost, 1, 'un trinôme perdu');
+  ok(/trinôme Delta est anéanti/.test(game.message.text), 'annoncé par son nom (' + game.message.text + ')');
+  ok(/Anéanti — retour dans/.test(document.querySelectorAll('#stratBox .srow')[1].textContent), 'le HUD décompte son retour');
+  stratKey(g, 'Digit2');
+  ok(/anéanti/.test(game.message.text), '2 : il n’y a personne à choisir');
+  game.time += WAR_RESPAWN; g.step(2);
+  const fresh = W.slots.ops[1];
+  ok(fresh !== old && upOf(fresh).length === 3, 'un trinôme frais le remplace');
+  eq(fresh.label, 'Delta', 'sous le même nom');
+  ok(fresh.order.type === 'hold' && upOf(fresh).every(m => dist(m.x, m.y, W.bases.ops.cx, W.bases.ops.cy) < 6 * U), 'il attend à la base');
+  ok(S.sel.has(1) && game.stratSelected()[0] === fresh, 'toujours choisi');
+  ok(/de retour à la base/.test(game.message.text), 'son retour est annoncé');
+});
+
+test('stratégie : la vue se déplace, zoome vers le curseur et va où l’on clique sur la minimap', () => {
+  const g = mkStrat({ calm: true });
+  const game = g.game, r = g.r, inp = game.input;
+  const z0 = r.zoom, c0 = { ...r.cam };
+  r.mouse.sx = 450; r.mouse.sy = 300;
+  inp.pressed.WheelUp = true; g.step(1);
+  ok(r.zoom > z0 && r.zoom <= r.zoomMax, 'la molette zoome');
+  for (let i = 0; i < 40; i++) { inp.pressed.WheelUp = true; g.step(1); }
+  near(r.zoom, r.zoomMax, 1e-9, 'jusqu’au cadrage du jeu à pied');
+  for (let i = 0; i < 60; i++) { inp.pressed.WheelDown = true; g.step(1); }
+  near(r.zoom, r.zoomMin, 1e-9, 'et jusqu’à toute la carte');
+  ok(r.canvas.width / r.zoom >= game.map.w * TILE * 0.99 || r.canvas.height / r.zoom >= game.map.h * TILE * 0.99, 'toute la carte tient à l’écran');
+  inp.pressed.WheelUp = true; inp.pressed.WheelUp = true; g.step(1); inp.pressed.WheelUp = true; g.step(1);
+  const x0 = r.cam.x;
+  inp.keys.KeyD = true; g.step(20); inp.keys.KeyD = false;
+  ok(r.cam.x > x0, 'D : la vue glisse vers l’est');
+  // un clic sur la minimap emmène la vue
+  ok(r.miniRect, 'la minimap est dessinée');
+  r.mouse.sx = (r.miniRect.x + r.miniRect.w * 0.75) / r.dpr; r.mouse.sy = (r.miniRect.y + r.miniRect.h * 0.5) / r.dpr;
+  ok(r.overMinimap(), 'le curseur est dessus');
+  const w = r.aimWorld();
+  near(w.x, game.map.w * TILE * 0.75, TILE, 'il y vise le point de la carte');
+  Object.assign(inp.mouse, { x: w.x, y: w.y, mini: true, down: true });
+  inp.pressed.Mouse0 = true; g.step(1);
+  inp.mouse.down = false; inp.pressed.Mouse0Up = true; g.step(1);
+  inp.mouse.mini = false;
+  const hw = r.canvas.width / 2 / r.zoom;
+  near(r.cam.x, clamp(w.x, hw - 2 * U, game.map.w * TILE - hw + 2 * U), 2, 'la vue y va');
+  ok(game.strat.sel.size === 0 && !game.strat.box, 'sans rien choisir');
+  ok(c0.x !== undefined, '(vue de départ notée)');
+});
+
+test('stratégie : briefing (armée, commandes, camp), pause et fin de bataille', () => {
+  const KEYS = ['breach.mode', 'breach.entry'], saved = {};
+  KEYS.forEach(k => { saved[k] = localStorage.getItem(k); });
+  try {
+    const g = mkStrat({ noEnd: false });
+    const game = g.game, ui = g.ui, W = game.war;
+    ui.showBriefing();
+    ok(!ui.panel.querySelector('.wcard') && !ui.panel.querySelector('#waccs'), 'pas d’équipement à choisir');
+    eq(ui.panel.querySelectorAll('.armyrow').length, 3, 'vos trois trinômes');
+    ok(W.slots.ops.every(s => ui.panel.textContent.includes('Trinôme ' + s.label) && s.members.every(m => ui.panel.textContent.includes(m.name + ' : ' + m.weapon.name))), 'nommés, chacun avec son arme');
+    ok(ui.panel.querySelector('.cmds') && /pause tactique/.test(ui.panel.querySelector('.cmds').textContent), 'les commandes');
+    ok(/3\. Armée/.test(ui.panel.querySelector('.steps b').textContent), 'l’étape s’appelle « Armée »');
+    ok(/Au combat/.test(ui.panel.querySelector('#ovGo').textContent) && /Votre base/.test(ui.panel.textContent), 'la base, et « Au combat »');
+    const camps = [...ui.panel.querySelectorAll('.campbtn')];
+    eq(camps.length, 2, 'les deux camps');
+    camps.find(b => b.dataset.mode === 'strategyArmed').click();
+    eq(game.mode, 'strategyArmed', 'le groupe armé');
+    ok(armyOf(game, 'enemy').every(e => e instanceof Operator) && armyOf(game, 'ops').every(m => m.nade === 'frag'), 'l’intervention en face, des grenades chez vous');
+    ok(!/en colonne/.test(ui.panel.querySelector('.cmds').textContent), 'pas de colonne de ce côté');
+    ui.panel.querySelector('#ovGo').click();
+    ok(!game.paused && !ui.isOpen(), 'c’est parti');
+    game.setPaused(true);
+    ok(/vous commandez de haut/.test(ui.panel.textContent), 'la pause rappelle la règle');
+    game.setPaused(false);
+    // fin de la bataille (le changement de camp a relancé la carte : une nouvelle armée)
+    const W2 = game.war;
+    W2.kills.ops = 14; W2.kills.enemy = 9; W2.lost = 1;
+    game.time = WAR_TIME; g.step(1);
+    eq(game.over, 'win', 'gagnée au décompte');
+    const sc = game.score;
+    ok(['Bataille', 'Score des armées', 'Trinômes anéantis', 'Hommes perdus'].every(n => sc.lines.some(l => l.label === n)), 'la note de l’armée');
+    ok(!sc.lines.some(l => /Vos éliminations/.test(l.label)), 'pas de note de tireur');
+    ui.showEnd('win');
+    ok(/remportée/.test(ui.panel.querySelector('h1').textContent) && ui.panel.querySelector('#endKills').textContent === '14', 'l’écran de fin');
+    ok(!/Précision/.test(ui.panel.textContent), 'sans statistiques de tir');
+    ui.hideOverlay();
+  } finally {
+    KEYS.forEach(k => { if (saved[k] === null) localStorage.removeItem(k); else localStorage.setItem(k, saved[k]); });
+  }
+});
+
+// ---------------------------------------------------------------- stratégie : assaut
+test('stratégie : assaut : vos trois trinômes contre un groupe armé trois fois plus nombreux, posté sur tout le terrain', () => {
+  for (let lvl = 0; lvl < WAR_LEVELS.length; lvl++) for (const entry of [0, 1]) {
+    const g = mkGame({ mode: 'strategyAssault', level: lvl, entry, patrols: true });
+    const game = g.game, W = game.war, m = game.map, home = W.bases.ops, tag = WAR_LEVELS[lvl].name + ' / base ' + entry;
+    ok(game.defense && game.strat && W.defense && game.player.commander, tag + ' : commandée de haut, contre un terrain tenu');
+    eq(armyOf(game, 'ops').length, 9, tag + ' : vos neuf hommes');
+    ok(W.slots.ops.every(s => s.order && s.order.type === 'hold' && s.members.every(o => o instanceof Operator && o.hunter)), tag + ' : trois trinômes d’intervention, à vos ordres à la base');
+    ok(W.slots.enemy.every(s => s === null), tag + ' : pas d’armée en face');
+    eq(game.enemies.length, DEFENSE_RATIO * 9, tag + ' : trois fois plus nombreux');
+    eq(W.defense.total, game.enemies.length, tag + ' : leur effectif est noté');
+    ok(game.enemies.every(e => e instanceof Enemy && !e.hunter && !e.group && e.team === 'enemy' && e.state === 'idle' && e.hp === DEFENSE_STATS.hp), tag + ' : ils tiennent leur poste, comme des suspects');
+    ok(game.enemies.every(e => DEFENSE_WEAPONS.includes(e.weapon === WEAPONS.pistolE ? 'pistol' : Object.keys(WEAPONS).find(k => WEAPONS[k] === e.weapon))), tag + ' : armés comme les suspects de l’assaut');
+    ok(game.enemies.every(e => dist(e.x, e.y, home.cx, home.cy) >= DEFENSE_CLEAR - TILE), tag + ' : personne aux abords de votre base');
+    ok(game.enemies.every(e => m.circleFree(e.x, e.y, 12, true)), tag + ' : chacun a sa place');
+    ok(game.enemies.every((e, i) => game.enemies.every((o, j) => i === j || dist(e.x, e.y, o.x, o.y) >= 1.2 * U - 1)), tag + ' : sans se coller');
+    const inside = game.enemies.filter(e => !OUTDOOR_FLOORS.has(m.floor(Math.floor(e.x / TILE), Math.floor(e.y / TILE)))).length;
+    ok(inside >= 1 && inside < game.enemies.length, tag + ' : dans les bâtiments et dehors (' + inside + ' sous un toit)');
+    ok(game.enemies.filter(e => e.patrol).length >= 3, tag + ' : des rondes');
+    const secs = W.slots.ops[0].sectors;
+    ok(secs.length > 50 && W.slots.ops.every(s => s.sectors === secs && !s.pingpong), tag + ' : un seul ratissage, tout le terrain, à se partager');
+    g.step(30);
+    ok(/Groupe armé : 27 \/ 27/.test(document.getElementById('objective').textContent), tag + ' : le HUD compte le groupe armé');
+    eq(document.getElementById('timer').textContent, fmtTime(game.time), tag + ' : le chrono monte');
+  }
+});
+
+test('stratégie : assaut : sans renforts, perdu quand vos trois trinômes sont anéantis, gagné quand le groupe armé est neutralisé', () => {
+  const g = mkGame({ mode: 'strategyAssault', noEnd: false, noEnemyAI: true });
+  const game = g.game, W = game.war, ui = g.ui, [a, b, c] = W.slots.ops;
+  for (const o of a.members) game.damage(o, 999, null, 0);
+  g.step(2);
+  eq(W.lost, 1, 'un trinôme anéanti');
+  ok(/anéanti/.test(game.message.text) && !/renforts/.test(game.message.text), 'annoncé, sans renforts');
+  ok(/^Anéanti$/.test(ui.stratStatus(a, 0)), 'le HUD le dit anéanti, sans retour');
+  simUntil(game, () => false, WAR_RESPAWN + 2);
+  ok(W.slots.ops[0] === a && !game.stratAlive(a) && game.mates.length === 9, 'il ne revient pas');
+  ok(!game.over, 'la mission continue');
+  stratKey(g, 'Digit1');
+  ok(!game.strat.sel.has(0) && !/revient/.test(game.message.text), 'on ne peut plus le choisir');
+  // tout le groupe armé à terre : le terrain est repris
+  for (const e of game.enemies) game.damage(e, 999, b.members[0], 0);
+  g.step(1);
+  eq(game.over, 'win', 'gagné');
+  const sc = game.score;
+  ok(['Mission', 'Hommes debout', 'Groupe armé neutralisé', 'Discrétion'].every(n => sc.lines.some(l => l.label === n)), 'la note de la mission');
+  ok(sc.lines.some(l => l.label === 'Hommes debout' && l.detail === '6 / 9'), 'six hommes debout sur neuf');
+  ui.showEnd('win');
+  ok(/Terrain repris/.test(ui.panel.querySelector('h1').textContent) && ui.panel.querySelector('#endKills').textContent === '27 / 27', 'l’écran de fin');
+  ui.hideOverlay();
+  // les trois trinômes anéantis : c'est perdu
+  const g2 = mkGame({ mode: 'strategyAssault', noEnd: false, noEnemyAI: true });
+  for (const o of g2.game.mates) g2.game.damage(o, 999, null, 0);
+  g2.step(2);
+  eq(g2.game.over, 'lose', 'perdu');
+  ok(/trois trinômes/.test(g2.game.loseReason), 'pourquoi');
+  ok(g2.game.score.total <= 49 && g2.game.score.grade === 'D', 'noté comme un échec');
+});
+
+test('stratégie : assaut : sans ordre, vos trinômes ratissent le terrain ; le groupe armé réagit comme en assaut', () => {
+  const g = mkGame({ mode: 'strategyAssault', alarm: true });
+  const game = g.game, W = game.war, home = W.bases.ops, secs = W.slots.ops[0].sectors;
+  for (const s of W.slots.ops) stratKey(g, 'Digit' + (s.slot + 1), true);
+  stratKey(g, 'KeyR');
+  ok(W.slots.ops.every(s => s.order === null), 'R : plus d’ordre');
+  ok(/ratissez le terrain/.test(game.message.text), 'annoncé');
+  ok(W.slots.ops.every((s, k) => g.ui.stratStatus(s, k).startsWith('Ratisse le terrain')), 'le HUD le dit');
+  let shots = 0;
+  const fire = game.fireWeapon.bind(game);
+  game.fireWeapon = s => { if (s.team === 'enemy') shots++; fire(s); };
+  let far = 0;
+  simUntil(game, () => {
+    for (const o of armyOf(game, 'ops')) if (o.alive) far = Math.max(far, dist(o.x, o.y, home.cx, home.cy));
+    return shots > 0 && game.enemies.some(e => !e.alive) && far > 10 * U;
+  }, 90);
+  ok(secs.filter(s => s.done).length > 5, 'des secteurs ratissés');
+  ok(far > 10 * U, 'ils sont partis de la base (' + (far / U).toFixed(1) + ' cases)');
+  ok(shots > 0 && game.enemies.some(e => !e.alive), 'le groupe armé se défend, et tombe');
+  ok(game.enemies.some(e => e.state !== 'idle' || e.alerted), 'il réagit (va voir, s’alerte)');
+});
+
+test('stratégie : assaut : écrans (mode, carte, briefing, aide)', () => {
+  const ui = mkGame({ mode: 'strategyAssault' }).ui;
+  ui.showModes();
+  const card = ui.panel.querySelector('.modebtn[data-mode="strategyAssault"]');
+  ok(card && card.textContent.includes(MODES.strategyAssault.desc), 'sa carte de mode');
+  ui.showLevels();
+  eq(ui.panel.querySelectorAll('.levelbtn').length, WAR_LEVELS.length, 'les champs de bataille');
+  ok(/27 retranchés/.test(ui.panel.textContent) && /Pas de renforts/.test(ui.panel.textContent), 'ce qu’on y fait');
+  ui.showBriefing();
+  eq(ui.panel.querySelectorAll('.armyrow').length, 3, 'vos trois trinômes');
+  ok(!ui.panel.querySelector('.campbtn') && /Lancer l'assaut/.test(ui.panel.querySelector('#ovGo').textContent), 'pas de camp à choisir, « Lancer l’assaut »');
+  ok(/ne revient pas/.test(ui.panel.textContent) && /retranché|tient le terrain/.test(ui.panel.textContent), 'sans renforts, contre un terrain tenu');
+  ok(/se partagent le ratissage/.test(ui.panel.querySelector('.cmds').textContent), 'R ratisse tout le terrain');
+  ui.showHelp();
+  ok(/Stratégie : assaut/.test(ui.panel.textContent), 'l’aide en parle');
+  ui.hideOverlay();
+});
+
+test('stratégie : chaque champ de bataille se joue sans exception, des deux côtés, ordres compris', () => {
+  for (const mode of ['strategy', 'strategyArmed', 'strategyAssault']) for (let lvl = 0; lvl < WAR_LEVELS.length; lvl++) {
+    const g = mkGame({ mode, level: lvl });
+    const game = g.game, W = game.war, inp = game.input;
+    let shots = { ops: 0, enemy: 0 };
+    const fire = game.fireWeapon.bind(game);
+    game.fireWeapon = s => { shots[s.team]++; fire(s); };
+    const keys = ['Digit1', 'Digit2', 'Digit3', 'KeyQ', 'KeyH', 'KeyR', 'KeyC', 'KeyG', 'KeyB', 'KeyF', 'Space', 'Space'];
+    for (let i = 0; i < 60 * 30; i++) {
+      if (i % 90 === 0) {
+        const p = fieldPoint(game, 6 + (i / 90 % 6) * 4, ((i / 90) % 3 - 1) * 5) || W.bases.ops;
+        Object.assign(inp.mouse, { x: p.x, y: p.y });
+        inp.pressed[keys[(i / 90) % keys.length]] = true;
+        if (i % 180 === 0) { inp.pressed.Mouse2 = true; inp.pressed.Mouse2Up = true; }
+      }
+      if (i % 500 === 250) { stratKey(g, 'KeyQ'); const d = homeDoor(game).d; clickAt(g, d.cx, d.cy, 2); }
+      if (i % 4) game.update(1 / 60); else g.step(1);
+    }
+    ok(shots.ops + shots.enemy > 0, mode + ' / ' + WAR_LEVELS[lvl].name + ' : la bataille a lieu (' + shots.ops + ' / ' + shots.enemy + ')');
+  }
+});
+
 // ---------------------------------------------------------------- écrans de départ
 test('on choisit le mode, puis la carte, puis l’équipement ; le fil du briefing ramène en arrière', () => {
   const saved = localStorage.getItem('breach.mode');
@@ -4303,7 +4920,8 @@ test('chaque mode a ses propres cartes, adaptées à ce qu’on y fait', () => {
   }
   const lists = [...new Set(Object.values(MODES).map(m => m.levels))]; // (les deux camps d'un mode partagent sa liste)
   ok(SQUAD_LEVELS.every(l => lists.filter(x => x.includes(l)).length === 1), 'les arènes des trinômes ne servent qu’aux trinômes');
-  ok(WAR_LEVELS.every(l => lists.filter(x => x.includes(l)).length === 1 && l.briefing), 'les champs de bataille ne servent qu’à la guerre totale');
+  ok(WAR_LEVELS.every(l => lists.filter(x => x.includes(l)).length === 1 && l.briefing), 'les champs de bataille ne servent qu’à la guerre totale et à la stratégie');
+  ok(MODES.strategy.levels === WAR_LEVELS && MODES.strategyArmed.levels === WAR_LEVELS, 'la stratégie se joue sur les champs de bataille');
   ok(ESCORT_LEVELS.length >= 4, 'quatre cartes d’escorte');
 });
 

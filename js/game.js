@@ -101,9 +101,16 @@ const PATROLS = 2, PATROL_SPEED = 0.55, PATROL_PAUSE = [2, 5], PATROL_LEG = [4 *
 // ne compte pas) prévient tout le bâtiment. Les autres réagissent alors plus vite (ALARM_REACT), et les
 // RESPONDERS les plus proches vont voir. Une fois par mission.
 const ALARM_TIME = 3, ALARM_REACT = 0.7;
-// Trinômes : un contact signalé par un équipier reste une destination SQUAD_CONTACT s ; un trinôme qui avance attend
-// celui des siens resté à plus de SQUAD_SPREAD derrière.
-const SQUAD_CONTACT = 20, SQUAD_SPREAD = 4 * U;
+// Trinômes : un contact signalé par un équipier reste une destination SQUAD_CONTACT s.
+const SQUAD_CONTACT = 20;
+// Trinômes autonomes : un chef de file mène, les deux autres le suivent en file décalée comme vos coéquipiers vous
+// suivent (SQUAD_FILE : leurs places en cases, vers l'avant et vers la droite de sa marche). Hors combat, le chef avance
+// à SQUAD_PACE de sa vitesse, sans bruit de pas, marque SQUAD_DOOR_PAUSE s avant de franchir une porte et attend celui
+// des siens resté à plus de SQUAD_SPREAD (SQUAD_WAIT s au plus : un équipier coincé ne fige pas le trinôme). Un équipier
+// distancé de plus de SQUAD_CATCH de sa place court la reprendre. L'adversaire en vue, ceux qui ne le voient pas viennent
+// à hauteur du chef (SQUAD_LINE, dans le repère de la direction de l'adversaire).
+const SQUAD_FILE = [[-1.3, -0.6], [-2.4, 0.5]], SQUAD_LINE = [[-0.4, -1.1], [-0.4, 1.1]];
+const SQUAD_PACE = 0.7, SQUAD_DOOR_PAUSE = 0.6, SQUAD_SPREAD = 4 * U, SQUAD_WAIT = 4, SQUAD_CATCH = 0.6 * U;
 // Agents autonomes : un secteur à ratisser compte comme vu dès qu'un homme passe à SWEEP_SEEN, la vue dégagée ; le
 // suivant est le plus proche à pied, de SWEEP_AHEAD plus volontiers devant que derrière. Un trinôme garde son contact
 // CONTACT_HOLD s : un bruit ne le remplace que s'il est plus proche, et jamais une vue fraîche. Arrivé sur un contact sans
@@ -123,6 +130,20 @@ const VIP_SWITCH = 0.2, GOAL_MARGIN = 2 * U;
 const WAR_TIME = 300, WAR_RESPAWN = 6, WAR_BODY_LIFE = 45;
 // Guerre totale : un trinôme autonome avance dans son couloir par étapes de WAR_STEP (voir warSectors).
 const WAR_STEP = 4 * U;
+// Stratégie : écart entre les points d'arrivée de trinômes envoyés ensemble au même endroit ; un chef de file arrivé à
+// STRAT_ARRIVE de son point s'y arrête, et y retourne s'il en a été écarté de plus de STRAT_LEASH ; tolérance d'un clic
+// sur un homme, en pixels d'écran.
+const STRAT_SPACING = 2.6 * U, STRAT_ARRIVE = 0.3 * U, STRAT_LEASH = 0.9 * U, STRAT_PICK = 7;
+// Stratégie : assaut : le groupe armé tient le terrain, DEFENSE_RATIO fois plus nombreux que vos neuf hommes, posté comme
+// les suspects de l'assaut, personne à moins de DEFENSE_CLEAR du centre de votre base. Un poste dehors est tiré
+// DEFENSE_OUTSIDE[0] fois moins volontiers qu'un poste sous un toit s'il est à l'abri d'un mur ou d'un meuble,
+// DEFENSE_OUTSIDE[1] fois en terrain nu ; DEFENSE_PATROLS d'entre eux font des rondes.
+// Armés comme les suspects de l'assaut (DEFENSE_WEAPONS), ses hommes sont plus solides et plus vifs qu'eux (70 points de vie,
+// 0,5 s de réaction ; DEFENSE_STATS), sans valoir ceux des trinômes (SQUAD_MILITANT, et leurs AK de précision : en parties
+// simulées, vos trinômes livrés à eux-mêmes n'en abattent alors qu'un tiers).
+const DEFENSE_RATIO = 3, DEFENSE_CLEAR = 16 * U, DEFENSE_OUTSIDE = [2, 6], DEFENSE_PATROLS = 6;
+const DEFENSE_STATS = { hp: 100, maxHp: 100, reaction: 0.4 };
+const DEFENSE_WEAPONS = ['ak', 'ak74E', 'ak', 'ak', 'pistol', 'uziE', 'sgE'];
 
 class Game {
   constructor() {
@@ -253,7 +274,23 @@ class Game {
     // Trinômes : personne n'attend dans le bâtiment, les quatre trinômes y entrent (voir startSquads). Guerre totale :
     // les deux armées partent de leurs bases (voir startWar).
     const squads = !!(MODES[this.mode] || {}).squads, armed = this.camp === 'armed', war = !!(MODES[this.mode] || {}).war;
+    // Stratégie : la guerre totale, mais vous n'êtes sur le terrain qu'en commandant (voir startWar et updateCommander)
+    const strategy = !!(MODES[this.mode] || {}).strategy;
+    // Stratégie : assaut : en face, pas d'armée mais un groupe armé retranché, posté sur tout le terrain (buildPosts, defenseQuiet)
+    const defense = !!(MODES[this.mode] || {}).defense;
+    this.defense = defense;
     this.war = null;
+    this.strat = strategy ? {
+      sel: new Set(),  // trinômes choisis (leur rang dans war.slots.ops : ils restent choisis à leur retour de la base)
+      box: null,       // rectangle de sélection en cours (clic gauche glissé), en coordonnées du monde
+      aim: null,       // ordre en cours de tracé (clic droit maintenu : direction à tenir)
+      hover: null,     // sous le curseur : { kind: 'foe' | 'door' | 'own', ... } (voir stratHover)
+      frozen: false,   // pause tactique : le temps s'arrête, les ordres se donnent
+      zoom: 0,         // crans de molette à appliquer à la vue (Renderer.stratCamera)
+      camTo: null,     // la vue doit aller là (minimap, double appui sur un numéro, F)
+      miniDrag: false, // clic gauche maintenu sur la minimap : la vue suit
+      keyAt: [-9, -9, -9], // dernier appui sur 1, 2, 3 (deux de suite : la vue y va)
+    } : null;
     // agents à la manœuvre autonome (intervention du siège, trinômes) : leurs colonnes sur les portes
     // (stackT : instant de la dernière colonne de chaque camp ; tried : camp:porte → instant où elle a été envisagée)
     this.hunt = siege || squads ? { stacks: [], stackT: {}, tried: new Map() } : null;
@@ -267,14 +304,15 @@ class Game {
     const entryBreach = !siege && !escort && !war && breaches.length ? breaches[this.entryIndex] : null;
     const home = war ? picks[this.entryIndex] || null : null;
     // Personne n'attend là où l'équipe commence : la pièce d'entrée de l'assaut, ou en escorte celle du
-    // point A (et les abords du point B).
+    // point A (et les abords du point B), ou les abords de votre base (stratégie : assaut).
     const quiet = entryBreach ? this.map.roomOf(entryBreach.inside.x, entryBreach.inside.y)
-      : escort ? this.escortQuiet(vipAt) : null;
+      : escort ? this.escortQuiet(vipAt) : defense && home ? this.defenseQuiet(home) : null;
     // Postes tirés au sort à chaque partie : la disposition des terroristes (le chef compris) et
-    // des otages ne se mémorise pas d'une partie à l'autre.
-    const nFoes = squads ? 0 : this.map.enemySpawns.length || 1;
+    // des otages ne se mémorise pas d'une partie à l'autre. (stratégie : assaut : DEFENSE_RATIO hommes pour chacun des
+    // neuf de vos trois trinômes, sur tout le terrain, dehors compris)
+    const nFoes = defense ? DEFENSE_RATIO * 9 : squads ? 0 : this.map.enemySpawns.length || 1;
     const nHost = squads ? 0 : this.map.hostageSpawns.length;
-    const free = this.buildPosts(quiet, nFoes + nHost);
+    const free = this.buildPosts(quiet, nFoes + nHost, defense);
     const foePosts = free.splice(0, nFoes);
     const hostPosts = free.splice(0, nHost);
     const s = siege ? { x: Math.floor(foePosts[0].x / TILE), y: Math.floor(foePosts[0].y / TILE) }
@@ -290,8 +328,10 @@ class Game {
       : goal ? Math.atan2(goal.cy - this.player.y, goal.cx - this.player.x)
       : home ? home.angle
       : Math.atan2(this.map.h * TILE / 2 - this.player.y, this.map.w * TILE / 2 - this.player.x);
-    const weps = def.enemyWeapons || ['ak'];
-    this.enemies = siege || squads ? [] : foePosts.map(q => new Enemy(q.x, q.y, null, weps[Math.floor(Math.random() * weps.length)]));
+    const weps = def.enemyWeapons || (defense ? DEFENSE_WEAPONS : ['ak']);
+    this.enemies = siege || (squads && !defense) ? [] : foePosts.map(q => new Enemy(q.x, q.y, null, weps[Math.floor(Math.random() * weps.length)]));
+    // (stratégie : assaut : ils tiennent leur poste comme des suspects, mais en valent un peu plus, voir DEFENSE_STATS)
+    if (defense) for (const e of this.enemies) Object.assign(e, DEFENSE_STATS);
     this.hostages = hostPosts.map(q => new Hostage(q.x, q.y));
     // le VIP, au point A, parmi les civils (balles, éclats, embrasures, discipline de tir) : il suit le joueur
     // dès le départ (voir plus bas)
@@ -327,7 +367,8 @@ class Game {
       near.sort((a, b) => a.d - b.d);
       const taken = [{ x: this.player.x, y: this.player.y }];
       if (this.vip) taken.push({ x: this.vip.x, y: this.vip.y });
-      this.mates = mateDefs.map(d => {
+      // (en stratégie, pas de trinôme autour de vous : les trois de votre armée sortent de la base, voir startWar)
+      this.mates = strategy ? [] : mateDefs.map(d => {
         const t = near.find(f => taken.every(o => dist((f.x + 0.5) * TILE, (f.y + 0.5) * TILE, o.x, o.y) >= 26)) || s;
         taken.push({ x: (t.x + 0.5) * TILE, y: (t.y + 0.5) * TILE });
         const m = new Teammate((t.x + 0.5) * TILE, (t.y + 0.5) * TILE, d);
@@ -337,8 +378,10 @@ class Game {
       if (quiet && !squads) this.clearZone(quiet);
       this.siege = null;
       this.player.charges = armed ? 0 : CHARGES;
-      if (war) this.startWar();
-      else if (squads) this.startSquads(entryBreach);
+      if (war) {
+        this.startWar();
+        if (defense && this.patrols) this.buildPatrols(quiet, DEFENSE_PATROLS);
+      } else if (squads) this.startSquads(entryBreach);
       else {
         // Des portes fermées à clé : il faut crocheter, faire sauter la serrure ou poser une charge.
         if (this.lockDoors) for (const d of this.map.doors) d.locked = Math.random() < LOCK_CHANCE;
@@ -382,6 +425,7 @@ class Game {
     this.ownNoise = null; // halo du dernier bruit du joueur
     if (this.player) this.player.cooking = null;
     this.message = { text: '', t: 0 };
+    if (strategy) this.say('Vos trinômes attendent vos ordres — clic gauche (ou 1, 2, 3) pour en choisir un, clic droit pour l’envoyer', 6);
     this.computeVision();
     this.emit('level');
   }
@@ -389,8 +433,8 @@ class Game {
   // Rondes : PATROLS suspects tirés au sort reçoivent un circuit de deux ou trois points, leur poste compris.
   // Chaque étape fait entre PATROL_LEG[0] et PATROL_LEG[1] de chemin (des portes à franchir au besoin : ils ont
   // les clés), et aucune ne passe par la zone où l'équipe commence (room : pièce d'entrée de l'assaut, ou
-  // point A de l'escorte et abords du point B ; voir loadLevel).
-  buildPatrols(room) {
+  // point A de l'escorte et abords du point B ; voir loadLevel). n : combien (davantage sur un terrain tenu).
+  buildPatrols(room, n = PATROLS) {
     const m = this.map;
     const inRoom = q => !!room && room.has(Math.floor(q.y / TILE) * m.w + Math.floor(q.x / TILE));
     const shuffle = a => { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
@@ -410,7 +454,7 @@ class Game {
     };
     let made = 0;
     for (const e of shuffle(this.enemies.slice())) {
-      if (made >= PATROLS) break;
+      if (made >= n) break;
       const pts = [{ x: e.home.x, y: e.home.y }];
       for (const c of shuffle(cand)) {
         if (pts.length >= 3) break;
@@ -462,7 +506,7 @@ class Game {
     e.shoutT = this.time;
     this.noise(e.x, e.y, 8 * U, e, 'voice');
     Sound.alarm();
-    this.say("Un suspect a donné l'alerte : tout le bâtiment est sur ses gardes", 3.5);
+    this.say(this.defense ? "Le groupe armé a donné l'alerte : tout le terrain est sur ses gardes" : "Un suspect a donné l'alerte : tout le bâtiment est sur ses gardes", 3.5);
     const free = [];
     for (const o of this.enemies) {
       if (o === e || !Game.active(o) || o.surrender) continue;
@@ -481,15 +525,23 @@ class Game {
   // Postes possibles pour les terroristes et les otages : les emplacements écrits sur la carte,
   // plus un quadrillage de cases libres, le tout mélangé. La disposition change donc à chaque partie,
   // sans jamais tomber là où l'équipe commence (room, voir loadLevel) ni coller deux personnes l'une à l'autre.
-  buildPosts(room, needed) {
+  // open (stratégie : assaut) : tout le terrain se tient, dehors compris, mais plutôt sous un toit (DEFENSE_OUTSIDE).
+  buildPosts(room, needed, open) {
     const m = this.map;
     const cand = [];
     for (const sp of [...m.enemySpawns, ...m.hostageSpawns]) cand.push({ x: sp.x, y: sp.y });
     // le quadrillage reste sous toit : sur une carte en plein air, le jardin n'a de postes que ceux que la carte y place
-    for (let ty = 2; ty < m.h - 2; ty += 3) for (let tx = 2; tx < m.w - 2; tx += 3) if (!OUTDOOR_FLOORS.has(m.floor(tx, ty))) cand.push({ x: tx, y: ty });
+    for (let ty = 2; ty < m.h - 2; ty += 3) for (let tx = 2; tx < m.w - 2; tx += 3) if (open || !OUTDOOR_FLOORS.has(m.floor(tx, ty))) cand.push({ x: tx, y: ty });
     for (let i = cand.length - 1; i > 0; i--) { // mélange de Fisher-Yates
       const j = Math.floor(Math.random() * (i + 1));
       [cand[i], cand[j]] = [cand[j], cand[i]];
+    }
+    if (open) {
+      // dehors, mieux vaut un mur, une haie ou des sacs de sable à deux petites cases que le terrain nu
+      const cover = t => { for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) if (m.blocksMove(t.x + dx, t.y + dy)) return true; return false; };
+      const w = t => (!OUTDOOR_FLOORS.has(m.floor(t.x, t.y)) ? 1 : DEFENSE_OUTSIDE[cover(t) ? 0 : 1]);
+      const key = new Map(cand.map(t => [t, Math.random() * w(t)]));
+      cand.sort((a, b) => key.get(a) - key.get(b));
     }
     const out = [];
     const keep = (min) => {
@@ -521,6 +573,15 @@ class Game {
       if (k >= 2) break; // deux cases fines (une case de carte) suffisent
     }
     return best;
+  }
+
+  // Stratégie : assaut : personne n'est posté à moins de DEFENSE_CLEAR du centre de votre base (petites cases).
+  defenseQuiet(base) {
+    const m = this.map, zone = new Set();
+    for (let ty = 0; ty < m.h; ty++) for (let tx = 0; tx < m.w; tx++) {
+      if (dist((tx + 0.5) * TILE, (ty + 0.5) * TILE, base.cx, base.cy) < DEFENSE_CLEAR) zone.add(ty * m.w + tx);
+    }
+    return zone;
   }
 
   // Escorte : personne n'est posté dans la pièce du point A, ni aux abords de la zone d'extraction.
@@ -631,7 +692,8 @@ class Game {
   // votre camp porte un nom, comme vos coéquipiers.
   // opts.pts : leurs places, déjà choisies (une base de la guerre totale) ; opts.names : les noms de ceux de votre camp.
   spawnSquad(b, team, camp, taken, opts = {}) {
-    const police = camp === 'police', pts = opts.pts || this.breachFile(b, 3, taken);
+    // (derrière une ouverture, le premier, qui mène, est le plus avancé dans le bâtiment)
+    const police = camp === 'police', pts = opts.pts || this.breachFile(b, 3, taken).reverse();
     const weps = dealWeapons(police ? OPERATOR_POOL : MILITANT_POOL, 3), kits = police ? null : dealWeapons(MILITANT_KITS, 3);
     const group = { team, camp, breach: b, contact: null, search: null, sweepTo: null, members: [], sectors: this.buildSectors(null, b.inside) };
     pts.forEach((q, k) => {
@@ -645,6 +707,7 @@ class Game {
       }
       a.team = team;
       a.group = group;
+      a.moveDir = b.angle; // le sens de sa marche, d'abord vers l'intérieur (sa file s'y range, voir formationPos)
       if (team === 'ops') {
         const d = (opts.names || SQUAD_DEFS[camp])[k];
         Object.assign(a, { name: d.name, accent: d.accent, coverAngle: null });
@@ -661,6 +724,11 @@ class Game {
   // centre, et deux trinômes autonomes sur les flancs ; l'autre armée, de l'autre base. Chaque trinôme autonome a son
   // couloir (warSectors). Un trinôme anéanti revient de sa base WAR_RESPAWN s plus tard (updateWar) ; au bout de
   // WAR_TIME s, l'armée qui a abattu le plus d'adversaires l'emporte (checkEnd). Le champ de bataille est connu d'avance.
+  // Stratégie : la même bataille, mais vous n'y incarnez personne. Les trois trinômes de votre armée sont autonomes et
+  // prennent vos ordres (voir updateCommander) ; le joueur reste à la base, hors du terrain (commander, jamais debout).
+  // Stratégie : assaut : vos trois trinômes, mais pas d'armée en face : le groupe armé est déjà posté (loadLevel) et tient
+  // le terrain comme les suspects de l'assaut. Personne ne revient de sa base ; sans ordre, vos trinômes se partagent
+  // le ratissage de tout le terrain (une seule liste de secteurs, voir pickSector) au lieu d'un couloir chacun.
   startWar() {
     const bs = this.map.bases, mine = this.camp, theirs = mine === 'police' ? 'armed' : 'police';
     const home = bs[this.entryIndex] || bs[0], away = bs.find(b => b !== home) || home;
@@ -669,15 +737,25 @@ class Game {
       bases: { ops: home, enemy: away },
       camps: { ops: mine, enemy: theirs },
       // les trois trinômes de chaque armée, tels qu'ils sont en ce moment (le premier des vôtres : le vôtre)
-      slots: { ops: [{ team: 'ops', camp: mine, crew: true, members: [this.player, ...this.mates] }, null, null], enemy: [null, null, null] },
+      slots: { ops: [this.strat ? null : { team: 'ops', camp: mine, crew: true, members: [this.player, ...this.mates] }, null, null], enemy: [null, null, null] },
       respawn: { ops: [null, null, null], enemy: [null, null, null] }, // instant du retour d'un trinôme anéanti
       kills: { ops: 0, enemy: 0 }, // adversaires abattus par chaque armée
       mine: 0,                     // dont par vous
       reinforce: 0,                // retours de votre trinôme
+      lost: 0,                     // trinômes de votre armée anéantis
       pruneT: 0,
+      // stratégie : assaut : l'effectif du groupe armé au départ (ses corps restent sur le terrain)
+      defense: this.defense ? { total: this.enemies.length } : null,
     };
-    for (const k of [1, 2]) this.warSquad('ops', k);
-    for (const k of [0, 1, 2]) this.warSquad('enemy', k);
+    if (this.strat) {
+      const p = this.player;
+      Object.assign(p, { alive: false, commander: true, x: home.cx, y: home.cy });
+    }
+    for (const k of this.strat ? [0, 1, 2] : [1, 2]) this.warSquad('ops', k);
+    if (this.defense) {
+      const secs = this.buildSectors(null, { x: home.cx, y: home.cy });
+      for (const g of this.war.slots.ops) Object.assign(g, { sectors: secs, pingpong: false });
+    } else for (const k of [0, 1, 2]) this.warSquad('enemy', k);
     const m = this.map;
     for (let i = 0; i < m.explored.length; i++) if (m.tiles[i] !== 2) m.explored[i] = 1;
   }
@@ -685,15 +763,22 @@ class Game {
   // Couloir d'un trinôme : 0 et 2 les flancs, 1 le centre (le vôtre). Ceux des deux armées se font face.
   static warLane(team, k) { return team === 'ops' ? (k === 1 ? 0 : k === 2 ? 2 : 1) : k; }
 
-  // Le trinôme k de l'armée team sort de sa base : trois hommes du camp de cette armée, du côté de son couloir.
+  // Le trinôme k de l'armée team sort de sa base : trois hommes du camp de cette armée, du côté de son couloir. En
+  // stratégie, ceux de votre armée portent la couleur de leur trinôme et attendent vos ordres à la base.
   warSquad(team, k) {
     const W = this.war, base = W.bases[team], foe = W.bases[team === 'ops' ? 'enemy' : 'ops'], lane = Game.warLane(team, k);
     const taken = [...this.ops, ...this.enemies].filter(a => a.alive).map(a => ({ x: a.x, y: a.y }));
     const gate = { inside: { x: base.cx, y: base.cy }, angle: base.angle };
-    const g = this.spawnSquad(gate, team, W.camps[team], taken, { pts: this.baseFile(base, 3, taken, lane), names: WAR_DEFS[W.camps[team]][k - 1] });
+    const names = this.strat && team === 'ops' ? STRAT_DEFS[W.camps[team]][k] : WAR_DEFS[W.camps[team]][k - 1];
+    const g = this.spawnSquad(gate, team, W.camps[team], taken, { pts: this.baseFile(base, 3, taken, lane), names });
     g.sectors = this.warSectors(base, foe, lane);
     g.pingpong = true; // au bout du couloir, il le reprend dans l'autre sens
     g.slot = k;
+    if (this.strat && team === 'ops') {
+      const lead = g.members[0];
+      Object.assign(g, { label: names[0].name, color: STRAT_COLORS[k], queue: [], rush: false, order: { type: 'hold', x: lead.x, y: lead.y, angle: base.angle } });
+      for (const m of g.members) m.accent = g.color;
+    }
     if (team === 'ops') this.mates = [...this.mates, ...g.members]; else this.enemies = [...this.enemies, ...g.members];
     W.slots[team][k] = g;
     W.respawn[team][k] = null;
@@ -783,16 +868,29 @@ class Game {
       if (!g) return;
       const at = W.respawn[team][k];
       if (at !== null) {
-        if (this.time >= at) (team === 'ops' && k === 0 ? this.warCrew() : this.warSquad(team, k));
+        if (this.time < at) return;
+        if (team === 'ops' && k === 0 && !this.strat) this.warCrew();
+        else {
+          const n = this.warSquad(team, k);
+          if (this.strat && team === 'ops') this.say(`Trinôme ${n.label} : de retour à la base, il attend vos ordres`, 2.5);
+        }
         return;
       }
       if (g.members.some(a => a.alive)) return;
-      W.respawn[team][k] = this.time + WAR_RESPAWN;
+      // (stratégie : assaut : pas de renforts, il ne revient jamais)
+      W.respawn[team][k] = W.defense ? Infinity : this.time + WAR_RESPAWN;
+      if (team === 'ops') W.lost++;
+      // (en stratégie, il quitte les ordres en cours : une colonne qu'il formait se défait)
+      if (this.strat && team === 'ops') this.releaseGroup(g);
+      const left = 3 - W.lost;
       this.say(team === 'enemy' ? 'Un trinôme adverse est anéanti'
+        : W.defense ? `Le trinôme ${g.label} est anéanti${left > 0 ? ` — plus que ${left} trinôme${left > 1 ? 's' : ''}` : ''}`
+        : this.strat ? `Le trinôme ${g.label} est anéanti — renforts dans ${WAR_RESPAWN} s`
         : k === 0 ? `Votre trinôme est anéanti — renforts dans ${WAR_RESPAWN} s`
         : `Le trinôme de ${g.members[0].name} est anéanti — renforts dans ${WAR_RESPAWN} s`, 2.5);
     });
-    if (this.time - W.pruneT >= 5) { W.pruneT = this.time; this.pruneBodies(); }
+    // (stratégie : assaut : les corps restent, ceux du groupe armé alertent les leurs, voir spotBody)
+    if (!W.defense && this.time - W.pruneT >= 5) { W.pruneT = this.time; this.pruneBodies(); }
   }
 
   // Guerre totale : un corps tombé depuis plus de WAR_BODY_LIFE s, que personne de votre camp ne voit, est retiré.
@@ -800,6 +898,431 @@ class Game {
     const keep = a => a.alive || a.dying || a === this.player || this.time - (a.diedAt || 0) < WAR_BODY_LIFE || this.seesPoint(a.x, a.y);
     if (!this.mates.every(keep)) this.mates = this.mates.filter(keep);
     if (!this.enemies.every(keep)) this.enemies = this.enemies.filter(keep);
+  }
+
+  // ---- Stratégie ----
+  // Vous commandez de haut les trois trinômes de votre armée (war.slots.ops), sans incarner personne : le clavier et la
+  // souris donnent les ordres (updateCommander), chaque trinôme les exécute (orderStep). group.order vaut :
+  //   null                                         il ratisse son couloir seul, comme en guerre totale ;
+  //   { type: 'move', x, y, angle }                aller là, en file derrière son chef, puis tenir face à angle ;
+  //   { type: 'hold', x, y, angle }                tenir : on tire sur ce qu'on voit, on ne poursuit personne ;
+  //   { type: 'attack', foe, x, y }                aller au contact d'un adversaire, suivi tant que l'armée le voit ;
+  //   { type: 'stack', door, side, front, tactic, st, wait }  en colonne sur une porte fermée, puis entrer (intervention).
+  // group.queue : les déplacements à faire ensuite (Maj + clic droit) ; group.rush : au pas de course plutôt qu'au pas.
+
+  // Un trinôme de votre armée qui a encore un homme debout.
+  stratAlive(g) { return !!g && g.members.some(m => m.alive && m.group === g); }
+  // Les trinômes choisis encore debout, dans l'ordre de leur numéro.
+  stratSelected() { return [...this.strat.sel].sort().map(k => this.war.slots.ops[k]).filter(g => this.stratAlive(g)); }
+  // « Alpha », « Alpha et Delta », « Alpha, Delta et Golf ».
+  stratNames(gs) {
+    const n = gs.map(g => g.label);
+    return n.length > 1 ? `${n.slice(0, -1).join(', ')} et ${n[n.length - 1]}` : n[0] || '';
+  }
+  stratNone() { this.say('Aucun trinôme choisi — clic gauche sur l’un de vos hommes, ou 1, 2, 3 (A : tous)', 2.2); }
+
+  // Clavier et souris du commandant, à chaque image, pause tactique comprise (dt : le temps réel).
+  updateCommander(dt) {
+    const S = this.strat, inp = this.input, pr = inp.pressed, k = inp.keys, m = inp.mouse;
+    const ppx = m.ppx || 1, shift = !!(k.ShiftLeft || k.ShiftRight);
+    S.clock = (S.clock || 0) + (dt || 0);
+    S.hover = this.stratHover(m.x, m.y, ppx);
+    if (pr.Space) {
+      S.frozen = !S.frozen;
+      this.say(S.frozen ? 'Pause tactique — donnez vos ordres, Espace pour reprendre' : 'Reprise', 1.6);
+    }
+    for (let i = 0; i < 3; i++) if (pr['Digit' + (i + 1)] || pr['Numpad' + (i + 1)]) this.stratKey(i, shift);
+    if (pr.KeyQ) { // (A sur un clavier AZERTY) : toute l'armée
+      S.sel = new Set([0, 1, 2].filter(i => this.stratAlive(this.war.slots.ops[i])));
+      this.say(S.sel.size ? 'Toute l’armée' : 'Personne de debout : les renforts arrivent', 1.2);
+    }
+    if (pr.KeyF) this.stratFocus();
+    if (pr.WheelUp) S.zoom++;
+    if (pr.WheelDown) S.zoom--;
+    // clic gauche : sur la minimap, la vue y va (et la suit tant qu'on maintient) ; ailleurs, on choisit (un clic sur un
+    // homme, ou un rectangle glissé)
+    if (pr.Mouse0 && m.mini) S.miniDrag = true;
+    if (S.miniDrag) {
+      if (m.down || pr.Mouse0) S.camTo = { x: m.x, y: m.y, now: true };
+      if (!m.down) S.miniDrag = false;
+    } else {
+      if (pr.Mouse0) S.box = { x0: m.x, y0: m.y, x1: m.x, y1: m.y };
+      if (S.box) {
+        S.box.x1 = m.x; S.box.y1 = m.y;
+        if (pr.Mouse0Up || !m.down) { this.stratPick(S.box, shift, ppx); S.box = null; }
+      }
+    }
+    // clic droit : l'ordre part à la relâche ; maintenu et tiré, il fixe la direction à tenir à l'arrivée
+    if (pr.Mouse2) S.aim = { x: m.x, y: m.y, angle: null, hover: S.hover };
+    if (S.aim && m.rdown) {
+      const d = dist(S.aim.x, S.aim.y, m.x, m.y);
+      S.aim.angle = d >= 0.7 * U ? Math.atan2(m.y - S.aim.y, m.x - S.aim.x) : null;
+    }
+    if (S.aim && (pr.Mouse2Up || !m.rdown)) { const a = S.aim; S.aim = null; this.stratRightClick(a, shift); }
+    if (pr.KeyH) this.stratHold();
+    if (pr.KeyR) this.stratSweep();
+    if (pr.KeyC) this.stratRush();
+    if (pr.KeyG) this.stratGrenadeKey(m.x, m.y);
+    if (pr.KeyB) this.stratChargeKey();
+  }
+
+  // Ce qu'il y a sous le curseur : un adversaire en vue, l'un de vos hommes, ou une porte fermée.
+  stratHover(x, y, ppx) {
+    let best = null, bd = Infinity;
+    for (const e of this.enemies) {
+      if (!e.alive || !e.visible) continue;
+      const d = dist(x, y, e.x, e.y);
+      if (d < e.radius + STRAT_PICK * ppx && d < bd) { bd = d; best = e; }
+    }
+    if (best) return { kind: 'foe', foe: best };
+    const own = this.stratUnitAt(x, y, ppx);
+    if (own) return { kind: 'own', unit: own };
+    const d = this.doorAtPoint(x, y);
+    return d && !d.broken && !this.map.doorPassable(d) ? { kind: 'door', door: d } : null;
+  }
+
+  // L'homme de votre armée, debout, le plus proche du point (à STRAT_PICK pixels d'écran près).
+  stratUnitAt(x, y, ppx) {
+    let best = null, bd = Infinity;
+    for (const g of this.war.slots.ops) {
+      if (!g) continue;
+      for (const m of g.members) {
+        if (!m.alive || m.group !== g) continue;
+        const d = dist(x, y, m.x, m.y);
+        if (d < m.radius + STRAT_PICK * ppx && d < bd) { bd = d; best = m; }
+      }
+    }
+    return best;
+  }
+
+  // 1, 2, 3 : ce trinôme seul (Maj : l'ajouter, ou le retirer) ; deux fois de suite, la vue va sur lui.
+  stratKey(i, shift) {
+    const S = this.strat;
+    if (!this.stratAlive(this.war.slots.ops[i])) { this.say(`Trinôme ${i + 1} anéanti${this.war.defense ? '' : ' — il revient de la base'}`, 1.4); return; }
+    if (shift) { if (S.sel.has(i)) S.sel.delete(i); else S.sel.add(i); }
+    else {
+      const again = S.sel.size === 1 && S.sel.has(i) && S.clock - S.keyAt[i] < 0.4;
+      S.sel = new Set([i]);
+      if (again) this.stratFocus();
+    }
+    S.keyAt[i] = S.clock;
+    Sound.tick(0.05);
+  }
+
+  // Fin d'un clic gauche : un clic sur un homme choisit son trinôme (Maj : l'ajoute ou le retire), dans le vide il ne
+  // choisit plus rien ; un rectangle choisit tous les trinômes dont un homme s'y trouve (Maj : en plus).
+  stratPick(b, shift, ppx) {
+    const S = this.strat, small = Math.abs(b.x1 - b.x0) < 6 * ppx && Math.abs(b.y1 - b.y0) < 6 * ppx;
+    const ks = [];
+    if (small) {
+      const u = this.stratUnitAt(b.x1, b.y1, ppx);
+      if (u) ks.push(u.group.slot);
+    } else {
+      const x0 = Math.min(b.x0, b.x1), x1 = Math.max(b.x0, b.x1), y0 = Math.min(b.y0, b.y1), y1 = Math.max(b.y0, b.y1);
+      this.war.slots.ops.forEach((g, k) => {
+        if (g && g.members.some(m => m.alive && m.group === g && m.x >= x0 - m.radius && m.x <= x1 + m.radius && m.y >= y0 - m.radius && m.y <= y1 + m.radius)) ks.push(k);
+      });
+    }
+    if (!shift) S.sel = new Set(ks);
+    else if (small) for (const k of ks) { if (S.sel.has(k)) S.sel.delete(k); else S.sel.add(k); }
+    else for (const k of ks) S.sel.add(k);
+    if (ks.length) Sound.tick(0.05);
+  }
+
+  // Clic droit relâché : sur un adversaire en vue, l'attaquer ; sur une porte fermée, s'y mettre en colonne
+  // (intervention) ou la franchir (groupe armé) ; ailleurs, y aller (Maj : après le déplacement en cours).
+  stratRightClick(a, shift) {
+    const gs = this.stratSelected();
+    if (!gs.length) { this.stratNone(); return; }
+    const h = a.hover;
+    if (h && h.kind === 'foe' && h.foe.alive) this.stratAttack(gs, h.foe);
+    else if (h && h.kind === 'door' && !shift) this.stratDoor(gs, h.door, 'auto');
+    else this.stratMove(gs, a.x, a.y, a.angle, shift);
+    Sound.tick(0.08);
+  }
+
+  // Déplacement : chaque trinôme va près du point, côte à côte s'ils sont plusieurs (STRAT_SPACING), chacun gardant son
+  // côté de la marche pour ne pas croiser les autres ; arrivé, il tient, face à angle (sinon dans le sens de sa marche).
+  // queue : à la suite de son déplacement en cours. Renvoie les trinômes envoyés.
+  stratMove(gs, x, y, angle, queue, quiet) {
+    const anchors = gs.map(g => this.anchorOf(g));
+    const cx = anchors.reduce((s, q) => s + q.x, 0) / gs.length, cy = anchors.reduce((s, q) => s + q.y, 0) / gs.length;
+    const dir = Math.atan2(y - cy, x - cx), px = -Math.sin(dir), py = Math.cos(dir);
+    const row = gs.map((g, i) => ({ g, lat: (anchors[i].x - cx) * px + (anchors[i].y - cy) * py })).sort((p, q) => p.lat - q.lat);
+    const sent = [];
+    row.forEach(({ g }, i) => {
+      const off = (i - (gs.length - 1) / 2) * STRAT_SPACING;
+      const spot = this.freeSpotNear(x + px * off, y + py * off) || this.freeSpotNear(x, y);
+      if (!spot) return;
+      const after = queue && g.order && g.order.type === 'move';
+      const from = after ? g.queue[g.queue.length - 1] || g.order : this.anchorOf(g);
+      const o = { type: 'move', x: spot.x, y: spot.y, angle: angle !== null && angle !== undefined ? angle : Math.atan2(spot.y - from.y, spot.x - from.x) };
+      if (after) g.queue.push(o);
+      else { this.releaseGroup(g); g.order = o; g.queue = []; }
+      sent.push(g);
+    });
+    if (quiet) return sent;
+    if (!sent.length) this.say('Point inaccessible', 1.2);
+    else this.say(`${this.stratNames(sent)} : ${queue ? 'puis par là' : 'en route'}`, 1.4);
+    return sent;
+  }
+
+  // Case libre la plus proche de (x, y), à R petites cases au plus, où un homme tient sans toucher de mur ni de meuble.
+  freeSpotNear(x, y, R = 6) {
+    const m = this.map, cx = Math.floor(x / TILE), cy = Math.floor(y / TILE);
+    let best = null, bd = Infinity;
+    for (let dy = -R; dy <= R; dy++) for (let dx = -R; dx <= R; dx++) {
+      const tx = cx + dx, ty = cy + dy;
+      if (!m.inBounds(tx, ty) || m.tile(tx, ty) !== 0 || m.blocksMove(tx, ty) || m.door(tx, ty)) continue;
+      const px = (tx + 0.5) * TILE, py = (ty + 0.5) * TILE;
+      if (!m.circleFree(px, py, 12, false)) continue;
+      const d = dist(px, py, x, y);
+      if (d < bd) { bd = d; best = { x: px, y: py }; }
+    }
+    return best;
+  }
+
+  // H : chacun des trinômes choisis tient là où il est, face à où regarde son chef.
+  stratHold() {
+    const gs = this.stratSelected();
+    if (!gs.length) { this.stratNone(); return; }
+    for (const g of gs) {
+      const l = this.leaderOf(g);
+      this.releaseGroup(g);
+      g.order = { type: 'hold', x: l.x, y: l.y, angle: l.angle };
+      g.queue = [];
+    }
+    this.say(`${this.stratNames(gs)} : on tient ici`, 1.4);
+  }
+
+  // R : plus d'ordre, le trinôme ratisse son couloir seul (et va d'abord à son dernier contact, s'il en a un).
+  stratSweep() {
+    const gs = this.stratSelected();
+    if (!gs.length) { this.stratNone(); return; }
+    for (const g of gs) { this.releaseGroup(g); Object.assign(g, { order: null, queue: [], sweepTo: null, pickAt: 0 }); }
+    this.say(`${this.stratNames(gs)} : ${this.war.defense ? 'ratissez le terrain' : 'ratissez votre couloir'}`, 1.4);
+  }
+
+  // C : au pas de course (plus vite, mais les pas s'entendent), ou de nouveau au pas.
+  stratRush() {
+    const gs = this.stratSelected();
+    if (!gs.length) { this.stratNone(); return; }
+    const on = !gs.every(g => g.rush);
+    for (const g of gs) g.rush = on;
+    this.say(`${this.stratNames(gs)} : ${on ? 'au pas de course' : 'au pas, sans bruit'}`, 1.4);
+  }
+
+  // Clic droit sur un adversaire en vue : les trinômes choisis vont à son contact et le poursuivent.
+  stratAttack(gs, foe) {
+    for (const g of gs) {
+      this.releaseGroup(g);
+      g.order = { type: 'attack', foe, x: foe.x, y: foe.y };
+      g.queue = [];
+      this.know(this.leaderOf(g), foe.x, foe.y, foe);
+    }
+    this.say(`${this.stratNames(gs)} : à l’assaut !`, 1.4);
+  }
+
+  // Une porte fermée : le trinôme choisi le plus proche s'y met en colonne puis entre (intervention ; tactic : 'auto',
+  // 'flash' ou 'charge'), ou la franchit en l'ouvrant (le groupe armé n'entre pas en colonne) ; les autres viennent
+  // derrière lui, de ce côté de la porte.
+  stratDoor(gs, d, tactic) {
+    const near = gs.map(g => ({ g, at: this.anchorOf(g) })).sort((p, q) => dist(p.at.x, p.at.y, d.cx, d.cy) - dist(q.at.x, q.at.y, d.cx, d.cy));
+    const { g, at } = near[0];
+    const side = Math.sign(d.horizontal ? at.y - d.cy : at.x - d.cx) || 1, inn = this.doorInside(d, side);
+    const front = this.doorFront(d, side);
+    this.releaseGroup(g);
+    g.queue = [];
+    if (this.camp !== 'police' || !front) {
+      g.order = { type: 'move', x: inn.x, y: inn.y, angle: inn.angle };
+      this.say(`${g.label} : on passe la porte`, 1.4);
+    } else {
+      g.order = { type: 'stack', door: d, side, front, tactic, st: null, wait: 0 };
+      this.say(`${g.label} : en colonne sur la porte${tactic === 'flash' ? ', entrée à la flash' : tactic === 'charge' ? ', entrée à la charge' : ''}`, 1.8);
+    }
+    if (near.length > 1 && front) this.stratMove(near.slice(1).map(o => o.g), front.x - Math.cos(inn.angle) * 2 * U, front.y - Math.sin(inn.angle) * 2 * U, inn.angle, false, true);
+  }
+
+  // Où entrer de l'autre côté de la porte d (side : le côté d'où l'on vient), tourné vers la pièce ; et où se tenir
+  // devant elle, de son côté (null s'il n'y a pas la place).
+  doorInside(d, side) {
+    const ix = d.horizontal ? 0 : -side, iy = d.horizontal ? -side : 0;
+    const x = d.cx + ix * 1.8 * U, y = d.cy + iy * 1.8 * U, q = this.freeSpotNear(x, y, 4) || { x, y };
+    return { x: q.x, y: q.y, angle: Math.atan2(iy, ix) };
+  }
+  doorFront(d, side) {
+    const ix = d.horizontal ? 0 : -side, iy = d.horizontal ? -side : 0;
+    return this.freeSpotNear(d.cx - ix * 1.4 * U, d.cy - iy * 1.4 * U, 4);
+  }
+
+  // G : sur une porte fermée, l'intervention y entre à la flash ; ailleurs, une grenade (flash ou fragmentation, selon le
+  // camp) part vers le curseur.
+  stratGrenadeKey(x, y) {
+    const gs = this.stratSelected(), h = this.strat.hover;
+    if (!gs.length) { this.stratNone(); return; }
+    if (h && h.kind === 'door' && this.camp === 'police') this.stratDoor(gs, h.door, 'flash');
+    else this.stratGrenade(gs, x, y);
+  }
+
+  // La grenade part de celui des hommes choisis qui a une trajectoire libre jusqu'au point (sept cases au plus), le
+  // plus près ; une grenade à fragmentation ne part pas sur les vôtres.
+  stratGrenade(gs, x, y) {
+    let best = null, bd = Infinity;
+    for (const g of gs) for (const m of g.members) {
+      if (!m.alive || m.group !== g || m.flashbangs <= 0 || m.act || m.stun > 0 || m.entry) continue;
+      const d = dist(m.x, m.y, x, y);
+      if (d < 1.5 * U || d > 7 * U || d >= bd || !this.clearThrow(m.x, m.y, x, y)) continue;
+      bd = d; best = m;
+    }
+    if (!best) {
+      const any = gs.some(g => g.members.some(m => m.alive && m.group === g && m.flashbangs > 0));
+      this.say(any ? 'Personne n’a de trajectoire libre jusque-là (sept cases au plus)' : 'Plus de grenade dans ces trinômes', 2);
+      return;
+    }
+    const frag = best.nade === 'frag';
+    if (frag && this.ops.some(o => o.alive && dist(o.x, o.y, x, y) < FRAG_RADIUS + 0.5 * U)) { this.say('Trop près des vôtres pour une grenade à fragmentation', 2); return; }
+    best.flashbangs--;
+    best.flashCd = Math.max(best.flashCd || 0, 6); // (il ne relance pas de lui-même dans la foulée)
+    best.path = [];
+    this.startAction(best, 'grenade', 0.5, () => this.spawnFlash(best, x, y));
+    this.say(`${best.name} : ${frag ? 'grenade' : 'flash'} !`, 1.2);
+  }
+
+  // B : sur une porte fermée, l'intervention y entre à la charge.
+  stratChargeKey() {
+    if (this.camp !== 'police') { this.say('Pas de charge de brèche dans ce camp', 1.4); return; }
+    const gs = this.stratSelected(), h = this.strat.hover;
+    if (!gs.length) { this.stratNone(); return; }
+    if (!h || h.kind !== 'door') { this.say('B : visez une porte fermée', 1.4); return; }
+    this.stratDoor(gs, h.door, 'charge');
+  }
+
+  // F (ou deux fois le même numéro) : la vue va sur les trinômes choisis.
+  stratFocus() {
+    const ms = this.stratSelected().flatMap(g => g.members.filter(m => m.alive && m.group === g));
+    if (!ms.length) { this.stratNone(); return; }
+    this.strat.camTo = { x: ms.reduce((s, m) => s + m.x, 0) / ms.length, y: ms.reduce((s, m) => s + m.y, 0) / ms.length };
+  }
+
+  // Un nouvel ordre : le trinôme lâche ce qu'il faisait (sa colonne se défait, son angle de pièce, sa fouille).
+  releaseGroup(g) {
+    for (const e of g.members) {
+      if (e.entry) this.dropStack(e.entry);
+      Object.assign(e, { clear: null, path: [], repathT: 0, formAt: null, holdT: 0, waitDoor: null });
+    }
+    g.search = null;
+    g.waitT = 0;
+  }
+
+  // Un trinôme sous vos ordres : le chef de file mène où l'ordre l'envoie, les deux autres le suivent en file
+  // (followStep) ; arrêté, le trinôme tient, en ligne, face à la direction donnée. Arrivé au bout d'un déplacement, il
+  // passe au suivant (queue) ou tient.
+  orderStep(g, e, dt) {
+    if (g.order.type === 'stack' && this.stackOrderStep(g, g.order, e, dt)) return;
+    if (g.order.type === 'attack') this.trackFoe(g, g.order);
+    const o = g.order, lead = this.leaderOf(g);
+    if (lead !== e) { this.followStep(e, lead, dt); return; }
+    if (o.type === 'hold') { this.holdStep(g, e, o, dt); return; }
+    // arrivé : sur le point, ou tout près au bout du chemin tracé vers lui (quelqu'un s'y tient déjà)
+    const d = dist(e.x, e.y, o.x, o.y), to = e.path.to;
+    if (d < STRAT_ARRIVE || (d < 1.2 * U && !e.path.length && to && to.x === o.x && to.y === o.y)) {
+      const at = d < STRAT_ARRIVE ? o : e; // (la place prise : il tient où il s'est arrêté)
+      g.order = g.queue.length ? g.queue.shift() : { type: 'hold', x: at.x, y: at.y, angle: o.angle === undefined ? e.angle : o.angle };
+      return;
+    }
+    this.leadTo(g, e, o, dt, o.type === 'attack');
+  }
+
+  // Ordre d'attaque : on suit l'adversaire tant que quelqu'un de l'armée le voit ; abattu, on tient là où l'on est.
+  trackFoe(g, o) {
+    const f = o.foe;
+    if (f.alive) { if (f.visible) { o.x = f.x; o.y = f.y; } return; }
+    const l = this.leaderOf(g);
+    g.order = g.queue.length ? g.queue.shift() : { type: 'hold', x: l.x, y: l.y, angle: l.angle };
+    this.say(`${g.label} : cible abattue`, 1.4);
+  }
+
+  // Le chef tient le point (il y revient si on l'en a écarté), et regarde dans la direction donnée.
+  holdStep(g, e, o, dt) {
+    if (dist(e.x, e.y, o.x, o.y) > STRAT_LEASH) { this.leadTo(g, e, o, dt, false); return; }
+    e.path = []; e.moving = false;
+    e.moveDir = o.angle;
+    if (!e.target && e.alertAngle === null) turnToward(e, o.angle + Math.sin(this.time * 0.6) * 0.3, e.turnRate * 0.5, dt);
+  }
+
+  // Le chef d'un trinôme sous vos ordres va vers goal : au pas, en marquant les portes et en attendant les siens, ou au
+  // pas de course (rush, l'ordre du trinôme, ou l'adversaire vu à l'instant). Point injoignable : le trinôme tient où il est.
+  leadTo(g, e, goal, dt, rush) {
+    const to = e.path.to;
+    if (!e.path.length || e.repathT <= 0 || !to || dist(to.x, to.y, goal.x, goal.y) > 0.5 * U) {
+      e.path = this.pathTo(e, goal.x, goal.y);
+      // (tout près, sans chemin tracé : droit dessus, si rien n'est entre)
+      if (!e.path.length && dist(e.x, e.y, goal.x, goal.y) <= 1.2 * U && this.map.segmentFree(e.x, e.y, goal.x, goal.y, e.radius - 1)) e.path = [{ x: goal.x, y: goal.y }];
+      e.path.to = { x: goal.x, y: goal.y };
+      e.repathT = 1.2;
+      if (!e.path.length) {
+        g.order = { type: 'hold', x: e.x, y: e.y, angle: e.angle };
+        g.queue = [];
+        this.say(`${g.label} : point injoignable, on tient ici`, 2);
+        return;
+      }
+    }
+    if (this.waitsForGroup(e, dt)) { e.moving = false; return; }
+    const c = g.contact, hot = c && c.seen && this.time - c.t < 2;
+    if (!rush && !g.rush && !hot) { e.pace = SQUAD_PACE; this.doorPause(e, g); }
+    this.moveAlong(e, dt);
+  }
+
+  // Ordre de colonne (intervention) : le chef gagne le devant de la porte, de son côté, puis le trinôme s'y met en
+  // colonne et entre comme ses colonnes autonomes (formStack, updateAiStack), de la manière demandée s'il en a encore le
+  // moyen. Entré, il tient la pièce ; la colonne défaite (porte qui résiste), il passe la porte comme elle vient. true :
+  // l'homme e est servi.
+  stackOrderStep(g, o, e, dt) {
+    const d = o.door, inn = () => this.doorInside(d, o.side);
+    if (o.st) {
+      if (this.hunt.stacks.includes(o.st)) {
+        if (e.entry !== o.st) { e.path = []; e.moving = false; } // (resté hors de la colonne : il attend)
+        return true;
+      }
+      const q = inn(), open = d.broken || this.map.doorPassable(d);
+      g.order = open && g.queue.length ? g.queue.shift() : { type: open ? 'hold' : 'move', x: q.x, y: q.y, angle: q.angle };
+      return false;
+    }
+    if (d.broken || this.map.doorPassable(d)) { // ouverte entre-temps : on entre tout de suite
+      const q = inn();
+      g.order = { type: 'move', x: q.x, y: q.y, angle: q.angle };
+      return false;
+    }
+    if (this.leaderOf(g) !== e) return false;
+    if (dist(e.x, e.y, o.front.x, o.front.y) > 1.2 * U) { this.leadTo(g, e, o.front, dt, false); return true; }
+    // devant la porte : la colonne se forme avec ceux qui sont là (on attend un peu ceux qui traînent)
+    e.path = []; e.moving = false;
+    const alive = g.members.filter(m => m.alive && m.group === g);
+    const team = alive.filter(m => !m.entry && !(m.stun > 0) && dist(m.x, m.y, d.cx, d.cy) < AI_STACK_RANGE);
+    if (team.length < alive.length && (o.wait += dt) < SQUAD_WAIT) return true;
+    if (team.length >= 2 && this.formStack(d, o.side, team, this.stackTactic(g, o.tactic, team, d))) {
+      o.st = team[0].entry;
+      return true;
+    }
+    const q = inn();
+    g.order = { type: 'move', x: q.x, y: q.y, angle: q.angle };
+    return false;
+  }
+
+  // Manière d'entrer demandée (want) si le trinôme en a encore le moyen ; 'auto' : celle que choisirait l'IA, la menace
+  // tenue pour derrière la porte.
+  stackTactic(g, want, team, d) {
+    if (want === 'flash') {
+      if (team.some(o => o.flashbangs > 0)) return 'flash';
+      this.say(`${g.label} : plus de flash — on entre porte ouverte`, 2);
+      return 'plain';
+    }
+    if (want === 'charge') {
+      if (team.some(o => o.charges > 0)) return 'charge';
+      this.say(`${g.label} : plus de charge — on entre porte ouverte`, 2);
+      return 'plain';
+    }
+    return this.pickEntry(team, d, true);
   }
 
   // ---- Mode siège ----
@@ -896,29 +1419,26 @@ class Game {
     return b;
   }
 
+  // L'arrivée des vagues et le compte à rebours s'affichent au centre de l'écran (UI.updateWave, d'après siege.arrival
+  // et nextWave), pas en message.
   updateSiege(dt) {
     const s = this.siege;
     if (s.prep > 0) {
       s.prep -= dt;
       if (s.prep <= 0) {
-        const b = this.spawnAssault(s.waves[0]);
+        this.spawnAssault(s.waves[0]);
         s.nextWave = s.maxGap;
-        this.say(`L'assaut commence — ${this.map.breachLabel(b)} (vague 1 / ${s.waves.length})`, 3);
         Sound.door();
       }
       return;
     }
     if (s.wave < s.waves.length) {
       // Pas d'attente inutile : la vague suivante suit de peu l'élimination de la précédente.
-      if (!this.enemies.some(e => e.alive) && s.nextWave > s.gap) {
-        s.nextWave = s.gap;
-        this.say(`Vague repoussée — la suivante arrive (${s.wave + 1} / ${s.waves.length})`, 2.5);
-      }
+      if (!this.enemies.some(e => e.alive) && s.nextWave > s.gap) s.nextWave = s.gap;
       s.nextWave -= dt;
       if (s.nextWave <= 0) {
-        const b = this.spawnAssault(s.waves[s.wave]);
+        this.spawnAssault(s.waves[s.wave]);
         s.nextWave = s.maxGap;
-        this.say(`Vague ${s.wave} / ${s.waves.length} — ${this.map.breachLabel(b)}`, 2.5);
         Sound.door();
       }
     }
@@ -949,8 +1469,11 @@ class Game {
       this.minimap = !this.minimap;
       this.say(this.minimap ? 'Minimap affichée' : 'Minimap repliée', 1.2);
     }
-    if (!this.over && !this.paused) this.step(dt);
-    if (!this.paused) this.updateDying(dt);
+    // stratégie : vos ordres passent même en pause tactique (le temps, lui, s'arrête)
+    if (this.strat && !this.over && !this.paused) this.updateCommander(dt);
+    const frozen = !!(this.strat && this.strat.frozen);
+    if (!this.over && !this.paused && !frozen) this.step(dt);
+    if (!this.paused && !frozen) this.updateDying(dt);
     this.computeVision();
     this.camShake = Math.max(0, this.camShake - dt * 10);
     const kd = Math.pow(0.002, dt);
@@ -1148,8 +1671,8 @@ class Game {
     this.heard = this.heard.filter(h => h.t < NOISE_KINDS[h.kind].life);
     if (this.message.t > 0) this.message.t -= dt;
     // Joueur tombé : après un court instant, on reprend la partie dans un coéquipier encore debout (en guerre totale,
-    // de votre trinôme seulement : sinon on attend les renforts).
-    if (!this.player.alive && (this.war ? this.crew.length : this.mates.some(m => m.alive))) {
+    // de votre trinôme seulement : sinon on attend les renforts ; en stratégie, jamais : vous commandez de loin).
+    if (!this.player.alive && !this.player.commander && (this.war ? this.crew.length : this.mates.some(m => m.alive))) {
       this.relayT += dt;
       if (this.relayT >= RELAY_DELAY) this.takeOver();
     }
@@ -1170,6 +1693,11 @@ class Game {
           : "Plus aucun otage vivant entre vos mains : vous ne négociez plus rien.";
       }
       else if (this.siege.wave >= this.siege.waves.length && !this.enemies.some(e => e.alive)) this.over = 'win';
+    } else if (this.defense) {
+      // Stratégie : assaut : ni renforts ni limite de temps ; gagné quand plus personne du groupe armé ne tient le terrain,
+      // perdu quand vos trois trinômes sont anéantis.
+      if (!this.mates.some(m => m.alive)) { this.over = 'lose'; this.loseReason = 'Vos trois trinômes sont anéantis : le groupe armé tient toujours le terrain.'; }
+      else if (!this.enemies.some(Game.active)) this.over = 'win';
     } else if (this.war) {
       // Guerre totale : personne n'est jamais à court d'hommes ; au bout du temps, l'armée qui a abattu le plus
       // d'adversaires l'emporte, et à égalité, personne.
@@ -1233,6 +1761,22 @@ class Game {
       add('Otages entre vos mains', `${held} / ${H}`, share(held, H, 30));
       add('Groupe debout', `${size - lost} / ${size}`, share(size - lost, size, 20));
       add('Opérateurs neutralisés', `${s.kills} / ${n}`, share(s.kills, n, 10));
+    } else if (this.defense) {
+      // Stratégie : assaut : le terrain repris, les hommes gardés debout, le groupe armé neutralisé, et sans alerte générale
+      const n = this.war.defense.total, down = n - this.enemies.filter(Game.active).length;
+      const army = this.mates.length, up = this.mates.filter(m => m.alive).length;
+      add('Mission', win ? 'terrain repris' : 'échouée', win ? 40 : 0);
+      add('Hommes debout', `${up} / ${army}`, share(up, army, 30));
+      add('Groupe armé neutralisé', `${down} / ${n}`, share(down, n, 20));
+      add('Discrétion', this.alarm ? 'alerte générale' : 'aucune alerte', this.alarm ? 0 : 10);
+    } else if (this.strat) {
+      // Stratégie : la bataille, la part de votre armée dans le décompte, les trinômes que vous avez laissé anéantir et
+      // les hommes perdus (neuf, une armée entière, ne laissent rien)
+      const W = this.war, ours = W.kills.ops, theirs = W.kills.enemy;
+      add('Bataille', win ? 'remportée' : draw ? 'égalité' : 'perdue', win ? 40 : draw ? 20 : 0);
+      add('Score des armées', `${ours} – ${theirs}`, ours + theirs ? 30 * ours / (ours + theirs) : 15);
+      add('Trinômes anéantis', W.lost || 'aucun', Math.max(0, 20 - 5 * W.lost));
+      add('Hommes perdus', theirs, 10 * Math.max(0, 1 - theirs / 9));
     } else if (this.war) {
       // Guerre totale : la bataille, la part de l'armée dans le décompte, vos propres éliminations, et votre trinôme tenu
       const W = this.war, ours = W.kills.ops, theirs = W.kills.enemy, n = W.reinforce;
@@ -1491,7 +2035,7 @@ class Game {
     if (m.hunter) {
       // il quitte la manœuvre autonome (et la colonne où il était) pour vos commandes
       if (m.group) m.group.members = m.group.members.filter(o => o !== m);
-      Object.assign(m, { hunter: false, drilled: false, group: null, entry: null, clear: null, escorting: null, blind: null });
+      Object.assign(m, { hunter: false, drilled: false, group: null, entry: null, clear: null, escorting: null, blind: null, pace: 1, watchDir: null });
     }
     const main = this.pickupSlot(m.slot), kept = m.flashbangs || 0;
     delete m.slot; // les propriétés propres du coéquipier masqueraient les accesseurs du joueur
@@ -2961,7 +3505,9 @@ class Game {
     const d = Math.hypot(dx, dy);
     if (d < 1) { agent.path.shift(); return; }
     const ang = Math.atan2(dy, dx);
-    if (!agent.engaged) turnToward(agent, ang, agent.turnRate, dt);
+    // un équipier d'un trinôme qui suit son chef regarde son côté en marchant (watchDir, voir followStep)
+    if (!agent.engaged) turnToward(agent, agent.watchDir == null ? ang : agent.watchDir, agent.turnRate, dt);
+    if (agent.hunter) agent.moveDir = ang; // le sens de sa marche : sa file s'y range derrière lui (formationPos)
     const ax = agent.x + Math.cos(ang) * (agent.radius + 4), ay = agent.y + Math.sin(ang) * (agent.radius + 4);
     const door = this.map.door(Math.floor(ax / TILE), Math.floor(ay / TILE));
     if (door && !this.map.doorPassable(door)) {
@@ -2969,8 +3515,8 @@ class Game {
       agent.waitDoor = door;
       return;
     }
-    // un suspect en ronde marche, il ne court pas
-    const step = Math.min(d, agent.speed * (agent.patrol && agent.state === 'idle' ? PATROL_SPEED : 1) * dt);
+    // un suspect en ronde marche, il ne court pas ; un trinôme hors combat avance au pas (pace, voir updateAssault)
+    const step = Math.min(d, agent.speed * (agent.pace || 1) * (agent.patrol && agent.state === 'idle' ? PATROL_SPEED : 1) * dt);
     agent.x += Math.cos(ang) * step;
     agent.y += Math.sin(ang) * step;
     agent.moving = true;
@@ -2990,7 +3536,7 @@ class Game {
   // Portée des pas d'un agent de l'IA : un coéquipier qui marche ne fait pas de bruit, un suspect qui
   // va voir quelque chose presse le pas, celui qui regagne son poste marche.
   stepNoise(a) {
-    if (a.hunter) return STEP_NOISE.operator;
+    if (a.hunter) return (a.pace || 1) < 1 ? 0 : STEP_NOISE.operator; // un trinôme au pas ne s'entend pas
     if (a.team === 'enemy') return a.state === 'investigate' || a.state === 'engage' ? STEP_NOISE.suspect : 0;
     return a.walkMode ? 0 : STEP_NOISE.mate;
   }
@@ -3018,11 +3564,13 @@ class Game {
   }
 
   // Progression d'un agent autonome : l'équipe d'intervention du siège, ou un trinôme (d'un camp comme de l'autre).
-  // Seul, il avance vers le dernier contact, sinon vers le prochain secteur à nettoyer ; en trinôme, tous vont où va le
-  // trinôme (son contact, la fouille qui suit, le secteur choisi pour tous). Il s'arrête pour tirer dès qu'il voit. Un
-  // trinôme reste groupé (waitsForGroup).
+  // Seul, il avance vers le dernier contact, sinon vers le prochain secteur à nettoyer ; en trinôme, le chef de file
+  // (leaderOf) mène où va le trinôme (son contact, la fouille qui suit, le secteur choisi pour tous), au pas, en marquant
+  // les portes, et attend les siens (waitsForGroup) ; les deux autres le suivent en file (followStep). Chacun s'arrête
+  // pour tirer dès qu'il voit.
   updateAssault(e, dt) {
     if (!e.alive) return;
+    e.pace = 1; e.watchDir = null; // au pas, et le regard d'un équipier en file : voir followStep
     e.noiseT -= dt;
     e.suspicion = Math.max(0, e.suspicion - SUSPICION_DECAY * dt);
     if (this.siege && this.siege.prep > 0) { e.moving = false; return; } // ils attendent devant la porte
@@ -3045,8 +3593,10 @@ class Game {
         return;
       }
       if (e.engaged) { e.path = []; e.moving = false; return; }
-      // en escorte, on ne court pas après une cible hors de portée : la sortie d'abord
-      if (!e.escorting) {
+      // en escorte, on ne court pas après une cible hors de portée : la sortie d'abord ; un trinôme sous vos ordres
+      // (stratégie) non plus, sauf s'il a l'ordre d'attaquer : il tient son poste ou poursuit sa route
+      const ordered = e.group && e.group.order && e.group.order.type !== 'attack';
+      if (!e.escorting && !ordered) {
         if (!e.path.length || e.repathT <= 0) { e.path = this.pathTo(e, e.target.x, e.target.y); e.repathT = 0.8; }
         this.moveAlong(e, dt);
         return;
@@ -3060,10 +3610,15 @@ class Game {
     const g = e.group;
     let goal = e.lastKnown;
     if (goal && dist(e.x, e.y, goal.x, goal.y) < 1.2 * U) { e.lastKnown = null; goal = null; }
+    let lead = null;
     if (g) {
+      // un trinôme sous vos ordres (stratégie) fait ce que vous lui dites ; sans ordre, il ratisse son couloir
+      if (g.order) { this.orderStep(g, e, dt); return; }
       // en trinôme, ce que l'un sait, tous le savent (voir know) : on va ensemble au contact, on fouille là où il
-      // n'a rien donné, et seulement ensuite on reprend le ratissage
+      // n'a rien donné, et seulement ensuite on reprend le ratissage ; seul le chef de file choisit le chemin
       if (this.searchStep(g, e, dt)) return;
+      lead = this.leaderOf(g);
+      if (lead !== e) { this.followStep(e, lead, dt); return; }
       goal = this.contactGoal(g, e) || g.search;
     }
     if (!goal) goal = this.assaultGoal(e);
@@ -3085,18 +3640,120 @@ class Game {
       }
     }
     if (this.considerStack(e)) return;
-    if (this.waitsForGroup(e)) { e.moving = false; return; }
+    if (lead) {
+      if (this.waitsForGroup(e, dt)) { e.moving = false; return; }
+      // hors combat, le chef avance au pas et marque les portes ; les siens viennent de voir l'adversaire : il y court
+      const c = g.contact;
+      if (!(c && c.seen && this.time - c.t < 2)) { e.pace = SQUAD_PACE; this.doorPause(e, g); }
+    }
     this.moveAlong(e, dt);
   }
 
-  // Un trinôme reste groupé : celui qui a pris plus de SQUAD_SPREAD d'avance sur un équipier en route l'attend.
-  waitsForGroup(e) {
+  // Le chef de file d'un trinôme : le premier des siens encore debout (celui qui entrait en tête). S'il tombe, le
+  // suivant prend la tête.
+  leaderOf(g) { return g.members.find(o => o.alive && o.group === g) || null; }
+
+  // Chemin restant d'un agent (px).
+  pathLeft(a) {
+    let L = 0, x = a.x, y = a.y;
+    for (const q of a.path) { L += dist(x, y, q.x, q.y); x = q.x; y = q.y; }
+    return L;
+  }
+
+  // Le chef de file attend celui des siens resté à plus de SQUAD_SPREAD (à vol d'oiseau ou à pied), SQUAD_WAIT s au plus
+  // de suite : un équipier coincé ne fige pas le trinôme. Celui qui se bat ou tient son poste en colonne ne compte pas.
+  waitsForGroup(e, dt) {
     const g = e.group;
-    if (!g) return false;
-    const left = a => { let L = 0, x = a.x, y = a.y; for (const q of a.path) { L += dist(x, y, q.x, q.y); x = q.x; y = q.y; } return L; };
-    const mine = left(e);
-    return g.members.some(o => o !== e && o.alive && o.group === g && !o.target && !o.entry && o.moving && o.path.length
-      && dist(o.x, o.y, e.x, e.y) > SQUAD_SPREAD && left(o) > mine + U);
+    const lag = g.members.some(o => o !== e && o.alive && o.group === g && !o.target && !o.entry && !o.clear
+      && (dist(o.x, o.y, e.x, e.y) > SQUAD_SPREAD || this.pathLeft(o) > SQUAD_SPREAD + U));
+    if (!lag) { g.waitT = 0; return false; }
+    g.waitT = (g.waitT || 0) + dt;
+    return g.waitT < SQUAD_WAIT;
+  }
+
+  // Avant de franchir une porte (ouverte, ou qu'il vient d'ouvrir), le chef de file marque SQUAD_DOOR_PAUSE s sur le
+  // seuil : il regarde dans la pièce, et sa file se resserre derrière lui. Une fois par porte (une même porte, de
+  // nouveau au bout de 8 s).
+  doorPause(e, g) {
+    if (e.holdT > 0 || e.act) return;
+    const r = this.doorAhead(e, 1.2 * U);
+    if (!r || r.at < 8 || !this.map.doorPassable(r.d)) return;
+    const was = g.doorPaused;
+    if (was && was.d === r.d && this.time - was.t < 8) return;
+    g.doorPaused = { d: r.d, t: this.time };
+    e.holdT = SQUAD_DOOR_PAUSE;
+  }
+
+  // Un équipier d'un trinôme suit son chef de file en file décalée (SQUAD_FILE), sans ouvrir de porte (c'est le chef
+  // qui les ouvre), au pas du chef près de sa place, au pas de course s'il en est à plus de SQUAD_CATCH. Le trinôme vient
+  // de voir l'adversaire : il se porte d'un pas de côté là d'où il le verrait aussi (firingSpot), sinon à hauteur du chef
+  // (SQUAD_LINE, face à l'adversaire). En marche, le second couvre le flanc gauche, le dernier le flanc droit, avec un
+  // coup d'œil en arrière de temps en temps ; arrêtés, le second garde la gauche, le dernier les arrières.
+  // Un trinôme qui tient une position sur votre ordre (stratégie) se met en ligne, à hauteur du chef, face à la direction
+  // donnée, chacun couvrant son côté.
+  followStep(e, lead, dt) {
+    const g = e.group;
+    let rank = Math.min(1, g.members.filter(o => o !== lead && o.alive && o.group === g).indexOf(e));
+    this.trackStuck(e, dt);
+    const c = g.contact, foe = c && c.seen && c.foe && c.foe.alive && this.time - c.t < 1.5 ? c.foe : null;
+    const hold = !foe && g.order && g.order.type === 'hold' && !lead.moving ? g.order : null;
+    const head = foe ? Math.atan2(foe.y - lead.y, foe.x - lead.x) : hold ? hold.angle : lead.moveDir === undefined ? lead.angle : lead.moveDir;
+    if (hold) {
+      // en ligne, chacun prend le côté du chef où il se trouve déjà (choisi une fois par ordre) : personne ne croise
+      const fol = g.members.filter(o => o !== lead && o.alive && o.group === g);
+      if (fol.length === 2 && !fol.includes(hold.left)) {
+        const lat = o => (o.y - lead.y) * Math.cos(head) - (o.x - lead.x) * Math.sin(head);
+        hold.left = lat(fol[0]) <= lat(fol[1]) ? fol[0] : fol[1];
+      }
+      if (fol.length === 2) rank = e === hold.left ? 0 : 1;
+    }
+    let dest = null;
+    if (foe && dist(e.x, e.y, lead.x, lead.y) < 4 * U) dest = this.firingSpot(e, foe);
+    if (!dest) {
+      // la place en file ne se recalcule que par à-coups : la chercher coûte (formationPos)
+      if (!e.formAt || e.formT <= this.time) {
+        e.formAt = this.formationPos(e, lead, (foe || hold ? SQUAD_LINE : SQUAD_FILE)[rank], head);
+        e.formT = this.time + 0.15;
+      }
+      dest = e.formAt;
+    }
+    const d = dist(e.x, e.y, dest.x, dest.y);
+    // il ne recule pas vers une place restée un peu derrière lui ; le chef arrêté, il ne bouge plus pour quelques pas
+    // d'écart ; le chef en marche, il marche avec lui
+    const behind = (dest.x - e.x) * Math.cos(head) + (dest.y - e.y) * Math.sin(head) < 0;
+    const settle = dest === e.fireSpot ? 4 : behind ? 1.5 * U : lead.moving ? 4 : e.moving ? 12 : 0.7 * U;
+    if (d > settle) {
+      const tile = { x: Math.floor(dest.x / TILE), y: Math.floor(dest.y / TILE) };
+      const changed = !e.destTile || e.destTile.x !== tile.x || e.destTile.y !== tile.y;
+      if (changed || e.repathT <= 0 || !e.path.length) {
+        const avoid = this.teamOf(e).filter(o => o !== e && o.alive && dist(o.x, o.y, e.x, e.y) < 4 * U).map(o => ({ x: o.x, y: o.y, r: e.stuckCount ? 30 : 22 }));
+        let path = this.map.routeTo(e.x, e.y, tile.x, tile.y, e.radius, { noClosedDoors: true, avoid });
+        if (path && path.length) path[path.length - 1] = { x: dest.x, y: dest.y };
+        // pas de chemin sans ouvrir de porte (une porte s'est refermée entre eux) : il rejoint le chef, porte comprise
+        else if (!path) path = this.map.routeTo(e.x, e.y, lead.tx, lead.ty, e.radius, { avoid });
+        e.path = path || [];
+        e.destTile = tile;
+        e.repathT = 0.4;
+      }
+      // à sa place, au pas du chef ; un peu en retard, un peu plus vite (toujours sans bruit) ; distancé, il court
+      if (d <= SQUAD_CATCH) e.pace = d < 0.3 * U ? SQUAD_PACE : SQUAD_PACE * 1.3;
+      // il couvre son côté en marchant (le dernier jette un coup d'œil derrière, 1,2 s toutes les 5 s) ; l'adversaire
+      // vu à l'instant, il le cherche des yeux
+      if (foe) e.watchDir = Math.atan2(foe.y - e.y, foe.x - e.x);
+      else if (e.alertAngle === null && d <= 3 * U) {
+        e.coverPhase = e.coverPhase === undefined ? rand(0, 5) : e.coverPhase;
+        e.watchDir = head + (rank === 0 ? -55 * DEG : (this.time + e.coverPhase) % 5 < 1.2 ? Math.PI : 55 * DEG);
+      }
+      e.lastStep = { x: e.x, y: e.y };
+      this.moveAlong(e, dt);
+      return;
+    }
+    e.path = []; e.moving = false;
+    if (e.alertAngle !== null) return;
+    const want = foe ? Math.atan2(foe.y - e.y, foe.x - e.x)
+      : hold ? head + (rank === 0 ? -35 * DEG : 35 * DEG) + Math.sin(this.time * 0.8 + rank * 2) * 0.3
+      : head + (rank === 0 ? -80 * DEG : Math.PI) + Math.sin(this.time * 0.9 + rank * 2) * 0.45;
+    turnToward(e, want, e.turnRate * 0.5, dt);
   }
 
   // Entré à la suite d'une colonne : il rejoint son angle de la pièce et le tient AI_CLEAR s, arme vers le fond.
@@ -3121,20 +3778,26 @@ class Game {
     return true;
   }
 
-  // Première porte sur le chemin d'un agent, à moins de range : null si elle laisse déjà passer (ou s'ouvre).
-  doorOnPath(a, range) {
-    let x = a.x, y = a.y, left = range;
+  // Première porte sur le chemin d'un agent, à moins de range : { d, at }, at le chemin qui l'en sépare.
+  doorAhead(a, range) {
+    let x = a.x, y = a.y, walked = 0;
     for (const wp of a.path) {
       const L = dist(x, y, wp.x, wp.y), n = Math.max(1, Math.ceil(L / 6));
       for (let i = 1; i <= n; i++) {
-        if (L * i / n > left) return null;
+        if (walked + L * i / n > range) return null;
         const d = this.map.door(Math.floor((x + (wp.x - x) * i / n) / TILE), Math.floor((y + (wp.y - y) * i / n) / TILE));
-        if (d) return d.opening || this.map.doorPassable(d) ? null : d;
+        if (d) return { d, at: walked + L * i / n };
       }
-      left -= L; x = wp.x; y = wp.y;
-      if (left <= 0) return null;
+      walked += L; x = wp.x; y = wp.y;
+      if (walked >= range) return null;
     }
     return null;
+  }
+
+  // Première porte sur le chemin d'un agent, à moins de range : null si elle laisse déjà passer (ou s'ouvre).
+  doorOnPath(a, range) {
+    const r = this.doorAhead(a, range);
+    return r && !r.d.opening && !this.map.doorPassable(r.d) ? r.d : null;
   }
 
   // Une porte fermée à franchir : de temps en temps (stackOdds), l'opérateur et les équipiers libres qui sont avec lui
@@ -3979,22 +4642,22 @@ class Game {
     this.say(hold ? 'Équipe : tenez la position' : 'Équipe : suivez-moi', 1.2);
   }
 
-  // Un point est dans l'axe de tir du joueur (cône étroit devant lui).
-  inAimCone(x, y, halfAngle) {
-    const p = this.player;
+  // Un point est dans l'axe de tir du joueur (cône étroit devant lui), ou de p.
+  inAimCone(x, y, halfAngle, p = this.player) {
     const d = dist(p.x, p.y, x, y);
     if (d < 6 || d > 7 * U) return false;
     return Math.abs(angleDiff(p.angle, Math.atan2(y - p.y, x - p.x))) < (halfAngle || 20 * DEG);
   }
 
   // Place du coéquipier en formation derrière le joueur, hors de son axe de tir,
-  // sinon la case libre la plus proche visible du joueur.
-  formationPos(m) {
-    const p = this.player, a = p.moveDir;
-    const [fx, fy] = m.slotOffset;
+  // sinon la case libre la plus proche visible du joueur. Un équipier d'un trinôme autonome se range de même derrière
+  // son chef de file p, à la place off, dans le sens a (voir followStep).
+  formationPos(m, p = this.player, off = m.slotOffset, a = p.moveDir === undefined ? p.angle : p.moveDir) {
+    const [fx, fy] = off;
     const wx = p.x + (Math.cos(a) * fx - Math.sin(a) * fy) * U, wy = p.y + (Math.sin(a) * fx + Math.cos(a) * fy) * U;
     const bad = m.badDest && m.badDest.until > this.time && Math.abs(m.badDest.x - Math.floor(wx / TILE)) <= 1 && Math.abs(m.badDest.y - Math.floor(wy / TILE)) <= 1;
-    if (!bad && this.map.circleFree(wx, wy, m.radius + 1, true) && this.map.hasLOS(p.x, p.y, wx, wy) && !this.inAimCone(wx, wy, 30 * DEG)) return { x: wx, y: wy };
+    if (!bad && this.map.circleFree(wx, wy, m.radius + 1, true) && this.map.hasLOS(p.x, p.y, wx, wy) && !this.inAimCone(wx, wy, 30 * DEG, p)) return { x: wx, y: wy };
+    const mates = m.group ? m.group.members : this.mates;
     let best = null, bd = Infinity;
     for (let dy = -6; dy <= 6; dy++) for (let dx = -6; dx <= 6; dx++) {
       const tx = p.tx + dx, ty = p.ty + dy;
@@ -4006,9 +4669,9 @@ class Game {
       if (dist(cx, cy, p.x, p.y) < U * 0.9) continue;
       if (!this.map.hasLOS(p.x, p.y, cx, cy)) continue;
       let score = dist(cx, cy, wx, wy);
-      if (this.inAimCone(cx, cy, 35 * DEG)) score += 6 * U;
+      if (this.inAimCone(cx, cy, 35 * DEG, p)) score += 6 * U;
       if (m.badDest && m.badDest.until > this.time && Math.abs(m.badDest.x - tx) <= 1 && Math.abs(m.badDest.y - ty) <= 1) score += 10 * U;
-      if (this.mates.some(o => o !== m && o.alive && o.destTile && o.destTile.x === tx && o.destTile.y === ty)) score += 2 * U;
+      if (mates.some(o => o !== m && o.alive && o.destTile && o.destTile.x === tx && o.destTile.y === ty)) score += 2 * U;
       if (score < bd) { bd = score; best = { x: cx, y: cy }; }
     }
     return best || { x: p.x, y: p.y };
@@ -4198,9 +4861,9 @@ class Game {
       if (!this.map.inBounds(tx, ty) || this.map.blocksMove(tx, ty) || this.map.door(tx, ty)) continue;
       const x = (tx + 0.5) * TILE, y = (ty + 0.5) * TILE;
       if (!this.map.circleFree(x, y, m.radius + 1, true)) continue;
-      // un coéquipier ne se place ni sur le joueur ni dans son axe de visée
-      if (m.team === 'ops' && dist(x, y, this.player.x, this.player.y) < 0.8 * U) continue;
-      if (m.team === 'ops' && this.inAimCone(x, y, 30 * DEG)) continue;
+      // un coéquipier ne se place ni sur le joueur ni dans son axe de visée (s'il est debout)
+      if (m.team === 'ops' && this.player.alive && dist(x, y, this.player.x, this.player.y) < 0.8 * U) continue;
+      if (m.team === 'ops' && this.player.alive && this.inAimCone(x, y, 30 * DEG)) continue;
       if (dist(x, y, t.x, t.y) > this.fireRange(m)) continue;
       if (!this.map.hasLOS(x, y, t.x, t.y)) continue;
       if (!this.lineOfFireClear(m, t, x, y, 12)) continue; // de quoi rester dégagé une fois arrivé
@@ -4243,10 +4906,9 @@ class Game {
     }
   }
 
-  updateMate(m, dt) {
-    if (!m.alive) return;
-    // Détection de blocage (repoussé par un allié, coincé contre un angle) : nouveau trajet,
-    // puis, si ça persiste, abandon temporaire de cette case.
+  // Détection de blocage d'un équipier qui suit (repoussé par un allié, coincé contre un angle) : nouveau trajet,
+  // puis, si ça persiste, abandon temporaire de cette case.
+  trackStuck(m, dt) {
     if (m.lastStep && m.moving) {
       if (dist(m.x, m.y, m.lastStep.x, m.lastStep.y) < 0.4) m.stuckT = (m.stuckT || 0) + dt;
       else { m.stuckT = 0; }
@@ -4257,11 +4919,16 @@ class Game {
       m.repathT = 0; m.path = [];
       if (m.destTile && m.stuckCount >= 2) {
         m.badDest = { x: m.destTile.x, y: m.destTile.y, until: this.time + 4 };
-        m.watchSpot = null;
+        m.watchSpot = null; m.formT = 0;
         m.stuckCount = 0;
       }
     }
     if (m.stuckCount && !m.moving) m.stuckCount = 0;
+  }
+
+  updateMate(m, dt) {
+    if (!m.alive) return;
+    this.trackStuck(m, dt);
     m.fireT -= dt; m.pauseT -= dt; m.repathT -= dt;
     m.bloom = Math.max(0, m.bloom - dt * 7 * DEG);
     if (m.reloadT > 0) { m.reloadT -= dt; if (m.reloadT <= 0) m.slot.mag = m.weapon.mag; }

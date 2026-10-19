@@ -33,6 +33,18 @@ de chaque section.
 
 ## Mode trinômes
 
+- **Les trinômes autonomes marchent en file derrière un chef depuis le 18 octobre, réglés à l'estime** (`SQUAD_FILE`,
+  `SQUAD_LINE`, `SQUAD_PACE`, `SQUAD_DOOR_PAUSE`, `SQUAD_SPREAD`, `SQUAD_WAIT`, `SQUAD_CATCH` en tête de `js/game.js`) :
+  le chef au pas (70 % de sa vitesse, sans bruit de pas), 0,6 s sur le seuil de chaque porte, quatre secondes au plus à
+  attendre un retardataire. En parties simulées (le joueur immobile et hors jeu), ils ratissent moitié moins vite à la
+  minute, et les trinômes se rencontrent vers la dixième ou la trentième seconde au lieu de la dixième au plus. En duel
+  de trois contre trois, l'équilibre entre les camps n'a pas bougé au-delà du hasard (sur 72 parties : intervention 30,
+  groupe armé 32, au lieu de 32 et 23). Limites : sur une arène en anneau (le Chantier), deux trinômes qui tournent dans
+  le même sens se courent après une à deux minutes avant de se croiser ; dans un couloir, le chef tire seul plus souvent
+  (60 % des coups du trinôme, au lieu de la moitié) faute de place pour ses équipiers ; le dernier ne regarde derrière
+  lui qu'une seconde sur cinq en marche ; un équipier coincé est abandonné au bout de quatre secondes et rejoint en
+  courant. L'intervention du siège, qui n'est pas en trinômes, avance toujours à pleine vitesse et sans chef. Rien
+  n'a été joué à la main.
 - **Équilibre à éprouver en jeu.** En parties simulées sans le joueur (il reste immobile au départ, ses deux coéquipiers
   avec lui, et l'adversaire ne le vise pas), le camp de l'intervention l'emporte 7 fois sur 12, celui du groupe armé
   1 fois sur 12 : face à des défenseurs immobiles, l'intervention gagne par ses flashs et ses entrées en colonne. En duel
@@ -44,25 +56,26 @@ de chaque section.
 - **Les lots d'accessoires de l'IA sont tirés au hasard, pas choisis** : un homme ne monte pas un silencieux parce
   qu'il veut surprendre, ni ne coupe son laser pour se cacher. Les lasers de l'IA restent allumés en permanence.
 - **Ratissage et contacts réglés à l'estime** (`SWEEP_SEEN`, `SWEEP_AHEAD`, `CONTACT_HOLD`, `SQUAD_SEARCH` en tête de
-  `js/game.js`). En parties simulées de deux minutes (le joueur immobile et hors jeu), un homme d'un trinôme autonome fait
-  4 à 5 demi-tours par minute au lieu de 18, et les deux camps se rencontrent vers la septième seconde au lieu de la
-  trentième. Les demi-tours restants viennent presque tous du ratissage : on entre dans une pièce sans issue, on en
-  ressort. Rien n'a été joué à la main.
+  `js/game.js`). En parties simulées de deux minutes (le joueur immobile et hors jeu), un chef de trinôme autonome fait
+  3 à 8 demi-tours par minute (18 avant la refonte du ratissage) ; ses équipiers en font un peu plus, le temps que la
+  file se reforme derrière lui après un virage. Les demi-tours du chef viennent presque tous du ratissage : on entre
+  dans une pièce sans issue, on en ressort. Rien n'a été joué à la main.
 - **Les deux trinômes d'en face se partagent le ratissage, pas leurs contacts** : l'un ne vient au secours de l'autre
   que s'il entend ses coups de feu de près (`HEAR_GO`). Le second trinôme de votre camp vous laisse votre part du
   bâtiment, mais ne sait pas ce que vous avez vu, et ne vous suit pas.
 - **Le groupe armé ne se met jamais en colonne** et n'entre pas à la grenade : il franchit les portes comme il vient.
 - **Pas de réapparition ni de manches** : une seule manche, à l'élimination.
 - **Les trinômes ne se replient pas** : blessé ou en infériorité, un trinôme continue d'avancer ; personne ne tient un
-  angle en attendant l'adversaire, ni ne couvre l'arrière quand le trinôme marche.
+  angle en attendant l'adversaire. Les arrières ne sont couverts qu'à l'arrêt, et par coups d'œil en marche.
 
 ## Guerre totale
 
 - **Tout est réglé à l'estime, et la bataille est très meurtrière.** Cinq minutes (`WAR_TIME`), six secondes avant le
   retour d'un trinôme (`WAR_RESPAWN`), un couloir par trinôme avancé par étapes de quatre cases (`WAR_STEP`). En parties
   simulées sans le joueur (il reste à sa base), les armées se rencontrent vers la dixième seconde et la bataille compte
-  environ 160 morts en cinq minutes, 75 à 90 par armée : chaque homme vit une trentaine de secondes. Ni joué à la main,
-  ni comparé d'une carte à l'autre. Leviers : `WAR_RESPAWN`, `WAR_STEP`, `SQUAD_MILITANT`, les armes de l'IA.
+  environ 160 morts en cinq minutes, 75 à 90 par armée : chaque homme vit une trentaine de secondes. Depuis que les
+  trinômes autonomes marchent en file, au pas (18 octobre), on en compte plutôt 110 à 170 (130 en moyenne), et l'Usine,
+  pleine de portes, est la moins meurtrière. Ni joué à la main, ni comparé d'une carte à l'autre. Leviers : `WAR_RESPAWN`, `WAR_STEP`, `SQUAD_MILITANT`, les armes de l'IA.
 - **Pas de protection à la réapparition.** Un trinôme revient dans sa base même si l'adversaire y est : rien n'empêche
   de camper la base d'en face. Ni zone interdite, ni invulnérabilité de quelques secondes, ni base de repli.
 - **Les trinômes autonomes ne se coordonnent pas entre couloirs.** Chacun tient sa bande et ne partage un contact
@@ -75,6 +88,43 @@ de chaque section.
   case, si bien que son reflet n'est pas exactement à la même place.
 - **Le rendu des grandes cartes reste à mesurer dans un vrai navigateur.** Le brouillard et les calques de la carte ne
   se recomposent plus qu'à l'écran, mais une armée entière, c'est neuf cônes de vision à découper à chaque image.
+
+## Stratégie
+
+- **Tout est réglé à l'estime et rien n'a été joué à la main** (`STRAT_SPACING`, `STRAT_ARRIVE`, `STRAT_LEASH`, `STRAT_VIEW`,
+  `STRAT_PAN` en tête de `js/game.js` et `js/render.js`). Les tests mènent les ordres un à un (déplacement, étapes, tenue,
+  attaque, colonne à la porte, grenade, pause tactique, retour de la base) et font tourner chaque champ de bataille avec des
+  ordres au hasard ; en partie simulée, trois trinômes envoyés à 16 cases arrivent en 5 à 13 s selon qu'ils se battent en route.
+- **Les règles sont celles de la guerre totale** : le décompte des morts au bout de cinq minutes. Pas de point à tenir ni
+  de zone à prendre, ce qui donnerait plus de sens à la manœuvre ; pas de choix d'équipement ni de composition des trinômes.
+- **L'armée d'en face n'a pas de commandant** : ses trois trinômes ratissent leur couloir comme en guerre totale, sans se
+  concentrer ni se replier. Concentrer vos trois trinômes sur un couloir suffit sans doute à l'emporter.
+- **Les ordres restent simples** : un trinôme envoyé tire en route sans poursuivre, un trinôme qui tient ne bouge pas même
+  pris à revers ; pas de patrouille, pas de « tenir le feu », pas de groupes enregistrés (Ctrl + numéro). Une colonne ne se
+  forme qu'à l'ordre (la porte cliquée) ; en route, une porte fermée s'ouvre comme elle vient.
+- **Le rendu d'une armée entière vue de haut reste à mesurer dans un vrai navigateur** : toute la carte à l'écran, c'est
+  tout le brouillard et dix-huit personnages à redessiner à chaque image.
+
+## Stratégie : assaut
+
+- **Équilibre réglé en parties simulées, jamais joué à la main** (`DEFENSE_RATIO`, `DEFENSE_CLEAR`, `DEFENSE_OUTSIDE`,
+  `DEFENSE_PATROLS`, `DEFENSE_STATS`, `DEFENSE_WEAPONS` en tête de `js/game.js`). Vos trois trinômes laissés à eux-mêmes (`R`,
+  aucun ordre) contre 27 hommes : avec les suspects de l'assaut tels quels, ils gagnent en 40 à 100 s en gardant quatre à six
+  hommes ; avec les hommes des trinômes (`SQUAD_MILITANT`, AKM et AK-74 de précision), ils sont anéantis en moins de 40 s
+  après en avoir abattu un tiers ; avec les réglages retenus (armes des suspects, 100 points de vie, 0,4 s de réaction), ils
+  gagnent environ quatre parties sur neuf, de peu dans un sens comme dans l'autre (une à quatre survivants, un à sept
+  défenseurs restants). Un commandant qui concentre ses trinômes et entre à la flash devrait faire mieux : à vérifier.
+- **L'alerte générale tombe presque à chaque partie** : un défenseur qui voit un opérateur et tient trois secondes, sur un
+  terrain ouvert, c'est la règle. Le terrain entier se met alors sur ses gardes, et la ligne « Discrétion » de la note ne
+  se gagne qu'en avançant à couvert.
+- **Les postes dehors sont souvent à découvert.** Sur le Village, qui a peu de bâtiments, une dizaine de défenseurs sur 27
+  au plus sont sous un toit ; dehors, un poste à deux petites cases d'un mur, d'une haie, d'un arbre ou de sacs de sable
+  compte comme abrité, sans qu'il tourne le dos à l'abri ni ne regarde vers votre base.
+- **Le groupe armé ne se replie ni ne se regroupe** : comme les suspects de l'assaut, chacun tient son poste, vient voir ce
+  qu'il entend et rentre. Pas de défense en profondeur, pas de renforts venus de l'autre base, pas de grenades.
+- **Les textes des champs de bataille parlent de deux armées** (« chaque armée part d'un bout ») : ils sont écrits pour la
+  guerre totale et repris tels quels. La seconde base reste peinte en rouge, sans rôle dans ce mode.
+- **Pas de limite de temps**, et la note ne tient pas compte de la durée.
 
 ## Mode escorte
 

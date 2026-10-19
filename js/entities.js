@@ -361,13 +361,18 @@ const NADE_KITS = {
 // Nom court de chaque sorte de grenade (HUD, messages).
 const NADE_NAMES = { flash: 'Flash', frag: 'Frag' };
 
-// Cinq modes de jeu : l'assaut (on incarne l'opérateur), le siège (on incarne le groupe armé), l'escorte (l'équipe
-// conduit un VIP d'un point A à un point B), les trinômes (deux trinômes contre deux) et la guerre totale (deux armées de
-// trois trinômes, cinq minutes de combat avec réapparitions). Les deux derniers se jouent dans le camp de son choix :
-// squads / war côté intervention, squadsArmed / warArmed côté groupe armé, un seul bouton par mode. levels : les cartes
+// Sept modes de jeu : l'assaut (on incarne l'opérateur), le siège (on incarne le groupe armé), l'escorte (l'équipe
+// conduit un VIP d'un point A à un point B), les trinômes (deux trinômes contre deux), la guerre totale (deux armées de
+// trois trinômes, cinq minutes de combat avec réapparitions), la stratégie (la même bataille, commandée de haut) et la
+// stratégie d'assaut (vos trois trinômes, commandés de haut, contre un groupe armé retranché). Les trinômes, la guerre
+// totale et la stratégie se jouent dans le camp de son choix : squads / war / strategy côté intervention, squadsArmed /
+// warArmed / strategyArmed côté groupe armé, un seul bouton par mode. levels : les cartes
 // du mode (chacun a les siennes, voir js/levels.js) ; pitch : son bouton ; desc : ce qu'on y fait (écran des modes) ;
 // camp : le camp du joueur ; power : le courant peut être coupé ; squads : des trinômes autonomes des deux côtés ; war :
-// la guerre totale ; variantOf : variante d'un autre mode (même bouton, l'autre camp).
+// la guerre totale ; strategy : la stratégie (la guerre totale vue de haut, sans incarner personne : vous commandez les
+// trois trinômes de votre armée) ; defense : en face, pas d'armée mais un groupe armé DEFENSE_RATIO fois plus nombreux,
+// posté sur tout le terrain comme les suspects de l'assaut, et personne ne revient de sa base (voir Game.startWar) ;
+// variantOf : variante d'un autre mode (même bouton, l'autre camp).
 const ARMED_GEAR = { primaries: ['akP', 'ak74P', 'uziP', 'skorpionP', 'm870'], sidearms: ['makarovP', 'tt33', 'glock17'], shields: [], vests: [], loadout: { ...DEFAULT_LOADOUT, primary: 'akP', sidearm: 'makarovP', vest: null } };
 const POLICE_GEAR = { primaries: PRIMARY_WEAPONS, sidearms: SIDEARMS, shields: Object.keys(SHIELDS), vests: Object.keys(VESTS), loadout: DEFAULT_LOADOUT };
 const MODE_DESC = {
@@ -376,6 +381,8 @@ const MODE_DESC = {
   escort: "Vous conduisez un VIP du point A au point B, à travers un bâtiment tenu par un commando qui le cherche.",
   squads: "Deux trinômes contre deux, l'intervention contre le groupe armé, dans le camp de votre choix. Une seule vie.",
   war: "Deux armées de trois trinômes, cinq minutes de combat : chaque trinôme anéanti revient à sa base. L'armée qui abat le plus d'adversaires l'emporte.",
+  strategy: "Vous commandez de haut les trois trinômes de votre armée : choisissez-les, envoyez-les, faites-les tenir, attaquer ou entrer en colonne. Cinq minutes contre une armée de trois trinômes.",
+  strategyAssault: "Vous commandez de haut trois trinômes d'intervention contre un groupe armé trois fois plus nombreux, retranché sur tout le terrain. Pas de renforts : nettoyez le terrain avant d'être anéanti.",
 };
 const MODES = {
   assault: { name: 'Assaut', pitch: "🛡 Assaut — vous menez l'intervention", desc: MODE_DESC.assault, camp: 'police', power: true, levels: ASSAULT_LEVELS, ...POLICE_GEAR },
@@ -385,6 +392,9 @@ const MODES = {
   squadsArmed: { name: 'Trinômes', pitch: '⚔ Trinômes — deux contre deux', desc: MODE_DESC.squads, camp: 'armed', squads: true, variantOf: 'squads', levels: SQUAD_LEVELS, ...ARMED_GEAR },
   war:     { name: 'Guerre totale', pitch: '✠ Guerre totale — trois trinômes contre trois', desc: MODE_DESC.war, camp: 'police', squads: true, war: true, levels: WAR_LEVELS, ...POLICE_GEAR },
   warArmed: { name: 'Guerre totale', pitch: '✠ Guerre totale — trois trinômes contre trois', desc: MODE_DESC.war, camp: 'armed', squads: true, war: true, variantOf: 'war', levels: WAR_LEVELS, ...ARMED_GEAR },
+  strategy: { name: 'Stratégie', pitch: '♜ Stratégie — vous commandez trois trinômes', desc: MODE_DESC.strategy, camp: 'police', squads: true, war: true, strategy: true, levels: WAR_LEVELS, ...POLICE_GEAR },
+  strategyArmed: { name: 'Stratégie', pitch: '♜ Stratégie — vous commandez trois trinômes', desc: MODE_DESC.strategy, camp: 'armed', squads: true, war: true, strategy: true, variantOf: 'strategy', levels: WAR_LEVELS, ...ARMED_GEAR },
+  strategyAssault: { name: 'Stratégie : assaut', pitch: '♜ Stratégie : assaut — trois trinômes contre un terrain tenu', desc: MODE_DESC.strategyAssault, camp: 'police', squads: true, war: true, strategy: true, defense: true, levels: WAR_LEVELS, ...POLICE_GEAR },
 };
 
 // acc : accessoires ({ sup, laser, light, grip, mag, scope }), ou true pour un simple silencieux
@@ -507,6 +517,13 @@ const SQUAD_DEFS = {
 const WAR_DEFS = {
   police: [SQUAD_DEFS.police, [{ name: 'Golf', accent: '#81c784' }, { name: 'Hotel', accent: '#ff8a65' }, { name: 'India', accent: '#4dd0e1' }]],
   armed: [SQUAD_DEFS.armed, SIEGE_MATE_DEFS.slice(5, 8)],
+};
+// Stratégie : les trois trinômes de votre armée, chacun sa couleur (anneaux, chemins, minimap, HUD) et ses noms ; le
+// premier prend ceux de votre trinôme de la guerre totale, les deux autres ceux de ses trinômes autonomes.
+const STRAT_COLORS = ['#64b5f6', '#81c784', '#ffb74d'];
+const STRAT_DEFS = {
+  police: [[{ name: 'Alpha' }, { name: 'Bravo' }, { name: 'Charlie' }], ...WAR_DEFS.police],
+  armed: [[SIEGE_MATE_DEFS[0], SIEGE_MATE_DEFS[1], { name: 'Anton', jacket: '#4a4a3a', pants: '#2f3a33' }], ...WAR_DEFS.armed],
 };
 // Tirage sans doublon tant que le lot n'est pas épuisé.
 function dealWeapons(pool, n) {
