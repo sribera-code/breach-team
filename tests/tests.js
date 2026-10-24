@@ -695,6 +695,207 @@ test('la fibre montre la pièce voisine et se retire au moindre pas', () => {
   ok(!p.fiber, 'fibre retirée dès qu’on bouge');
 });
 
+// ---------------------------------------------------------------- menu d'actions
+// Clic molette au point (x, y) : le menu qui s'ouvre.
+function openMenuAt(g, x, y) {
+  const inp = g.game.input;
+  inp.mouse.x = x; inp.mouse.y = y;
+  g.press('Mouse1');
+  return g.game.menu;
+}
+// Clic (gauche par défaut) sur la ligne id du menu ouvert : la ligne choisie.
+function pickMenu(g, id, button) {
+  const mn = g.game.menu, inp = g.game.input;
+  ok(mn, 'un menu ouvert');
+  const i = mn.items.findIndex(it => it.id === id);
+  ok(i >= 0, 'ligne ' + id + ' au menu (' + mn.items.map(it => it.id).join(', ') + ')');
+  inp.mouse.item = i;
+  g.press(button || 'Mouse0');
+  inp.mouse.item = -1;
+  return mn.items[i];
+}
+const menuItem = (mn, id) => mn.items.find(it => it.id === id);
+// Un point du sol libre, en vue, à D px de from, loin de toute porte.
+function groundSpot(game, from, D) {
+  for (let k = 0; k < 72; k++) {
+    const a = k * TAU / 72, x = from.x + Math.cos(a) * D, y = from.y + Math.sin(a) * D;
+    if (game.map.circleFree(x, y, 12, true) && game.map.hasLOS(from.x, from.y, x, y) && !game.doorAtPoint(x, y)) return { x, y };
+  }
+  return null;
+}
+
+test('le clic molette ouvre le menu de ce que désigne le curseur : vous, une porte, le sol', () => {
+  const g = mkGame({ noEnemyAI: true });
+  const game = g.game, p = game.player;
+  const w = doorWithRoom(game);
+  ok(w, 'une porte de test');
+  p.x = w.a.x; p.y = w.a.y;
+  let mn = openMenuAt(g, p.x + 3, p.y - 2);
+  eq(mn.kind, 'self', 'sur vous');
+  for (const id of ['reload', 'walk', 'follow', 'hold', 'minimap']) ok(menuItem(mn, id), 'sur vous : ' + id);
+  eq(menuItem(mn, 'reload').off, 'chargeur plein', 'chargeur plein : recharger est grisé');
+  eq(menuItem(mn, 'follow').off, 'ils vous suivent', 'ils suivent déjà : grisé');
+  g.press('Mouse2');
+  eq(game.menu, null, 'le clic droit ferme le menu');
+  g.press('Mouse2Up');
+  ok(!game.orderDrag && game.mates.every(m => m.order === 'follow'), '… sans donner d’ordre');
+  mn = openMenuAt(g, w.d.cx, w.d.cy);
+  eq(mn.kind, 'door', 'sur une porte');
+  eq(mn.door, w.d, 'la porte désignée');
+  ok(/fermée/.test(mn.title), 'son état en titre : ' + mn.title);
+  for (const id of ['open', 'ajar', 'crack', 'close', 'fiber', 'charge', 'stack', 'flash']) ok(menuItem(mn, id), 'porte : ' + id);
+  eq(menuItem(mn, 'close').off, 'déjà', 'déjà fermée : grisé');
+  g.press('Mouse1');
+  eq(game.menu, null, 'un clic molette hors des lignes ferme le menu');
+  const s = groundSpot(game, p, 2.5 * U);
+  ok(s, 'un point au sol');
+  mn = openMenuAt(g, s.x, s.y);
+  eq(mn.kind, 'zone', 'au sol');
+  ok(menuItem(mn, 'move') && menuItem(mn, 'throw'), 'au sol : y envoyer l’équipe, y lancer une grenade');
+  // le rendu place les lignes : celle sous le curseur est celle que le jeu reçoit
+  g.step(1);
+  const r = g.r.menuRects[1];
+  g.r.mouse.sx = r.x + r.w / 2; g.r.mouse.sy = r.y + r.h / 2;
+  eq(g.r.menuItemAt(), 1, 'la ligne sous le curseur');
+  g.r.mouse.sx = r.x - 40;
+  eq(g.r.menuItemAt(), -1, 'à côté du menu : aucune');
+});
+
+test('en siège, ni ordres ni fibre ni charge au menu', () => {
+  const g = mkGame({ mode: 'siege', noEnemyAI: true });
+  const game = g.game, p = game.player;
+  let mn = openMenuAt(g, p.x, p.y);
+  eq(mn.kind, 'self', 'sur vous');
+  ok(!menuItem(mn, 'follow') && !menuItem(mn, 'hold') && !menuItem(mn, 'shout'), 'pas d’ordre ni de sommation');
+  g.press('Mouse2');
+  const d = nearestDoorTo(game.map, p.x, p.y);
+  mn = openMenuAt(g, d.cx, d.cy);
+  eq(mn.kind, 'door', 'sur une porte');
+  ok(menuItem(mn, 'open') || menuItem(mn, 'pick'), 'la porte se manœuvre');
+  ok(!menuItem(mn, 'fiber') && !menuItem(mn, 'charge') && !menuItem(mn, 'stack'), 'ni fibre, ni charge, ni colonne');
+});
+
+test('un choix du menu agit, la visée ne suit pas le curseur et le clic ne tire pas', () => {
+  const g = mkGame({ alone: true, loadout: { primary: 'hk416', sidearm: 'glock17' } });
+  const game = g.game, p = game.player, inp = game.input;
+  ok(p.weapon.auto, 'arme automatique');
+  inp.mouse.x = p.x + 100; inp.mouse.y = p.y; g.step(1);
+  near(p.angle, 0, 1e-6, 'visée vers la droite');
+  openMenuAt(g, p.x, p.y);
+  inp.mouse.x = p.x - 100; g.step(3);
+  near(p.angle, 0, 1e-6, 'menu ouvert : la visée reste où elle était');
+  ok(!game.scoped(p), 'pas de lunette menu ouvert');
+  const walk = p.walkMode, shots = game.stats.shots;
+  inp.mouse.down = true; // le bouton reste enfoncé après le clic qui choisit
+  pickMenu(g, 'walk');
+  eq(p.walkMode, !walk, 'allure basculée');
+  eq(game.menu, null, 'le menu se ferme');
+  g.step(20);
+  eq(game.stats.shots, shots, 'le clic qui a choisi ne part pas en rafale');
+  near(Math.abs(p.angle), Math.PI, 1e-6, 'menu fermé : la visée suit à nouveau le curseur');
+  inp.mouse.down = false; g.step(1);
+  inp.mouse.down = true; g.step(10); inp.mouse.down = false;
+  ok(game.stats.shots > shots, 'relâché puis pressé : on tire');
+  // glissé : molette maintenue jusqu'à la ligne, relâchée dessus
+  p.slot.mag = 3;
+  openMenuAt(g, p.x, p.y);
+  inp.mouse.item = game.menu.items.findIndex(it => it.id === 'reload');
+  g.press('Mouse1Up');
+  inp.mouse.item = -1;
+  eq(game.menu, null, 'relâchée sur la ligne : choisie');
+  ok(p.reloadT > 0, 'rechargement lancé');
+  // une ligne grisée dit pourquoi, et le menu reste ouvert
+  g.step(400);
+  openMenuAt(g, p.x, p.y);
+  pickMenu(g, 'reload');
+  ok(game.menu && /chargeur plein/.test(game.message.text), 'grisée : « ' + game.message.text + ' », menu ouvert');
+});
+
+test('le menu d’une porte l’ouvre au cran choisi, la crochète, et grise ce qui est trop loin', () => {
+  const g = mkGame({ alone: true });
+  const game = g.game, p = game.player;
+  const w = doorWithRoom(game);
+  ok(w, 'une porte de test');
+  p.x = w.a.x; p.y = w.a.y;
+  openMenuAt(g, w.d.cx, w.d.cy);
+  pickMenu(g, 'ajar');
+  g.step(90);
+  near(w.d.progress, DOOR_STEPS[2], 0.01, 'entrouverte');
+  openMenuAt(g, w.d.cx, w.d.cy);
+  ok(/entrouverte/.test(game.menu.title), 'titre : ' + game.menu.title);
+  eq(menuItem(game.menu, 'ajar').off, 'déjà', 'déjà entrouverte : grisé');
+  pickMenu(g, 'close');
+  g.step(90);
+  eq(w.d.progress, 0, 'refermée');
+  w.d.locked = true; w.d.lockKnown = true;
+  openMenuAt(g, w.d.cx, w.d.cy);
+  ok(!menuItem(game.menu, 'open') && menuItem(game.menu, 'pick'), 'verrouillée : crocheter');
+  pickMenu(g, 'pick');
+  ok(p.act && p.act.type === 'lockpick', 'crochetage en cours');
+  p.act = null; w.d.locked = false;
+  p.x = w.d.cx - w.nx * 2.2 * U; p.y = w.d.cy - w.ny * 2.2 * U;
+  const mn = game.openMenu(w.d.cx, w.d.cy);
+  for (const id of ['open', 'fiber', 'charge']) eq(menuItem(mn, id).off, 'trop loin', id + ' : trop loin');
+});
+
+test('depuis le menu, la fibre reste sans tenir F, et un clic la retire sans tirer', () => {
+  const g = mkGame({ noEnemyAI: true });
+  const game = g.game, p = game.player, inp = game.input;
+  game.mates.forEach(m => { m.alive = false; });
+  const w = doorWithRoom(game);
+  ok(w, 'une porte de test');
+  const foe = new Enemy(w.b.x, w.b.y, Math.PI, 'pistol');
+  game.enemies = [foe];
+  p.x = w.d.cx - w.nx * 26; p.y = w.d.cy - w.ny * 26;
+  g.step(3);
+  eq(foe.visible, false, 'invisible porte fermée');
+  openMenuAt(g, w.d.cx, w.d.cy);
+  pickMenu(g, 'fiber');
+  g.step(50);
+  ok(p.fiber && p.fiber.sticky, 'fibre posée sans tenir F');
+  eq(foe.visible, true, 'suspect révélé par la fibre');
+  const shots = game.stats.shots;
+  g.press('Mouse0');
+  ok(!p.fiber, 'un clic la retire');
+  g.step(2);
+  eq(game.stats.shots, shots, '… sans tirer');
+});
+
+test('depuis le menu, la grenade part vers le point désigné, pas vers le curseur', () => {
+  const g = mkGame({ alone: true });
+  const game = g.game, p = game.player, inp = game.input;
+  const s = groundSpot(game, p, 3 * U);
+  ok(s, 'un point au sol');
+  const n = p.flashbangs;
+  openMenuAt(g, s.x, s.y);
+  pickMenu(g, 'throw');
+  inp.mouse.x = 2 * p.x - s.x; inp.mouse.y = 2 * p.y - s.y; // le curseur part à l'opposé
+  for (let i = 0; i < 60 && !game.grenades.length; i++) g.step(1);
+  const gr = game.grenades[0];
+  ok(gr, 'la grenade part sans tenir Espace');
+  eq(p.flashbangs, n - 1, 'une de moins');
+  near(angleDiff(Math.atan2(gr.vy, gr.vx), Math.atan2(s.y - p.y, s.x - p.x)), 0, 0.05, 'vers le point du menu');
+});
+
+test('l’entrée à la flash depuis le menu d’une porte : colonne, flash, entrée', () => {
+  const g = mkGame({ noEnemyAI: true });
+  const game = g.game, p = game.player;
+  game.enemies = []; game.hostages = [];
+  const w = doorWithRoom(game);
+  ok(w, 'une porte de test');
+  p.x = w.d.cx + w.nx * 1.5 * U; p.y = w.d.cy + w.ny * 1.5 * U;
+  const spots = freeSpotsAround(game, p, 2);
+  game.mates.forEach((m, i) => { m.x = spots[i].x; m.y = spots[i].y; });
+  openMenuAt(g, w.d.cx, w.d.cy);
+  pickMenu(g, 'flash');
+  ok(game.stack && game.stack.door === w.d && game.mates.every(m => m.order === 'stack'), 'l’équipe se met en colonne');
+  ok(game.stack.flash, 'entrée à la flash prévue');
+  let thrown = false;
+  for (let i = 0; i < 1200 && game.stack; i++) { game.update(1 / 60); thrown = thrown || game.grenades.some(gr => gr.kind === 'flash'); }
+  ok(thrown, 'une flash est partie');
+  ok(!game.stack && game.mates.every(m => m.order === 'move'), 'puis ils entrent');
+});
+
 // ---------------------------------------------------------------- équipe
 test('le clic droit maintenu confie une direction à un seul coéquipier', () => {
   const g = mkGame({ noEnemyAI: true });
@@ -4652,6 +4853,122 @@ test('stratégie : G lance une grenade au curseur ; Espace arrête le temps, pas
   ok(!S.frozen, 'Espace à nouveau : on reprend');
   g.step(10);
   ok(game.time > t, 'le temps repart');
+});
+
+test('stratégie : sous vos ordres, un trinôme ne lance pas de grenade de lui-même sur ce qu’il entend', () => {
+  const g = mkGame({ mode: 'strategy', level: 0, noEnemyAI: true });
+  const game = g.game, W = game.war, [a] = W.slots.ops;
+  game.updateWar = () => {};
+  const foe = W.slots.enemy[0].members[0];
+  game.enemies = [foe];
+  foe.hunter = false; // (immobile : noEnemyAI)
+  const p = fieldPoint(game, 8), q = game.freeSpotNear(p.x + 3 * U, p.y + 3 * U);
+  Object.assign(foe, { x: q.x, y: q.y });
+  const thrown = () => game.grenades.filter(gr => gr.team === 'ops').length + upOf(a).filter(m => m.act && m.act.type === 'grenade').length;
+  let n = 0;
+  const run = s => { for (let i = 0; i < 60 * s; i++) { if (i % 120 === 0) game.noise(foe.x, foe.y, 14 * U, foe, 'shot'); game.update(1 / 60); n = Math.max(n, thrown()); } };
+  stratKey(g, 'Digit1');
+  clickAt(g, p.x, p.y, 2);
+  const before = upOf(a).reduce((t, m) => t + m.flashbangs, 0);
+  run(25);
+  eq(a.order.type, 'hold', 'arrivé, il tient');
+  ok(upOf(a).some(m => m.lastKnown), 'il a entendu l’adversaire');
+  eq(n, 0, 'aucune grenade lancée sur un bruit');
+  eq(upOf(a).reduce((t, m) => t + m.flashbangs, 0), before, 'il les garde toutes');
+  // laissé à ratisser seul, il reprend l'initiative
+  g.press('KeyR');
+  run(20);
+  ok(upOf(a).reduce((t, m) => t + m.flashbangs, 0) < before, 'sans ordre, il en lance comme en guerre totale');
+});
+
+test('stratégie : le menu d’un trinôme vaut pour lui seul, celui du sol pour les trinômes choisis', () => {
+  const g = mkStrat({ calm: true });
+  const game = g.game, S = game.strat, [a, b] = game.war.slots.ops;
+  let mn = openMenuAt(g, b.members[0].x, b.members[0].y);
+  eq(mn.kind, 'unit', 'sur l’un de vos hommes');
+  eq(mn.group, b, 'son trinôme');
+  ok(mn.title.startsWith(b.label), 'nommé en titre : ' + mn.title);
+  for (const id of ['select', 'hold', 'sweep', 'rush', 'focus']) ok(menuItem(mn, id), 'trinôme : ' + id);
+  pickMenu(g, 'select');
+  eq([...S.sel].join(), '1', 'le choisir');
+  openMenuAt(g, b.members[0].x, b.members[0].y);
+  pickMenu(g, 'sweep');
+  eq(b.order, null, 'il ratisse seul');
+  ok(a.order && a.order.type === 'hold', 'les autres gardent leur ordre');
+  openMenuAt(g, b.members[0].x, b.members[0].y);
+  eq(menuItem(game.menu, 'sweep').off, 'il ratisse déjà', 'déjà en train de ratisser : grisé');
+  pickMenu(g, 'rush');
+  ok(b.rush && !a.rush, 'au pas de course, lui seul');
+  // le sol : les trinômes choisis
+  stratKey(g, 'Digit1');
+  const p = fieldPoint(game, 10);
+  mn = openMenuAt(g, p.x, p.y);
+  eq(mn.kind, 'zone', 'au sol');
+  ok(mn.title.includes(a.label) && !mn.title.includes(b.label), 'les trinômes choisis en titre : ' + mn.title);
+  pickMenu(g, 'move');
+  ok(a.order.type === 'move' && dist(a.order.x, a.order.y, p.x, p.y) < U, 'il y va');
+  S.sel = new Set();
+  mn = openMenuAt(g, p.x, p.y);
+  eq(menuItem(mn, 'move').off, 'aucun trinôme choisi', 'sans trinôme choisi : grisé');
+  pickMenu(g, 'pause');
+  ok(S.frozen, 'pause tactique depuis le menu');
+  mn = openMenuAt(g, p.x, p.y);
+  ok(mn, 'le menu s’ouvre en pause tactique');
+  pickMenu(g, 'all');
+  eq(S.sel.size, 3, 'toute l’armée');
+  // la ligne sous le curseur, vue de haut aussi
+  openMenuAt(g, p.x, p.y);
+  g.step(1);
+  const r = g.r.menuRects[0];
+  g.r.mouse.sx = r.x + 5; g.r.mouse.sy = r.y + r.h / 2;
+  eq(g.r.menuItemAt(), 0, 'la ligne sous le curseur');
+  g.press('Mouse2');
+  eq(game.menu, null, 'le clic droit ferme le menu');
+  ok(!S.aim, '… sans donner d’ordre');
+  // le trinôme visé tombe : son menu se ferme
+  openMenuAt(g, b.members[0].x, b.members[0].y);
+  b.members.forEach(m => { m.alive = false; });
+  g.step(1);
+  eq(game.menu, null, 'trinôme anéanti : menu fermé');
+});
+
+test('stratégie : le menu d’une porte fermée (colonne, flash, charge ; le groupe armé la franchit) et d’un adversaire', () => {
+  for (const mode of ['strategy', 'strategyArmed']) {
+    const g = mkGame({ mode, level: 0 });
+    const game = g.game, [a] = game.war.slots.ops;
+    game.enemies = []; game.updateWar = () => {};
+    const { d, side } = homeDoor(game);
+    nearDoor(game, 0, d, side);
+    stratKey(g, 'Digit1');
+    const mn = openMenuAt(g, d.cx, d.cy);
+    eq(mn.kind, 'door', mode + ' : sur une porte fermée');
+    if (mode === 'strategy') {
+      for (const id of ['stack', 'flash', 'charge']) ok(menuItem(mn, id) && !menuItem(mn, id).off, mode + ' : ' + id);
+      pickMenu(g, 'charge');
+      ok(a.order.type === 'stack' && a.order.door === d && a.order.tactic === 'charge', mode + ' : en colonne, entrée à la charge');
+    } else {
+      ok(menuItem(mn, 'cross') && !menuItem(mn, 'stack') && !menuItem(mn, 'charge'), mode + ' : pas de colonne, on la franchit');
+      pickMenu(g, 'cross');
+      ok(a.order.type === 'move' && Math.sign(across(d, a.order)) === -side, mode + ' : on passe de l’autre côté');
+    }
+  }
+  const g = mkStrat({ noEnemyAI: true });
+  const game = g.game, W = game.war, [a] = W.slots.ops;
+  game.updateWar = () => {};
+  const foe = W.slots.enemy[0].members[0];
+  game.enemies = [foe];
+  foe.hunter = false;
+  const q = fieldPoint(game, 9);
+  Object.assign(foe, { x: q.x, y: q.y, hp: 300, maxHp: 300 });
+  for (const m of upOf(a)) m.angle = Math.atan2(q.y - m.y, q.x - m.x);
+  g.step(2);
+  ok(foe.visible, 'l’adversaire est en vue');
+  stratKey(g, 'Digit1');
+  const mn = openMenuAt(g, foe.x, foe.y);
+  eq(mn.kind, 'foe', 'sur un adversaire en vue');
+  ok(menuItem(mn, 'grenade'), 'une grenade sur lui');
+  pickMenu(g, 'attack');
+  ok(a.order.type === 'attack' && a.order.foe === foe, 'ordre d’attaque');
 });
 
 test('stratégie : un trinôme anéanti revient sous son numéro, toujours choisi, et attend à la base', () => {

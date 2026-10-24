@@ -18,6 +18,9 @@ const VIEW_HALF = 7 * U, LOOK_AHEAD = 0.4, LOOK_MAX = 0.5;
 // STRAT_ZOOM_STEP, de toute la carte jusqu'au cadrage du jeu à pied ; les touches et les bords de l'écran (souris
 // verrouillée, à STRAT_EDGE px) font glisser la vue à STRAT_PAN px d'écran par seconde.
 const STRAT_VIEW = 30 * U, STRAT_ZOOM_STEP = 1.15, STRAT_PAN = 900, STRAT_EDGE = 14;
+// Menu d'actions (clic molette) : hauteur d'une ligne, du titre, marge intérieure et trait de séparation, en px CSS ;
+// bandes du HUD en haut et en bas de l'écran, que le menu évite (il passe au-dessus du curseur plutôt que dessous).
+const MENU_ROW = 22, MENU_HEAD = 22, MENU_PAD = 6, MENU_SEP = 7, MENU_TOP = 46, MENU_BOTTOM = 110;
 // Teinte des sols sur les plans réduits, dans l'ordre de FLOOR (js/map.js).
 const MINI_FLOORS = ['#2f3742', '#3a3327', '#2d3a3d', '#3d2a30', '#403d37', '#343b42', '#2c3d26', '#46413a', '#3e3b35', '#26292e'];
 // Rendu canvas : calque statique (sols, murs, mobilier), décalques, entités, brouillard, HUD canvas.
@@ -247,7 +250,8 @@ class Renderer {
     }
     let vx = (k.KeyD || k.ArrowRight ? 1 : 0) - (k.KeyA || k.ArrowLeft ? 1 : 0);
     let vy = (k.KeyS || k.ArrowDown ? 1 : 0) - (k.KeyW || k.ArrowUp ? 1 : 0);
-    if (this.locked && !this.overMinimap()) {
+    // (menu d'actions ouvert : le curseur qui va vers une ligne au bord de l'écran ne fait pas glisser la vue)
+    if (this.locked && !this.overMinimap() && !g.menu) {
       const e = STRAT_EDGE * d, x = this.mouse.sx * d, y = this.mouse.sy * d;
       if (x <= e) vx = -1; else if (x >= W - e - 1) vx = 1;
       if (y <= e) vy = -1; else if (y >= H - e - 1) vy = 1;
@@ -286,8 +290,9 @@ class Renderer {
       a.x = clamp(a.x, this.cam.x - hw + m, this.cam.x + hw - m); a.y = clamp(a.y, this.cam.y - hh + m, this.cam.y + hh - m);
     } else {
       this.scopeAim = null;
-      // la vue regarde où l'on vise : de quoi voir venir un tireur jusqu'à sa portée de tir
-      const m = this.toWorld(this.mouse.sx, this.mouse.sy);
+      // la vue regarde où l'on vise : de quoi voir venir un tireur jusqu'à sa portée de tir (menu d'actions ouvert, là
+      // où on l'a ouvert : le curseur qui va vers le menu ne déplace pas la vue)
+      const m = g.menu ? { x: g.menu.x, y: g.menu.y } : this.toWorld(this.mouse.sx, this.mouse.sy);
       const r = Math.min(this.canvas.width, this.canvas.height) / 2 / this.zoom * LOOK_MAX;
       const lx = p.x + clamp((m.x - p.x) * LOOK_AHEAD, -r, r), ly = p.y + clamp((m.y - p.y) * LOOK_AHEAD, -r, r);
       this.cam.x = lerp(this.cam.x, lx, k); this.cam.y = lerp(this.cam.y, ly, k);
@@ -385,6 +390,8 @@ class Renderer {
     if (g.dark) this.drawGlimpsed();
     this.drawFlashes();
     if (g.strat) this.drawStratOrders();
+    const menu = g.menu && !g.over ? g.menu : null;
+    if (menu) this.drawMenuTarget(menu);
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     if (g.strat) this.drawStratScreen();
@@ -392,10 +399,14 @@ class Renderer {
       this.drawVignette();
       this.drawBlind();
       this.drawHeard();
-      this.drawCrosshair();
+      if (!menu) this.drawCrosshair();
     }
     if (g.minimap) this.drawMinimap();
-    if (g.strat) this.drawStratCursor();
+    if (g.strat && !menu) this.drawStratCursor();
+    if (menu) {
+      this.drawMenu(menu);
+      this.drawArrow(this.mouse.sx * this.dpr, this.mouse.sy * this.dpr, '#ffffff');
+    }
     if (!still) for (const a of [...g.ops, ...g.enemies]) if (a.muzzleT > 0) a.muzzleT -= dt;
   }
 
@@ -546,18 +557,123 @@ class Renderer {
       }
     } else {
       const col = sel && h && h.kind === 'door' ? '#ffb347' : '#ffffff';
-      ctx.beginPath();
-      ctx.moveTo(x, y); ctx.lineTo(x, y + 17 * d); ctx.lineTo(x + 4.5 * d, y + 13 * d); ctx.lineTo(x + 8 * d, y + 20 * d);
-      ctx.lineTo(x + 11 * d, y + 18.5 * d); ctx.lineTo(x + 7.5 * d, y + 11.8 * d); ctx.lineTo(x + 12.5 * d, y + 11.8 * d);
-      ctx.closePath();
-      ctx.fillStyle = col; ctx.fill();
-      ctx.strokeStyle = 'rgba(0,0,0,0.8)'; ctx.lineWidth = 1.4 * d; ctx.stroke();
+      this.drawArrow(x, y, col);
       if (col !== '#ffffff') { // porte : un petit battant à côté de la flèche
         ctx.fillStyle = col; ctx.fillRect(x + 14 * d, y + 4 * d, 3 * d, 12 * d);
+        ctx.strokeStyle = 'rgba(0,0,0,0.8)'; ctx.lineWidth = 1.4 * d;
         ctx.strokeRect(x + 14 * d, y + 4 * d, 3 * d, 12 * d);
       }
     }
     ctx.restore();
+  }
+
+  // Flèche de pointeur, la pointe en (x, y) (px de l'écran) : en stratégie, et sur le menu d'actions.
+  drawArrow(x, y, col) {
+    const ctx = this.ctx, d = this.dpr;
+    ctx.save();
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    ctx.moveTo(x, y); ctx.lineTo(x, y + 17 * d); ctx.lineTo(x + 4.5 * d, y + 13 * d); ctx.lineTo(x + 8 * d, y + 20 * d);
+    ctx.lineTo(x + 11 * d, y + 18.5 * d); ctx.lineTo(x + 7.5 * d, y + 11.8 * d); ctx.lineTo(x + 12.5 * d, y + 11.8 * d);
+    ctx.closePath();
+    ctx.fillStyle = col; ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,0.8)'; ctx.lineWidth = 1.4 * d; ctx.stroke();
+    ctx.restore();
+  }
+
+  // ---- Menu d'actions (clic molette, voir Game.openMenu) ----
+  // Ce que le menu désigne, dans le monde : un anneau autour de vous (de chaque homme du trinôme, de l'adversaire, en
+  // rouge), le cadre de la porte, ou un repère au sol. Traits et repères gardent une taille lisible vue de haut.
+  drawMenuTarget(mn) {
+    const ctx = this.ctx, g = this.game, p = g.player, s = this.dpr / this.zoom; // (px du monde par px CSS)
+    const ring = (x, y, r) => { ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.stroke(); };
+    ctx.save();
+    ctx.strokeStyle = mn.kind === 'foe' ? '#ef5350' : '#ffb347';
+    ctx.lineWidth = Math.max(1.5, 2 * s); ctx.globalAlpha = 0.75 + 0.2 * Math.sin(g.time * 7);
+    if (mn.kind === 'self' || mn.kind === 'unit' || mn.kind === 'foe') {
+      ctx.setLineDash([4 * Math.max(1, s), 3 * Math.max(1, s)]);
+      const who = mn.kind === 'self' ? [p] : mn.kind === 'foe' ? [mn.foe] : mn.group.members.filter(m => m.alive && m.group === mn.group);
+      for (const a of who) ring(a.x, a.y, Math.max(a.radius + 6, 9 * s));
+    } else if (mn.kind === 'door') {
+      const d = mn.door, half = (d.len * TILE) / 2 + 2, t = TILE / 2 + 2;
+      if (d.horizontal) ctx.strokeRect(d.cx - half, d.cy - t, 2 * half, 2 * t);
+      else ctx.strokeRect(d.cx - t, d.cy - half, 2 * t, 2 * half);
+    } else {
+      const r = Math.max(7, 8 * s), c = 0.45 * r;
+      ring(mn.x, mn.y, r);
+      ctx.beginPath(); ctx.moveTo(mn.x - c, mn.y); ctx.lineTo(mn.x + c, mn.y); ctx.moveTo(mn.x, mn.y - c); ctx.lineTo(mn.x, mn.y + c); ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  // Le menu s'ouvre à droite et sous le curseur (à gauche, au-dessus quand la place manque) et n'en bouge plus ;
+  // menuRects garde la place de chaque ligne, en px CSS, pour menuItemAt. Une ligne impossible est grisée, sa raison à
+  // la place du raccourci.
+  drawMenu(mn) {
+    const ctx = this.ctx, d = this.dpr, W = this.canvas.width / d, H = this.canvas.height / d;
+    if (this.menuFor !== mn) { this.menuFor = mn; this.menuAt = { x: this.mouse.sx, y: this.mouse.sy }; }
+    const font = (wt, px, it) => `${it ? 'italic ' : ''}${wt} ${Math.round(px * d)}px "Segoe UI", system-ui, sans-serif`;
+    ctx.save();
+    ctx.textBaseline = 'middle';
+    ctx.font = font(700, 10.5);
+    let wl = ctx.measureText(mn.title.toUpperCase()).width / d, wk = 0;
+    ctx.font = font(600, 12.5);
+    for (const it of mn.items) wl = Math.max(wl, ctx.measureText(it.label).width / d);
+    for (const it of mn.items) {
+      ctx.font = it.off ? font(400, 11, true) : font(600, 10.5);
+      wk = Math.max(wk, ctx.measureText(it.off || it.key).width / d + (it.off ? 0 : 10));
+    }
+    const w = Math.max(190, 2 * MENU_PAD + 8 + wl + 24 + wk);
+    const h = MENU_HEAD + mn.items.reduce((t, it) => t + MENU_ROW + (it.sep ? MENU_SEP : 0), 0) + MENU_PAD;
+    const a = this.menuAt;
+    let x = a.x + 12, y = a.y + 4;
+    if (x + w > W - 6) x = a.x - 12 - w;
+    if (y + h > H - MENU_BOTTOM) y = a.y - 4 - h;
+    x = clamp(x, 6, Math.max(6, W - 6 - w)); y = clamp(y, MENU_TOP, Math.max(MENU_TOP, H - 6 - h));
+    // les lignes d'abord : la surbrillance suit le curseur dès cette image
+    let yy = y + MENU_HEAD;
+    const seps = [];
+    this.menuRects = mn.items.map(it => {
+      if (it.sep) { seps.push(yy + MENU_SEP / 2); yy += MENU_SEP; }
+      const r = { x: x + 3, y: yy, w: w - 6, h: MENU_ROW };
+      yy += MENU_ROW;
+      return r;
+    });
+    const hi = this.menuItemAt();
+    ctx.fillStyle = 'rgba(11,14,18,0.94)'; ctx.strokeStyle = 'rgba(255,179,71,0.45)'; ctx.lineWidth = d;
+    roundRect(ctx, x * d, y * d, w * d, h * d, 6 * d); ctx.fill(); ctx.stroke();
+    ctx.font = font(700, 10.5); ctx.fillStyle = '#ffb347'; ctx.textAlign = 'left';
+    ctx.fillText(mn.title.toUpperCase(), (x + MENU_PAD + 4) * d, (y + MENU_HEAD / 2 + 1) * d);
+    ctx.strokeStyle = 'rgba(255,255,255,0.09)';
+    for (const sy of seps) { ctx.beginPath(); ctx.moveTo((x + 8) * d, sy * d); ctx.lineTo((x + w - 8) * d, sy * d); ctx.stroke(); }
+    mn.items.forEach((it, i) => {
+      const r = this.menuRects[i], cy = (r.y + r.h / 2) * d;
+      if (i === hi) {
+        ctx.fillStyle = it.off ? 'rgba(255,255,255,0.05)' : 'rgba(255,179,71,0.18)';
+        roundRect(ctx, r.x * d, r.y * d, r.w * d, r.h * d, 4 * d); ctx.fill();
+      }
+      ctx.textAlign = 'left';
+      ctx.font = font(600, 12.5); ctx.fillStyle = it.off ? '#6f7985' : '#e8ecf0';
+      ctx.fillText(it.label, (x + MENU_PAD + 4) * d, cy);
+      const right = (r.x + r.w - 6) * d;
+      ctx.textAlign = 'right';
+      if (it.off) { ctx.font = font(400, 11, true); ctx.fillStyle = '#7d8792'; ctx.fillText(it.off, right, cy); return; }
+      // le raccourci, dans une petite touche
+      ctx.font = font(600, 10.5);
+      const tw = ctx.measureText(it.key).width;
+      ctx.fillStyle = 'rgba(255,255,255,0.05)'; ctx.strokeStyle = '#46505d';
+      roundRect(ctx, right - tw - 10 * d, cy - 8 * d, tw + 10 * d, 16 * d, 3 * d); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = '#aab3be'; ctx.fillText(it.key, right - 5 * d, cy + 0.5 * d);
+    });
+    ctx.restore();
+  }
+
+  // Ligne du menu d'actions sous le curseur (main.js la passe au jeu dans input.mouse.item), ou -1.
+  menuItemAt() {
+    const g = this.game, rs = this.menuRects;
+    if (!g.menu || this.menuFor !== g.menu || !rs) return -1;
+    const x = this.mouse.sx, y = this.mouse.sy;
+    return rs.findIndex(r => x >= r.x && x <= r.x + r.w && y >= r.y && y < r.y + r.h);
   }
 
   drawDoors() {

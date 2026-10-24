@@ -152,6 +152,8 @@ class Game {
     this.minimap = true;
     this.input = { keys: {}, pressed: {}, mouse: { x: 0, y: 0, down: false, rdown: false } };
     this.orderDrag = null; // ordre de déplacement en cours de tracé (clic droit maintenu)
+    this.menu = null;      // menu d'actions ouvert au clic molette (voir openMenu)
+    this.fireLock = false; // clic gauche pris par le menu : pas de tir avant de l'avoir relâché (voir updateMenu)
     this.visionPolys = [];
     this.heard = [];
     this.ownNoise = null;
@@ -417,6 +419,7 @@ class Game {
     this.squadSize = 1 + this.mates.length; // vous compris : c'est le groupe entier qui compte ses pertes
     this.orderMarker = null;
     this.orderDrag = null;
+    this.menu = null;
     this.relayT = 0;
     this.pickHint = null;
     this.hostHint = null;
@@ -927,15 +930,11 @@ class Game {
     const ppx = m.ppx || 1, shift = !!(k.ShiftLeft || k.ShiftRight);
     S.clock = (S.clock || 0) + (dt || 0);
     S.hover = this.stratHover(m.x, m.y, ppx);
-    if (pr.Space) {
-      S.frozen = !S.frozen;
-      this.say(S.frozen ? 'Pause tactique — donnez vos ordres, Espace pour reprendre' : 'Reprise', 1.6);
-    }
+    // (le menu d'actions prend d'abord les clics qui lui reviennent)
+    this.updateMenu();
+    if (pr.Space) this.stratFreeze();
     for (let i = 0; i < 3; i++) if (pr['Digit' + (i + 1)] || pr['Numpad' + (i + 1)]) this.stratKey(i, shift);
-    if (pr.KeyQ) { // (A sur un clavier AZERTY) : toute l'armée
-      S.sel = new Set([0, 1, 2].filter(i => this.stratAlive(this.war.slots.ops[i])));
-      this.say(S.sel.size ? 'Toute l’armée' : 'Personne de debout : les renforts arrivent', 1.2);
-    }
+    if (pr.KeyQ) this.stratAll(); // (A sur un clavier AZERTY)
     if (pr.KeyF) this.stratFocus();
     if (pr.WheelUp) S.zoom++;
     if (pr.WheelDown) S.zoom--;
@@ -964,6 +963,20 @@ class Game {
     if (pr.KeyC) this.stratRush();
     if (pr.KeyG) this.stratGrenadeKey(m.x, m.y);
     if (pr.KeyB) this.stratChargeKey();
+  }
+
+  // Espace : pause tactique, ou reprise.
+  stratFreeze() {
+    const S = this.strat;
+    S.frozen = !S.frozen;
+    this.say(S.frozen ? 'Pause tactique — donnez vos ordres, Espace pour reprendre' : 'Reprise', 1.6);
+  }
+
+  // A (AZERTY ; Q en QWERTY) : toute l'armée.
+  stratAll() {
+    const S = this.strat;
+    S.sel = new Set([0, 1, 2].filter(i => this.stratAlive(this.war.slots.ops[i])));
+    this.say(S.sel.size ? 'Toute l’armée' : 'Personne de debout : les renforts arrivent', 1.2);
   }
 
   // Ce qu'il y a sous le curseur : un adversaire en vue, l'un de vos hommes, ou une porte fermée.
@@ -1082,9 +1095,8 @@ class Game {
     return best;
   }
 
-  // H : chacun des trinômes choisis tient là où il est, face à où regarde son chef.
-  stratHold() {
-    const gs = this.stratSelected();
+  // H : chacun des trinômes choisis (gs : ceux-là) tient là où il est, face à où regarde son chef.
+  stratHold(gs = this.stratSelected()) {
     if (!gs.length) { this.stratNone(); return; }
     for (const g of gs) {
       const l = this.leaderOf(g);
@@ -1096,16 +1108,14 @@ class Game {
   }
 
   // R : plus d'ordre, le trinôme ratisse son couloir seul (et va d'abord à son dernier contact, s'il en a un).
-  stratSweep() {
-    const gs = this.stratSelected();
+  stratSweep(gs = this.stratSelected()) {
     if (!gs.length) { this.stratNone(); return; }
     for (const g of gs) { this.releaseGroup(g); Object.assign(g, { order: null, queue: [], sweepTo: null, pickAt: 0 }); }
     this.say(`${this.stratNames(gs)} : ${this.war.defense ? 'ratissez le terrain' : 'ratissez votre couloir'}`, 1.4);
   }
 
   // C : au pas de course (plus vite, mais les pas s'entendent), ou de nouveau au pas.
-  stratRush() {
-    const gs = this.stratSelected();
+  stratRush(gs = this.stratSelected()) {
     if (!gs.length) { this.stratNone(); return; }
     const on = !gs.every(g => g.rush);
     for (const g of gs) g.rush = on;
@@ -1127,7 +1137,7 @@ class Game {
   // 'flash' ou 'charge'), ou la franchit en l'ouvrant (le groupe armé n'entre pas en colonne) ; les autres viennent
   // derrière lui, de ce côté de la porte.
   stratDoor(gs, d, tactic) {
-    const near = gs.map(g => ({ g, at: this.anchorOf(g) })).sort((p, q) => dist(p.at.x, p.at.y, d.cx, d.cy) - dist(q.at.x, q.at.y, d.cx, d.cy));
+    const near = this.stratByDistance(gs, d.cx, d.cy);
     const { g, at } = near[0];
     const side = Math.sign(d.horizontal ? at.y - d.cy : at.x - d.cx) || 1, inn = this.doorInside(d, side);
     const front = this.doorFront(d, side);
@@ -1141,6 +1151,11 @@ class Game {
       this.say(`${g.label} : en colonne sur la porte${tactic === 'flash' ? ', entrée à la flash' : tactic === 'charge' ? ', entrée à la charge' : ''}`, 1.8);
     }
     if (near.length > 1 && front) this.stratMove(near.slice(1).map(o => o.g), front.x - Math.cos(inn.angle) * 2 * U, front.y - Math.sin(inn.angle) * 2 * U, inn.angle, false, true);
+  }
+
+  // Les trinômes, du plus proche au plus loin du point (à leur homme le plus central, anchorOf), avec cet ancrage.
+  stratByDistance(gs, x, y) {
+    return gs.map(g => ({ g, at: this.anchorOf(g) })).sort((p, q) => dist(p.at.x, p.at.y, x, y) - dist(q.at.x, q.at.y, x, y));
   }
 
   // Où entrer de l'autre côté de la porte d (side : le côté d'où l'on vient), tourné vers la pièce ; et où se tenir
@@ -1197,9 +1212,9 @@ class Game {
     this.stratDoor(gs, h.door, 'charge');
   }
 
-  // F (ou deux fois le même numéro) : la vue va sur les trinômes choisis.
-  stratFocus() {
-    const ms = this.stratSelected().flatMap(g => g.members.filter(m => m.alive && m.group === g));
+  // F (ou deux fois le même numéro) : la vue va sur les trinômes choisis (gs : sur ceux-là).
+  stratFocus(gs = this.stratSelected()) {
+    const ms = gs.flatMap(g => g.members.filter(m => m.alive && m.group === g));
     if (!ms.length) { this.stratNone(); return; }
     this.strat.camTo = { x: ms.reduce((s, m) => s + m.x, 0) / ms.length, y: ms.reduce((s, m) => s + m.y, 0) / ms.length };
   }
@@ -1460,15 +1475,18 @@ class Game {
 
   restart() { this.loadLevel(this.levelIndex); }
   say(text, t) { this.message = { text, t: t || 2.5 }; }
-  setPaused(v) { if (this.over) return; this.paused = v; this.emit('pause'); }
+  setPaused(v) { if (this.over) return; this.paused = v; if (v) this.menu = null; this.emit('pause'); }
+
+  // Minimap : visible par défaut, M (ou le menu d'actions) la replie.
+  toggleMinimap() {
+    this.minimap = !this.minimap;
+    this.say(this.minimap ? 'Minimap affichée' : 'Minimap repliée', 1.2);
+  }
 
   // ---- Boucle ----
   update(dt) {
-    // Minimap : visible par défaut, M la replie (la touche répond même mort ou en pause).
-    if (this.input.pressed.KeyM) {
-      this.minimap = !this.minimap;
-      this.say(this.minimap ? 'Minimap affichée' : 'Minimap repliée', 1.2);
-    }
+    // (la touche répond même mort ou en pause)
+    if (this.input.pressed.KeyM) this.toggleMinimap();
     // stratégie : vos ordres passent même en pause tactique (le temps, lui, s'arrête)
     if (this.strat && !this.over && !this.paused) this.updateCommander(dt);
     const frozen = !!(this.strat && this.strat.frozen);
@@ -1506,10 +1524,10 @@ class Game {
   }
 
   // Lunette en service : l'arme en main en porte une, l'agent est immobile depuis SCOPE.settle et l'arme est épaulée
-  // (ni geste, ni rechargement, ni fibre, ni grenade dégoupillée, ni sonné).
+  // (ni geste, ni rechargement, ni fibre, ni grenade dégoupillée, ni sonné, ni menu d'actions ouvert).
   scoped(a) {
     return !!(a.alive && a.weapon && a.weapon.scope && !a.moving && a.stillT >= SCOPE.settle
-      && !a.act && !(a.reloadT > 0) && !a.fiber && !a.cooking && !(a.stun > 0));
+      && !a.act && !(a.reloadT > 0) && !a.fiber && !a.cooking && !(a.stun > 0) && !(a === this.player && this.menu));
   }
 
   // Portée de vue d'un agent dans la direction ang : la lunette en service porte plus loin dans l'axe de l'arme.
@@ -1833,18 +1851,23 @@ class Game {
   // ---- Joueur ----
   updatePlayer(dt) {
     const p = this.player, k = this.input.keys, m = this.input.mouse, pr = this.input.pressed;
-    if (!p.alive) return;
+    // (mort, le menu se ferme ; le commandant de la stratégie, jamais vivant, a le sien : updateCommander)
+    if (!p.alive) { if (!this.strat) this.menu = null; return; }
     if (p.flashT > 0) p.flashT -= dt;
     if (p.stun > 0) p.stun -= dt;
-    p.angle = Math.atan2(m.y - p.y, m.x - p.x);
-    p.aimDist = dist(p.x, p.y, m.x, m.y);
+    // (le menu d'actions consomme les clics qui lui reviennent : avant tout le reste)
+    this.updateMenu();
+    if (this.menu) {
+      // menu ouvert : on garde la visée d'avant, le curseur part vers le menu
+      p.angle = this.menu.angle; p.aimDist = this.menu.aimDist;
+    } else {
+      p.angle = Math.atan2(m.y - p.y, m.x - p.x);
+      p.aimDist = dist(p.x, p.y, m.x, m.y);
+    }
 
     let dx = ((k.KeyD || k.ArrowRight) ? 1 : 0) - ((k.KeyA || k.ArrowLeft) ? 1 : 0);
     let dy = ((k.KeyS || k.ArrowDown) ? 1 : 0) - ((k.KeyW || k.ArrowUp) ? 1 : 0);
-    if (pr.KeyQ || pr.ShiftLeft || pr.ShiftRight) {
-      p.walkMode = !p.walkMode;
-      this.say(p.walkMode ? 'Mode marche : précis et discret' : 'Mode course', 1.2);
-    }
+    if (pr.KeyQ || pr.ShiftLeft || pr.ShiftRight) this.toggleWalk(p);
     p.moving = false;
     this.unstick(p);
     if (dx || dy) {
@@ -1876,26 +1899,14 @@ class Game {
         this.doorAction(p, d, target);
       }
     }
-    if (pr.KeyR || pr.Mouse1) this.startReload(p);
+    if (pr.KeyR) this.startReload(p);
     if (pr.Digit1) this.switchWeapon(p, 0);
     if (pr.Digit2) this.switchWeapon(p, 1);
     if (pr.AltLeft || pr.AltRight) this.switchWeapon(p, (p.cur + 1) % p.slots.length);
     if (pr.Space || pr.KeyG) this.throwFlash(p);
     if (pr.KeyN) this.cycleNade(p);
-    if (pr.KeyL) {
-      if (!p.slots.some(s => s.def.laser)) this.say('Aucun laser sur vos armes', 1.2);
-      else { p.laserOn = !p.laserOn; this.say(p.laserOn ? 'Laser allumé' : 'Laser éteint', 1.2); }
-    }
-    // X : la lampe, et celles des coéquipiers avec (ils ne la gardent pas allumée quand vous éteignez la vôtre)
-    if (pr.KeyX) {
-      const team = this.mates.some(m => m.alive && m.weapon && m.weapon.light);
-      if (!p.slots.some(s => s.def.light) && !team) this.say('Aucune lampe sur vos armes', 1.2);
-      else {
-        p.lampOn = !p.lampOn;
-        for (const m of this.mates) m.lampOn = p.lampOn;
-        this.say(p.lampOn ? (team ? 'Lampes allumées' : 'Lampe allumée') : (team ? 'Lampes éteintes' : 'Lampe éteinte'), 1.2);
-      }
-    }
+    if (pr.KeyL) this.toggleLaser(p);
+    if (pr.KeyX) this.toggleLamp(p);
     if (pr.KeyC) this.shout(p);
     if (pr.KeyB) this.chargeKey(p);
     if (pr.KeyV) this.pickUp(p);
@@ -1956,12 +1967,234 @@ class Game {
           s.mag += take; s.reserve -= take;
         }
       }
-    } else if (p.switchT <= 0 && p.stun <= 0 && !p.act && !p.fiber && !p.cooking) {
+    } else if (p.switchT <= 0 && p.stun <= 0 && !p.act && !p.fiber && !p.cooking && !this.menu && !this.fireLock) {
       const want = w.auto ? m.down : pr.Mouse0;
       if (want && p.fireT <= 0) {
         if (s.mag <= 0) { if (pr.Mouse0) { if (s.reserve > 0) this.startReload(p); else this.say('Plus de munitions', 1.5); } }
         else this.fireWeapon(p);
       }
+    }
+  }
+
+  toggleWalk(p) {
+    p.walkMode = !p.walkMode;
+    this.say(p.walkMode ? 'Mode marche : précis et discret' : 'Mode course', 1.2);
+  }
+
+  toggleLaser(p) {
+    if (!p.slots.some(s => s.def.laser)) { this.say('Aucun laser sur vos armes', 1.2); return; }
+    p.laserOn = !p.laserOn;
+    this.say(p.laserOn ? 'Laser allumé' : 'Laser éteint', 1.2);
+  }
+
+  // La lampe, et celles des coéquipiers avec (ils ne la gardent pas allumée quand vous éteignez la vôtre).
+  hasLamp(p) { return p.slots.some(s => s.def.light) || this.mates.some(m => m.alive && m.weapon && m.weapon.light); }
+  toggleLamp(p) {
+    const team = this.mates.some(m => m.alive && m.weapon && m.weapon.light);
+    if (!this.hasLamp(p)) { this.say('Aucune lampe sur vos armes', 1.2); return; }
+    p.lampOn = !p.lampOn;
+    for (const m of this.mates) m.lampOn = p.lampOn;
+    this.say(p.lampOn ? (team ? 'Lampes allumées' : 'Lampe allumée') : (team ? 'Lampes éteintes' : 'Lampe éteinte'), 1.2);
+  }
+
+  // ---- Menu d'actions (clic molette) ----
+  // Un clic molette ouvre, à côté du curseur, la liste de ce qu'on peut faire de ce qu'il désigne : vous-même (arme,
+  // allure, laser, lampe, grenade, ce qui est à portée de main, ordres d'équipe), une porte (l'ouvrir à chaque cran,
+  // la crocheter, la fibre, la charge, la colonne et l'entrée à la flash), ou un point du sol (y envoyer l'équipe, y
+  // lancer une grenade). Chaque ligne rappelle son raccourci ; ce qui est impossible pour l'instant reste grisé, avec
+  // la raison. Le temps ne s'arrête pas : on garde la visée d'avant et on ne tire pas tant que le menu est ouvert.
+  // Un clic (gauche ou molette) sur une ligne la choisit, ailleurs ferme le menu, comme le clic droit ; on peut aussi
+  // maintenir la molette, glisser jusqu'à la ligne et relâcher. Le rendu place le menu et dit quelle ligne est sous le
+  // curseur (input.mouse.item, voir Renderer.menuItemAt). En stratégie, voir openStratMenu.
+  openMenu(x, y) {
+    if (this.strat) return this.openStratMenu(x, y);
+    const p = this.player, near = p.radius + 10 * (this.input.mouse.ppx || 0.5);
+    const door = this.doorAtPoint(x, y);
+    const kind = dist(x, y, p.x, p.y) <= near ? 'self' : door ? 'door' : 'zone';
+    this.menu = { kind, x, y, door: kind === 'door' ? door : null, angle: p.angle, aimDist: p.aimDist, drag: true, title: '', items: [] };
+    this.menuItems(this.menu);
+    return this.menu;
+  }
+
+  updateMenu() {
+    const m = this.input.mouse, pr = this.input.pressed;
+    // le clic qui a choisi une ligne ne doit pas partir en rafale une fois le menu fermé : on attend qu'il soit relâché
+    if (!m.down) this.fireLock = false;
+    const mn = this.menu;
+    if (!mn) {
+      if (pr.Mouse1) { this.openMenu(m.x, m.y); if (pr.Mouse1Up) this.menu.drag = false; }
+      return;
+    }
+    // (stratégie : le trinôme visé vient d'être anéanti)
+    if (mn.kind === 'unit' && !this.stratAlive(mn.group)) { this.menu = null; return; }
+    this.menuItems(mn); // (l'état change pendant qu'on choisit : porte qui bouge, chargeur rempli)
+    const it = mn.items[m.item];
+    if (pr.Mouse0 || pr.Mouse1 || (pr.Mouse1Up && mn.drag && it)) { if (it) this.menuPick(it); else this.menu = null; }
+    else if (pr.Mouse2) this.menu = null;
+    if (pr.Mouse1Up) mn.drag = false;
+    if (pr.Mouse0) this.fireLock = true;
+    for (const c of ['Mouse0', 'Mouse1', 'Mouse2', 'WheelUp', 'WheelDown']) delete pr[c];
+  }
+
+  // Ligne grisée : on dit pourquoi, et le menu reste ouvert pour un autre choix.
+  menuPick(it) {
+    if (it.off) { this.say(`${it.label} : ${it.off}`, 1.4); return; }
+    this.menu = null;
+    it.run();
+  }
+
+  // Remplit mn.title et mn.items : { id, label, key (le raccourci), off (raison si impossible), run, sep (trait avant) }.
+  menuItems(mn) {
+    const items = [];
+    const add = (id, label, key, off, run, sep) => items.push({ id, label, key, off: off || null, run, sep: !!sep });
+    if (this.strat) this.stratMenu(mn, add);
+    else if (mn.kind === 'self') this.selfMenu(mn, add);
+    else if (mn.kind === 'door') this.doorMenu(mn, add);
+    else this.zoneMenu(mn, add);
+    mn.items = items;
+    return items;
+  }
+
+  selfMenu(mn, add) {
+    const p = this.player, s = p.slot, w = s.def, busy = p.act || p.fiber || p.cooking ? 'mains occupées' : null;
+    mn.title = 'Vous';
+    add('reload', 'Recharger', 'R', s.mag >= w.mag ? 'chargeur plein' : s.reserve <= 0 ? 'plus de munitions' : p.reloadT > 0 ? 'en cours' : busy,
+      () => this.startReload(p));
+    if (p.slots.length > 1) {
+      const i = (p.cur + 1) % p.slots.length;
+      add('weapon', `Prendre ${p.slots[i].def.name}`, 'Alt', p.act ? 'mains occupées' : null, () => this.switchWeapon(p, i));
+    }
+    const other = this.camp === 'armed' ? null : Object.keys(p.nades || {}).find(n => n !== p.nade && p.nades[n] > 0);
+    if (other) add('nade', other === 'frag' ? 'Prendre une grenade à fragmentation' : 'Prendre une flash', 'N', p.cooking ? 'grenade dégoupillée' : null, () => this.cycleNade(p));
+    add('walk', p.walkMode ? 'Passer en course' : 'Passer en marche', 'A', null, () => this.toggleWalk(p));
+    if (p.slots.some(o => o.def.laser)) add('laser', p.laserOn ? 'Éteindre le laser' : 'Allumer le laser', 'L', null, () => this.toggleLaser(p));
+    if (this.hasLamp(p)) add('lamp', p.lampOn ? 'Éteindre la lampe' : 'Allumer la lampe', 'X', null, () => this.toggleLamp(p));
+    if (!this.squads && !this.siege) add('shout', 'Sommation', 'C', this.time - this.shoutT < SHOUT_COOLDOWN ? 'un instant' : null, () => this.shout(p), true);
+    // à portée de main : un suspect rendu ou un otage (le plus proche, comme interact), une arme au sol, la charge posée
+    if (p.team === this.rescueTeam) {
+      const e = this.nearestSurrendered(p, HOSTAGE_REACH), h = this.nearestHostage(p, HOSTAGE_REACH);
+      if (e && (!h || dist(p.x, p.y, e.x, e.y) <= dist(p.x, p.y, h.x, h.y))) add('cuff', 'Menotter le suspect', 'H', p.act ? 'mains occupées' : null, () => this.cuff(p, e));
+      else if (h && (!h.escort || h.escort === p)) {
+        const who = h.vip ? 'VIP' : 'Otage';
+        add('hostage', h.escort === p ? `${who} : attendez ici` : `${who} : suivez-moi`, 'H', p.act ? 'mains occupées' : null, () => this.toggleEscort(p));
+      }
+    }
+    const drop = this.nearestDrop(p);
+    if (drop) add('pickup', `Ramasser ${this.pickupSlot(drop.slot).def.name}`, 'V', p.act || p.fiber ? 'mains occupées' : null, () => this.pickUp(p));
+    const placed = this.charges.find(c => c.team === p.team);
+    if (placed) add('blast', 'Faire sauter la charge', 'B', null, () => this.detonateCharge(placed));
+    if (this.canCommand(true) && this.crew.length) {
+      add('follow', 'Équipe : suivez-moi', 'clic droit', this.crew.every(o => o.order === 'follow') ? 'ils vous suivent' : null, () => this.orderFollow(), true);
+      add('hold', 'Équipe : tenez la position', 'T', this.crew.every(o => o.order === 'hold') ? 'ils la tiennent' : null, () => this.toggleHold());
+    }
+    add('minimap', this.minimap ? 'Replier la minimap' : 'Afficher la minimap', 'M', null, () => this.toggleMinimap(), true);
+  }
+
+  doorMenu(mn, add) {
+    const p = this.player, d = mn.door, eps = 0.01, gap = dist(p.x, p.y, d.cx, d.cy);
+    const busy = p.act || p.fiber || p.cooking ? 'mains occupées' : null;
+    const hands = gap > 1.8 * U ? 'trop loin' : d.opening ? 'en mouvement' : busy;
+    const lock = d.locked && d.lockKnown;
+    mn.title = 'Porte ' + (d.broken ? 'enfoncée' : lock ? 'verrouillée' : d.progress >= 1 - eps ? 'ouverte'
+      : d.progress >= DOOR_PASS - eps ? 'entrouverte' : d.progress > eps ? 'entrebâillée' : 'fermée');
+    // chaque cran a sa ligne (E ouvre ou ferme d'un coup, la molette avance d'un cran) ; verrouillée, on crochète d'abord
+    if (lock) add('pick', 'Crocheter la serrure', 'E', hands, () => this.doorAction(p, d, 1));
+    else {
+      for (const [id, label, at, key] of [['open', 'Ouvrir en grand', 1, 'E'], ['ajar', 'Entrouvrir', DOOR_STEPS[2], 'molette'],
+        ['crack', 'Entrebâiller', DOOR_STEPS[1], 'molette'], ['close', 'Fermer', 0, 'E']]) {
+        const off = Math.abs(d.progress - at) < eps ? 'déjà' : d.broken ? 'serrure arrachée' : hands;
+        add(id, label, key, off, () => this.doorAction(p, d, at));
+      }
+    }
+    if (this.camp !== 'armed') {
+      const reach = gap > 1.6 * U ? 'trop loin' : busy;
+      if (p.fiber && p.fiber.door === d) add('fiber', 'Retirer la fibre', 'F', null, () => this.endFiber(p), true);
+      else add('fiber', 'Fibre optique sous la porte', 'F', d.open ? 'porte ouverte' : reach, () => this.startFiber(p, d, true), true);
+      const placed = this.charges.find(c => c.team === p.team);
+      if (placed && placed.door === d) add('blast', 'Faire sauter la charge', 'B', null, () => this.detonateCharge(placed));
+      else add('charge', 'Poser une charge', 'B', placed ? 'une autre est posée' : p.charges <= 0 ? 'plus de charge'
+        : d.progress > 0 || d.broken ? 'porte pas fermée' : reach, () => this.placeChargeOn(p, d));
+    }
+    if (this.canCommand(true) && this.crew.length) {
+      // comme au clic droit : la colonne sur une porte fermée, l'entrée à la flash tant que sa porte n'est pas grande
+      // ouverte (le menu forme la colonne d'abord, s'il le faut)
+      const shut = !d.broken && !this.map.doorPassable(d), here = !!this.stack && this.stack.door === d;
+      add('stack', 'Équipe : en colonne', 'clic droit', !shut ? 'porte ouverte' : here ? 'déjà en colonne' : null, () => this.orderStack(d), true);
+      add('flash', 'Équipe : entrée à la flash', 'clic droit ×2', !(shut || (here && !d.broken && d.progress < 1)) ? 'porte ouverte'
+        : !this.crew.some(o => o.flashbangs > 0) ? 'plus de flash' : here && this.stack.flash ? 'en cours' : null, () => {
+        if (!here) this.orderStack(d);
+        if (this.stack && this.stack.door === d) this.orderFlashEntry();
+      });
+    }
+  }
+
+  zoneMenu(mn, add) {
+    const p = this.player, far = dist(p.x, p.y, mn.x, mn.y);
+    mn.title = `Ici · ${Math.max(1, Math.round(far / U))} m`;
+    if (this.canCommand(true) && this.crew.length) add('move', 'Équipe : allez ici', 'clic droit', null, () => this.orderMove(mn.x, mn.y));
+    add('throw', p.nade === 'frag' ? 'Lancer une grenade ici' : 'Lancer une flash ici', 'Espace', p.flashbangs <= 0 ? 'plus de grenade'
+      : p.stun > 0 ? 'sonné' : p.act || p.cooking ? 'mains occupées' : far > 7 * U ? 'trop loin' : null, () => this.throwFlash(p, { x: mn.x, y: mn.y }));
+  }
+
+  // Stratégie : le menu porte sur ce que le clic droit désignerait (stratHover) : un adversaire en vue, l'un de vos
+  // trinômes ('unit'), une porte fermée, sinon le sol.
+  openStratMenu(x, y) {
+    const h = this.stratHover(x, y, this.input.mouse.ppx || 1);
+    const kind = !h ? 'zone' : h.kind === 'own' ? 'unit' : h.kind;
+    this.menu = { kind, x, y, door: (h && h.door) || null, foe: (h && h.foe) || null, group: h && h.unit ? h.unit.group : null,
+      drag: true, title: '', items: [] };
+    this.menuItems(this.menu);
+    return this.menu;
+  }
+
+  // Sur l'un de vos trinômes, les ordres portent sur lui seul (le choisir, le faire tenir, ratisser, courir, le
+  // centrer) ; ailleurs, sur les trinômes choisis, nommés en titre, comme au clic droit et au clavier. Le sol donne
+  // aussi ce qui vaut pour toute la bataille : choisir l'armée, la pause tactique, la minimap.
+  stratMenu(mn, add) {
+    const S = this.strat, gs = this.stratSelected(), none = gs.length ? null : 'aucun trinôme choisi';
+    const police = this.camp === 'police', who = gs.length ? ` · ${this.stratNames(gs)}` : '';
+    const has = (list, f) => list.some(g => g.members.some(m => m.alive && m.group === g && m[f] > 0));
+    if (mn.kind === 'unit') {
+      const g = mn.group, k = g.slot, only = S.sel.size === 1 && S.sel.has(k);
+      mn.title = `${g.label} · ${g.members.filter(m => m.alive && m.group === g).length} debout`;
+      add('select', 'Choisir ce trinôme', String(k + 1), only ? 'déjà choisi' : null, () => { S.sel = new Set([k]); Sound.tick(0.05); });
+      if (S.sel.size && !only) {
+        add('add', S.sel.has(k) ? 'Le retirer du choix' : 'L’ajouter au choix', 'Maj + clic', null, () => {
+          if (S.sel.has(k)) S.sel.delete(k); else S.sel.add(k);
+          Sound.tick(0.05);
+        });
+      }
+      add('hold', 'Tenir ici', 'H', null, () => this.stratHold([g]), true);
+      add('sweep', this.war.defense ? 'Ratisser le terrain seul' : 'Ratisser son couloir seul', 'R', g.order ? null : 'il ratisse déjà', () => this.stratSweep([g]));
+      add('rush', g.rush ? 'Au pas, sans bruit' : 'Au pas de course', 'C', null, () => this.stratRush([g]));
+      add('focus', 'Centrer la vue sur lui', 'F', null, () => this.stratFocus([g]), true);
+    } else if (mn.kind === 'foe') {
+      const down = mn.foe.alive ? null : 'abattu';
+      mn.title = 'Adversaire' + who;
+      add('attack', 'L’attaquer', 'clic droit', down || none, () => this.stratAttack(gs, mn.foe));
+      add('grenade', police ? 'Une flash sur lui' : 'Une grenade sur lui', 'G', down || none || (has(gs, 'flashbangs') ? null : 'plus de grenade'),
+        () => this.stratGrenade(gs, mn.foe.x, mn.foe.y));
+    } else if (mn.kind === 'door') {
+      const d = mn.door, off = d.broken || this.map.doorPassable(d) ? 'porte ouverte' : none;
+      mn.title = 'Porte fermée' + who;
+      if (!police) add('cross', 'La franchir', 'clic droit', off, () => this.stratDoor(gs, d, 'auto'));
+      else {
+        // c'est le trinôme choisi le plus proche qui se met en colonne (stratDoor) : ses flashs et sa charge comptent
+        const g = gs.length ? [this.stratByDistance(gs, d.cx, d.cy)[0].g] : [];
+        add('stack', 'Colonne et entrée', 'clic droit', off, () => this.stratDoor(gs, d, 'auto'));
+        add('flash', 'Entrée à la flash', 'G', off || (has(g, 'flashbangs') ? null : 'plus de flash'), () => this.stratDoor(gs, d, 'flash'));
+        add('charge', 'Entrée à la charge', 'B', off || (has(g, 'charges') ? null : 'plus de charge'), () => this.stratDoor(gs, d, 'charge'));
+      }
+    } else {
+      mn.title = 'Ici' + who;
+      add('move', 'Y aller', 'clic droit', none, () => this.stratMove(gs, mn.x, mn.y, null, false));
+      add('queue', 'Y aller ensuite', 'Maj + clic droit', none || (gs.some(g => g.order && g.order.type === 'move') ? null : 'aucun déplacement en cours'),
+        () => this.stratMove(gs, mn.x, mn.y, null, true));
+      add('grenade', police ? 'Une flash ici' : 'Une grenade ici', 'G', none || (has(gs, 'flashbangs') ? null : 'plus de grenade'), () => this.stratGrenade(gs, mn.x, mn.y));
+      const all = [0, 1, 2].filter(i => this.stratAlive(this.war.slots.ops[i]));
+      add('all', 'Choisir toute l’armée', 'A', all.length && all.every(i => S.sel.has(i)) ? 'déjà choisie' : null, () => this.stratAll(), true);
+      add('pause', S.frozen ? 'Reprendre' : 'Pause tactique', 'Espace', null, () => this.stratFreeze());
+      add('minimap', this.minimap ? 'Replier la minimap' : 'Afficher la minimap', 'M', null, () => this.toggleMinimap());
     }
   }
 
@@ -2056,6 +2289,7 @@ class Game {
     this.player = m;
     this.relayT = 0;
     this.orderDrag = null;
+    this.menu = null;
     if (this.orderMarker && this.orderMarker.mate === m) this.orderMarker = null;
     // le VIP qui suivait l'ancien joueur suit celui qui reprend la main
     const v = this.vip, follows = v && v.alive && !v.escort && v.lostEscort === old;
@@ -2449,14 +2683,15 @@ class Game {
   // Dégoupiller et armer le bras prend un instant. La mèche part à la fin de ce geste, pas au
   // lancer : tant qu'on garde la touche, la grenade brûle dans la main (on « compte » avant de
   // la jeter, quitte à la garder une seconde de trop).
-  throwFlash(p) {
+  // at : le point visé depuis le menu d'actions ; la grenade part alors dès la fin du geste, sans attendre de relâcher.
+  throwFlash(p, at) {
     if (p.flashbangs <= 0 || p.stun > 0 || p.act || p.cooking) return;
     p.flashbangs--;
     this.stats.flashes++;
     Sound.tick(0.12); // goupille
     const kind = p.nade || 'flash';
     this.startAction(p, 'grenade', 0.45, () => {
-      p.cooking = { t: 0, kind, fuse: FUSE[kind === 'frag' ? 'frag' : 'flash'] };
+      p.cooking = { t: 0, kind, fuse: FUSE[kind === 'frag' ? 'frag' : 'flash'], at: at || null };
       Sound.tick(0.1); // la cuillère part : la mèche brûle
     });
   }
@@ -2483,9 +2718,9 @@ class Game {
       return;
     }
     const k = this.input.keys;
-    if (!p.alive || !(k.Space || k.KeyG)) {
+    if (!p.alive || c.at || !(k.Space || k.KeyG)) {
       p.cooking = null;
-      const m = this.input.mouse;
+      const m = c.at || this.input.mouse;
       this.spawnFlash(p, p.alive ? m.x : p.x, p.alive ? m.y : p.y, c.t, null, c.kind);
       this.nextNade(p);
     }
@@ -2615,27 +2850,38 @@ class Game {
 
   // ---- Fibre optique sous la porte ----
   // Maintenir F glisse une fibre sous le battant : on voit la pièce voisine sans ouvrir, mais
-  // on est immobile et incapable de tirer tant qu'on regarde.
+  // on est immobile et incapable de tirer tant qu'on regarde. Posée depuis le menu d'actions (sticky), elle reste
+  // sans tenir la touche, jusqu'au premier pas, à un clic ou à F.
   updateFiber(p, dt) {
     const k = this.input.keys, pr = this.input.pressed;
     if (p.fiber) {
       const f = p.fiber;
-      if (!k.KeyF || !p.alive || p.stun > 0 || p.moving || f.door.opening || f.door.open
-          || dist(p.x, p.y, f.door.cx, f.door.cy) > 2 * U) {
-        p.fiber = null;
-        Sound.tick(0.07);
-      }
+      if (f.sticky && pr.Mouse0) this.fireLock = true; // (le clic qui la retire ne tire pas)
+      if ((f.sticky ? pr.Mouse0 || pr.KeyF : !k.KeyF) || !p.alive || p.stun > 0 || p.moving || f.door.opening || f.door.open
+          || dist(p.x, p.y, f.door.cx, f.door.cy) > 2 * U) this.endFiber(p);
       return;
     }
     if (!pr.KeyF || p.act || !p.alive) return;
+    this.startFiber(p, this.nearestDoor(p, 1.6 * U), false);
+  }
+
+  startFiber(p, d, sticky) {
+    if (p.act || p.fiber || !p.alive) return;
     if (this.camp === 'armed') { this.say('Pas de fibre optique dans ce camp', 1.2); return; }
-    const d = this.nearestDoor(p, 1.6 * U);
-    if (!d) { this.say('Aucune porte à portée', 1); return; }
+    if (!d || dist(p.x, p.y, d.cx, d.cy) > 1.6 * U) { this.say('Aucune porte à portée', 1); return; }
     if (d.open) { this.say('La porte est déjà ouverte', 1); return; }
     const spot = this.fiberSpot(p, d);
     if (!spot) { this.say('Impossible de glisser la fibre ici', 1.2); return; }
     Sound.tick(0.1);
-    this.startAction(p, 'fiber', 0.7, () => { if (this.input.keys.KeyF && p.alive) p.fiber = spot; });
+    this.startAction(p, 'fiber', 0.7, () => {
+      if ((sticky || this.input.keys.KeyF) && p.alive) p.fiber = { ...spot, sticky };
+      if (sticky && p.fiber) this.say('Fibre en place — un pas, un clic ou F la retire', 1.6);
+    });
+  }
+
+  endFiber(p) {
+    p.fiber = null;
+    Sound.tick(0.07);
   }
 
   // Point d'observation : juste de l'autre côté du battant, au milieu de l'embrasure.
@@ -2743,10 +2989,14 @@ class Game {
     if (!p.alive) return;
     const placed = this.charges.find(c => c.team === p.team);
     if (placed) { this.detonateCharge(placed); return; }
-    if (p.act || p.fiber || p.cooking) return;
+    this.placeChargeOn(p, this.nearestDoor(p, 1.6 * U));
+  }
+
+  // Poser la charge sur cette porte-là (B : la plus proche ; le menu d'actions : celle qu'il désigne).
+  placeChargeOn(p, d) {
+    if (this.camp === 'armed' || !p.alive || p.act || p.fiber || p.cooking) return;
     if (p.charges <= 0) { this.say('Plus de charge de brèche', 1.2); return; }
-    const d = this.nearestDoor(p, 1.6 * U);
-    if (!d) { this.say('Aucune porte à portée', 1); return; }
+    if (!d || dist(p.x, p.y, d.cx, d.cy) > 1.6 * U) { this.say('Aucune porte à portée', 1); return; }
     if (d.progress > 0 || d.broken) { this.say('Une charge se pose sur une porte fermée', 1.2); return; }
     const side = Math.sign(d.horizontal ? p.y - d.cy : p.x - d.cx) || 1;
     Sound.tick(0.08);
@@ -4038,6 +4288,10 @@ class Game {
   maybeFlash(e, dt) {
     e.flashCd -= dt;
     if (e.act) return true;          // geste en cours (l'armement du bras)
+    // stratégie : sous vos ordres, un trinôme ne lance que sur votre ordre (G, menu d'actions, entrée à la flash), pas
+    // sur ce qu'il entend en route ou une fois en place ; à l'assaut, ou laissé à ratisser seul, il garde l'initiative
+    const o = e.group && e.group.order;
+    if (o && o.type !== 'attack') return false;
     const frag = e.nade === 'frag', keep = frag ? FRAG_RADIUS + 0.5 * U : 2 * U;
     // (le groupe armé lance aussi là où son trinôme a signalé quelqu'un)
     const aim0 = e.lastKnown || (frag && e.group && e.group.contact);

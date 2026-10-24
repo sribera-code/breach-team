@@ -252,6 +252,13 @@ de chaque section.
   meilleure note de chaque mission est retenue.
 - **Le son est minimal** : bruits synthétisés, pas de spatialisation. En siège, entendre d'où vient un bruit
   compte pourtant beaucoup.
+- **Menu d'actions (clic molette) depuis le 20 octobre, pas encore joué à la main.** Il connaît trois cibles : vous, une
+  porte, le sol. Un otage, un suspect rendu ou un corps sous le curseur ne sont pas des cibles : ce qu'on peut en faire
+  passe par le menu « Vous », pour le plus proche à portée de main. Pas d'ordre à un seul coéquipier, ni de colonne à
+  la charge pour l'équipe. Le temps ne s'arrête pas pendant le choix (on pourrait le ralentir). Les touches restent
+  toutes valables ; si le menu suffit, on pourrait en retirer. En stratégie, le menu connaît vos trinômes, un
+  adversaire, une porte fermée et le sol ; une porte ouverte compte comme le sol, et sur un trinôme le menu ne
+  propose pas de grenade (il faudrait un point visé).
 
 ## Cartes
 

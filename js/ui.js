@@ -105,17 +105,6 @@ class UI {
       const html = k ? `· ${NADE_NAMES[k]} <b>${p.nades[k]}</b> <small>(N)</small>` : '';
       if (this._nadeOther !== html) { this._nadeOther = html; no.innerHTML = html; }
     }
-    // aide du bas d'écran : pas de fibre et des grenades à fragmentation côté groupe armé ; ni otage ni sommation
-    // en trinômes
-    const rh = this.$('reloadHint');
-    if (rh) {
-      if (this._reloadHint === undefined) this._reloadHint = rh.textContent;
-      const txt = g.camp === 'armed' ? this._reloadHint.replace(' · F (maintenu) : fibre sous la porte', '').replace(' · N : autre grenade', '')
-        .replace(' · H : otage / menottes', '').replace(' · C : sommation', '').replace(' · B : charge', '')
-        : g.squads ? this._reloadHint.replace(' · H : otage / menottes', '').replace(' · C : sommation', '')
-        : g.escort ? this._reloadHint.replace('H : otage / menottes', 'H : VIP (suivre / attendre) / menottes') : this._reloadHint;
-      if (rh.textContent !== txt) rh.textContent = txt;
-    }
     const mode = this.$('moveMode');
     mode.textContent = p.walkMode ? 'MARCHE' : 'COURSE';
     mode.classList.toggle('walk', p.walkMode);
@@ -497,6 +486,7 @@ class UI {
   // defense : la stratégie d'assaut, où l'on ratisse tout le terrain).
   static commandList(armed, defense) {
     const rows = [
+      ['Clic molette', "menu d'actions : sur l'un de vos trinômes, ses ordres à lui ; sur un adversaire, une porte ou au sol, ceux des trinômes choisis ; chaque ligne rappelle son raccourci"],
       ['Clic gauche', "choisir un trinôme (clic sur l'un de ses hommes) ; glissé : un rectangle, tous ceux qui y sont ; Maj : en plus"],
       ['1, 2, 3', 'choisir ce trinôme (Maj : en plus) ; deux fois de suite : la vue y va'],
       ['A', "toute l'armée"],
@@ -1036,12 +1026,13 @@ class UI {
       <p>Vous contrôlez un seul opérateur en temps réel. Les ennemis ne sont visibles que dans votre champ de vision ; les portes fermées bloquent la vue dans les deux sens.</p>
       <p><b>Déplacement</b> : <kbd>ZQSD</kbd> / <kbd>WASD</kbd> / flèches. <kbd>A</kbd> (ou <kbd>Maj</kbd>) bascule entre course et marche : en marchant on est lent mais précis.<br>
       <b>Précision</b> : le viseur montre la zone réelle où les balles peuvent tomber. Elle grandit avec la distance, en courant, et à chaque tir (recul) ; au-delà de la portée efficace de l'arme elle s'ouvre encore. Tirez par courtes rafales et laissez le viseur se resserrer.<br>
-      <b>Tir</b> : clic gauche (maintenu pour les armes automatiques). <kbd>R</kbd> ou clic molette recharge, <kbd>Alt</kbd> (ou <kbd>1</kbd>/<kbd>2</kbd>) change d'arme.<br>
+      <b>Menu d'actions</b> : inutile de retenir toutes les touches. Un <b>clic molette</b> ouvre, à côté du curseur, ce que vous pouvez faire de ce qu'il désigne. Sur <b>vous</b> : recharger, changer d'arme ou de grenade, marche ou course, laser, lampe, sommation, ce qui est à portée de main (otage, suspect à menotter, arme au sol, charge à faire sauter), les ordres de suivi à l'équipe et la minimap. Sur une <b>porte</b> : l'ouvrir en grand, l'entrouvrir, l'entrebâiller ou la fermer, la crocheter, y glisser la fibre, y poser une charge, y mettre l'équipe en colonne ou la faire entrer à la flash. Au <b>sol</b> : y envoyer l'équipe, y lancer une grenade. Un clic (gauche ou molette) choisit une ligne ; on peut aussi maintenir la molette, glisser jusqu'à la ligne et relâcher. Un clic ailleurs, ou le clic droit, ferme le menu. Ce qui est impossible pour l'instant est grisé, avec la raison (trop loin, mains occupées...). Le jeu ne s'arrête pas pendant ce temps : vous gardez votre visée, mais vous ne tirez pas. Chaque ligne rappelle son raccourci clavier, qui reste valable.<br>
+      <b>Tir</b> : clic gauche (maintenu pour les armes automatiques). <kbd>R</kbd> recharge, <kbd>Alt</kbd> (ou <kbd>1</kbd>/<kbd>2</kbd>) change d'arme.<br>
       <b>Gestes</b> : manœuvrer une porte ou lancer une grenade occupe les deux mains. Le geste dure un instant (l'anneau du viseur montre où il en est), pendant lequel on ne tire pas et on avance au ralenti, et la visée reste perturbée juste après : ne le faites pas nez à nez avec un suspect. Les coéquipiers et les suspects sont soumis aux mêmes délais.<br>
       <b>Portes</b> : <kbd>E</kbd> ouvre en grand la porte la plus proche, ou la ferme si elle est ouverte. La molette agit par crans : fermée, entrebâillée, entrouverte, ouverte ; vers le bas, l'inverse. Une porte qui n'est pas grande ouverte ne laisse ni passer ni voir autrement que par l'entrebâillement : le battant arrête le regard, et vous ne découvrez qu'un mince cône de la pièce (le vôtre comme celui des ennemis s'élargit avec le cran). Entrebâiller est silencieux et plus rapide qu'ouvrir en grand, puisque le battant a moins de chemin à faire ; comptez un second geste pour entrer. On ne peut pas fermer une porte si quelqu'un se trouve dans l'embrasure.<br>
       <b>Portes verrouillées</b> : en assaut, certaines portes sont fermées à clé. <kbd>E</kbd> (ou la molette) sur l'une d'elles lance le crochetage : quatre secondes, presque sans bruit, arme basse ; la porte est alors déverrouillée et c'est à vous de l'ouvrir comme vous voulez. Une serrure rouge marque celles qu'on a essayées. Plus vite : la chevrotine dans la serrure, ou une charge. Les suspects, eux, ont les clés.<br>
       <b>Charge de brèche</b> : deux par mission. <kbd>B</kbd> devant une porte fermée pose une charge sur le battant, de votre côté ; <kbd>B</kbd> à nouveau la fait sauter, où que vous soyez. La porte vole en éclats (elle ne se referme plus) ; derrière, tout ce qui se tient près de l'embrasure est sonné quelques secondes, et blessé tout contre — un otage aussi : regardez d'abord à la fibre. De votre côté, écartez-vous. Si quelqu'un ouvre la porte avant, la charge tombe.<br>
-      <b>Fibre optique</b> : devant une porte fermée ou entrouverte, maintenez <kbd>F</kbd> pour glisser une fibre sous le battant : vous découvrez un large cône de la pièce voisine, suspects compris, sans ouvrir ni faire de bruit. La mise en place demande un geste ; tant que vous observez, vous ne tirez pas et vous ne pouvez pas bouger — le moindre pas retire la fibre.<br>
+      <b>Fibre optique</b> : devant une porte fermée ou entrouverte, maintenez <kbd>F</kbd> pour glisser une fibre sous le battant : vous découvrez un large cône de la pièce voisine, suspects compris, sans ouvrir ni faire de bruit. La mise en place demande un geste ; tant que vous observez, vous ne tirez pas et vous ne pouvez pas bouger — le moindre pas retire la fibre. Glissée depuis le menu d'actions, elle reste en place sans tenir la touche : un pas, un clic ou <kbd>F</kbd> la retire.<br>
       <b>Flash</b> : <kbd>Espace</kbd> (ou <kbd>G</kbd>) lance une grenade aveuglante vers le curseur : la distance au curseur règle la force du lancer. Elle vole par-dessus le mobilier (tables, plantes, caisses...), retombe, puis roule et rebondit sur les murs, les meubles et les portes fermées, et explose au bout d'environ 1,7 s. Attention aux retours contre un mur proche. Collé à une porte entrouverte, visez l'embrasure pour glisser la grenade par l'entrebâillement ; de plus loin, elle rebondit sur le battant. Les ennemis aveuglés ne tirent plus pendant quelques secondes. Ne regardez pas l'explosion.<br>
       <b>Grenades à emporter</b> : au briefing, l'intervention choisit son lot : trois flashs, deux flashs et une grenade à fragmentation, ou deux grenades à fragmentation. La fragmentation se lance pareil et éclate au bout de 2 s : elle tue dans un rayon de trois cases et demie, vous, les vôtres et les otages compris ; un mur ou une porte fermée arrête l'éclat. <kbd>N</kbd> passe d'une sorte à l'autre (le HUD montre celle en main, et ce qui reste de l'autre) ; la dernière d'une sorte lancée, l'autre passe en main. Bravo et Charlie gardent leurs flashs pour l'entrée à la flash, et une colonne n'entre pas tant que votre grenade n'a pas éclaté.<br>
       <b>À travers les portes</b> : un battant n'est pas un abri. Les balles le traversent en perdant de l'énergie (un tiers pour du 7,62, les quatre cinquièmes pour de la chevrotine) et en déviant un peu. Vous pouvez arroser une porte fermée — et un suspect peut faire de même. Les murs, eux, arrêtent tout.<br>
@@ -1107,8 +1098,15 @@ class UI {
       entre (à la flash ou à la charge si elle en a encore ; <kbd>G</kbd> ou <kbd>B</kbd> sur la porte imposent l'une ou
       l'autre), le groupe armé la franchit. <kbd>H</kbd> : tenir là où ils sont ; <kbd>R</kbd> : plus d'ordre, le trinôme
       ratisse seul son couloir comme en guerre totale ; <kbd>C</kbd> : au pas de course (on les entend) ou au pas ;
-      <kbd>G</kbd> ailleurs : une grenade vers le curseur, lancée par celui qui a une trajectoire libre. <kbd>Espace</kbd>
-      arrête le temps (pause tactique) sans empêcher de donner des ordres. La vue se déplace avec <kbd>ZQSD</kbd>, les flèches ou
+      <kbd>G</kbd> ailleurs : une grenade vers le curseur, lancée par celui qui a une trajectoire libre. Sous vos ordres,
+      un trinôme ne lance de grenade que sur votre ordre ; à l'assaut, ou laissé à ratisser seul, il en lance de lui-même
+      là où il a vu ou entendu l'adversaire. <kbd>Espace</kbd>
+      arrête le temps (pause tactique) sans empêcher de donner des ordres. Le <kbd>clic molette</kbd> ouvre là aussi un menu
+      d'actions : sur l'un de vos hommes, ce que vous pouvez ordonner à son trinôme seul (le choisir ou l'ajouter au choix,
+      tenir, ratisser seul, courir, centrer la vue) ; sur un adversaire (l'attaquer, une grenade), sur une porte fermée (en
+      colonne puis entrée, à la flash, à la charge ; la franchir pour le groupe armé) ou au sol (y aller, ensuite, une
+      grenade, toute l'armée, pause tactique, minimap), ce que feront les trinômes choisis, nommés en titre. Il marche
+      aussi en pause tactique, et la vue ne glisse pas par les bords tant qu'il est ouvert. La vue se déplace avec <kbd>ZQSD</kbd>, les flèches ou
       les bords de l'écran, la molette zoome (de toute la carte jusqu'au cadrage du jeu à pied), <kbd>F</kbd> la centre sur les
       trinômes choisis, et un clic sur la minimap l'y emmène (un clic droit y envoie les trinômes). Un trinôme anéanti revient
       de la base ${WAR_RESPAWN} secondes plus tard sous le même numéro, et attend vos ordres.</p>

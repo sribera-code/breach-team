@@ -67,6 +67,7 @@ button.primary:hover { background: #38945d; }
 #ammo span { font-size: 18px; color: #9aa4b1; }
 #ammo.low b { color: #ff7043; }
 #reloadHint { font-size: 11px; color: #8e99a6; }
+#reloadHint b { color: #c9d1da; }
 /* stratégie : pas d'opérateur à vous, mais vos trois trinômes (à gauche) et les commandes (à droite) */
 #stratBox, #stratHint { display: none; }
 #hud.strategy #hpBox, #hud.strategy #weaponBox { display: none; }

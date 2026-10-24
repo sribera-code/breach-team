@@ -33,16 +33,17 @@
     Sound.init();
     lock();
     if (e.button === 0) { inp.mouse.down = true; inp.pressed.Mouse0 = true; }
-    if (e.button === 1) { e.preventDefault(); inp.pressed.Mouse1 = true; }
+    if (e.button === 1) { e.preventDefault(); inp.pressed.Mouse1 = true; inp.mouse.mdown = true; } // menu d'actions
     if (e.button === 2) { inp.pressed.Mouse2 = true; inp.mouse.rdown = true; }
   });
   window.addEventListener('mouseup', e => {
     if (e.button === 0 && inp.mouse.down) { inp.mouse.down = false; inp.pressed.Mouse0Up = true; }
+    if (e.button === 1 && inp.mouse.mdown) { inp.mouse.mdown = false; inp.pressed.Mouse1Up = true; } // (glissé jusqu'à une ligne)
     if (e.button === 2 && inp.mouse.rdown) { inp.mouse.rdown = false; inp.pressed.Mouse2Up = true; }
   });
   canvas.addEventListener('contextmenu', e => e.preventDefault());
   canvas.addEventListener('wheel', e => { e.preventDefault(); inp.pressed[e.deltaY > 0 ? 'WheelDown' : 'WheelUp'] = true; }, { passive: false });
-  window.addEventListener('blur', () => { inp.keys = {}; inp.mouse.down = false; inp.mouse.rdown = false; if (!game.over && !ui.isOpen()) game.setPaused(true); });
+  window.addEventListener('blur', () => { inp.keys = {}; inp.mouse.down = false; inp.mouse.rdown = false; inp.mouse.mdown = false; if (!game.over && !ui.isOpen()) game.setPaused(true); });
 
   const NO_DEFAULT = ['Space', 'Tab', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'AltLeft', 'AltRight'];
   window.addEventListener('keydown', e => {
@@ -71,6 +72,7 @@
     // pixels du monde par pixel d'écran (tolérance d'un clic), et curseur sur la minimap (stratégie : la vue y va)
     inp.mouse.ppx = renderer.dpr / renderer.zoom;
     inp.mouse.mini = renderer.overMinimap();
+    inp.mouse.item = renderer.menuItemAt(); // ligne du menu d'actions sous le curseur
     game.update(dt);
     renderer.draw(dt);
     ui.update();
