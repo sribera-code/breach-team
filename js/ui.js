@@ -54,7 +54,7 @@ class UI {
       // stratégie : assaut : ce qui tient encore le terrain, et ce qui reste de votre armée (sans renforts)
       const W = g.war, left = g.enemies.filter(Game.active).length, mine = g.mates.filter(m => m.alive).length;
       const up = W.slots.ops.filter(s => g.stratAlive(s)).length;
-      this.$('objective').textContent = `Groupe armé : ${left} / ${W.defense.total} · Votre armée : ${mine} debout, ${up} trinôme${up > 1 ? 's' : ''}${g.alarm ? ' · Alerte générale' : ''}`;
+      this.$('objective').textContent = `Groupe armé : ${left} / ${W.defense.total} · Votre armée : ${mine} debout, ${up} groupe${up > 1 ? 's' : ''}${g.alarm ? ' · Alerte générale' : ''}`;
     } else if (g.war) {
       // guerre totale : le décompte des deux armées, et quand revient votre trinôme s'il est anéanti (en stratégie, le
       // premier de vos trinômes à revenir)
@@ -133,27 +133,89 @@ class UI {
     this.$('message').textContent = g.message.t > 0 ? g.message.text : '';
     if (g.strat) this.updateStrategy();
     this.updateWave();
+    this.updateFeed();
   }
 
-  // Stratégie, en bas à gauche : vos trois trinômes, leur numéro, la santé de chacun de leurs hommes, ce qu'ils font et
-  // ce qui leur reste (grenades, charges) ; ceux que vous avez choisis sont encadrés.
+  // Trinômes et guerre totale, en haut à gauche : les cinq dernières morts (game.feed, FEED_LIFE s chacune) : qui a
+  // abattu qui, et avec quoi ; celles qui vous touchent encadrées, un tir dans son propre camp en orange.
+  updateFeed() {
+    const el = this.$('killfeed');
+    if (!el) return;
+    const g = this.game, rows = g.squads ? g.feed.filter(f => g.time - f.t < FEED_LIFE).slice(-5) : [];
+    const old = f => g.time - f.t > FEED_LIFE - 0.9;
+    const key = rows.map(f => f.t + (old(f) ? '·' : '')).join('|');
+    if (key === this._feedKey) return;
+    this._feedKey = key;
+    const esc = t => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+    el.innerHTML = rows.map(f => `<div class="kf${f.mine ? ' mine' : ''}${f.friendly ? ' friendly' : ''}${old(f) ? ' old' : ''}">`
+      + `<b style="color:${f.kcol}">${esc(f.killer)}</b><span class="kw">${esc(f.by || '—')}${f.friendly ? ' · tir ami' : ''}</span><b style="color:${f.vcol}">${esc(f.victim)}</b></div>`).join('');
+  }
+
+  // Stratégie, la barre latérale à droite : vos trois groupes (leur numéro, la santé de chacun de leurs hommes, ce qu'ils
+  // font, leur sorte et ce qui leur reste ; ceux que vous avez choisis encadrés, un clic les choisit, Maj : en plus), puis les ordres en
+  // boutons (Game.stratCommands : grisés avec la raison, allumés quand ils sont en cours), la minimap et l'aide. Souris
+  // verrouillée, le clic n'arrive pas aux boutons : main.js cherche celui qui est sous le curseur dessiné (panelHit).
   updateStrategy() {
-    const g = this.game, box = this.$('stratBox');
-    if (!box) return;
-    const W = g.war, S = g.strat;
-    const rows = W.slots.ops.map((grp, k) => {
+    const g = this.game, army = this.$('stratArmy'), cmds = this.$('stratCmds');
+    if (!army || !cmds) return;
+    const W = g.war, S = g.strat, police = g.camp === 'police', gs = g.stratSelected();
+    const cards = W.slots.ops.map((grp, k) => {
       const col = STRAT_COLORS[k], up = g.stratAlive(grp);
       const men = (grp ? grp.members : []).map(m => {
         const v = m.alive ? Math.round(100 * m.hp / m.maxHp) : 0;
         return `<i class="${m.alive ? '' : 'down'}"><b style="width:${v}%;background:${v > 60 ? '#4caf50' : v > 30 ? '#ffb300' : '#ef5350'}"></b></i>`;
       }).join('');
       const alive = up ? grp.members.filter(m => m.alive && m.group === grp) : [];
-      const nades = alive.reduce((n, m) => n + Math.max(0, m.flashbangs || 0), 0), charges = alive.reduce((n, m) => n + (m.charges || 0), 0);
-      const kit = !up ? '' : g.camp === 'armed' ? `Grenades ${nades}` : `Flash ${nades} · Charge ${charges}`;
-      return `<div class="srow${S.sel.has(k) ? ' sel' : ''}${up ? '' : ' out'}"><span class="skey" style="background:${col}">${k + 1}</span><span class="sname" style="color:${col}">${grp ? grp.label : '—'}</span><span class="smen">${men}</span><span class="sorder">${this.stratStatus(grp, k)}</span><span class="skit">${kit}</span></div>`;
+      const n = kind => alive.reduce((t, m) => t + Math.max(0, m.nades[kind] || 0), 0), charges = alive.reduce((t, m) => t + (m.charges || 0), 0);
+      // (la sorte du groupe, puis ce qui lui reste)
+      const sort = grp && grp.type ? GROUP_TYPES[grp.type].name + (g.loadout.army[k].sup ? ' silencieux' : '') : null;
+      const kit = !up ? sort || '' : [sort, police && `Flash ${n('flash')}`, `Grenade ${n('frag')}`, police && `Charge ${charges}`].filter(Boolean).join(' · ');
+      return `<button class="scard${S.sel.has(k) ? ' sel' : ''}${up ? '' : ' out'}" data-cmd="sel${k}" style="--c:${col}"><span class="skey">${k + 1}</span>`
+        + `<span class="sname">${grp ? grp.label : '—'}</span><span class="sorder">${this.stratStatus(grp, k)}</span><span class="smen">${men}</span><span class="skit">${kit}</span></button>`;
     }).join('');
-    const html = `<div class="label">VOTRE ARMÉE${S.frozen ? ' · <b>PAUSE TACTIQUE</b>' : ''}</div>${rows}`;
-    if (html !== this._strat) { this._strat = html; box.innerHTML = html; }
+    const ah = `<div class="label">VOTRE ARMÉE${S.frozen ? ' · <b>PAUSE TACTIQUE</b>' : ''}</div>${cards}`;
+    if (ah !== this._strat) { this._strat = ah; army.innerHTML = ah; }
+    const list = g.stratCommands();
+    const btn = c => `<button class="scmd${c.icon ? ' wide' : ''}${c.on ? ' on' : ''}${c.off ? ' off' : ''}" data-cmd="${c.id}" title="${c.off ? `${c.label} : ${c.off}` : c.label}">`
+      + `${c.icon ? UI.icon(c.icon) : ''}<span>${c.label}${c.count !== null && c.count !== undefined ? ` <b>${c.count}</b>` : ''}</span><kbd>${c.key}</kbd></button>`;
+    const sec = id => list.filter(c => c.sec === id).map(btn).join('');
+    // (les ordres d'un groupe ne s'affichent que tant qu'on en a choisi un)
+    const ch = (gs.length ? `<div class="label">ORDRES · <b>${g.stratNames(gs)}</b></div><div class="sgrid">${sec('orders')}</div>` : '')
+      + `<div class="label">ARMÉE</div><div class="sgrid">${sec('army')}</div>`;
+    if (ch !== this._stratCmds) { this._stratCmds = ch; cmds.innerHTML = ch; this._hover = null; }
+    this.$('stratPanel').classList.toggle('nomini', !g.minimap);
+  }
+
+  // Stratégie : ce qu'il y a de la barre latérale au point (x, y) de l'écran (px CSS) : null hors de sa bande (main.js
+  // met à part la minimap, qui y est dessinée), sinon { cmd } : l'ordre du bouton, null entre les boutons.
+  panelHit(x, y) {
+    if (!this.game.strat) return null;
+    const el = document.elementFromPoint(x, y), panel = el && el.closest ? el.closest('#stratPanel') : null;
+    // (toute la bande en est : le terrain ne la voit pas, même entre deux blocs)
+    if (!panel && x < window.innerWidth - this.panelWidth()) return null;
+    const b = panel ? el.closest('[data-cmd]') : null;
+    return { cmd: b ? b.dataset.cmd : null, el: b };
+  }
+
+  // Souris verrouillée : le survol (:hover) ne suit pas le curseur dessiné ; on le marque nous-mêmes (x null : personne).
+  hoverAt(x, y) {
+    const hit = x === null ? null : this.panelHit(x, y), el = hit ? hit.el : null;
+    if (el === this._hover) return;
+    if (this._hover) this._hover.classList.remove('hover');
+    if (el) el.classList.add('hover');
+    this._hover = el;
+  }
+
+  // Stratégie : la place que la barre latérale garde à la minimap, et la largeur qu'elle prend à droite (px CSS).
+  miniSlot() {
+    const el = this.$('stratMini');
+    if (!el || !this.game.strat || !this.game.minimap) return null;
+    const r = el.getBoundingClientRect();
+    return r.width && r.height ? { x: r.left, y: r.top, w: r.width, h: r.height } : null;
+  }
+  panelWidth() {
+    const el = this.$('stratPanel');
+    return el && this.game.strat ? el.getBoundingClientRect().width : 0;
   }
 
   // Ce que fait un trinôme de votre armée, en deux ou trois mots.
@@ -164,6 +226,8 @@ class UI {
       return at === null || at === Infinity ? 'Anéanti' : `Anéanti — retour dans ${Math.max(0, Math.ceil(at - g.time))} s`;
     }
     const men = grp.members.filter(m => m.alive && m.group === grp), o = grp.order, pace = grp.rush ? ' · course' : '';
+    const st = o && o.type === 'stack' ? o.st : null;
+    if (st && g.stackWaits(st)) return st.charge ? 'Charge posée — vos ordres' : 'En place — vos ordres';
     if (men.some(m => m.entry)) return 'En colonne';
     if (men.some(m => m.clear)) return 'Entre';
     if (men.some(m => m.target)) return 'Au contact';
@@ -241,7 +305,8 @@ class UI {
       box.innerHTML = rows.map(m => `<div class="mate${m.hunter ? ' auto' : ''}"><span class="mname" style="color:${m.vip ? '#ffd54f' : m.accent}${m.hunter ? ';font-style:italic' : ''}">${m.name}</span><div class="mhp"><div></div></div><span class="morder"></span><span class="mnade"></span></div>`).join('');
     }
     const orders = { follow: 'Suit', hold: g.siege ? 'Au poste' : 'Tient', move: 'Se déplace', stack: 'En colonne' };
-    const acts = { lockpick: 'Crochète', grenade: 'Lance une flash', charge: 'Pose une charge' };
+    const acts = { lockpick: 'Crochète', grenade: 'Lance une flash', charge: 'Pose une charge', cuff: 'Menotte', pickup: 'Ramasse', hostage: 'Relève l’otage', reload: 'Recharge' };
+    const guard = g.vipGuard ? g.vipGuard() : null;
     box.querySelectorAll('.mate').forEach((el, i) => {
       const m = rows[i];
       el.classList.toggle('down', !m.alive);
@@ -252,10 +317,12 @@ class UI {
         : !m.alive ? 'À terre' : m.stun > 0 ? 'Aveuglé' : m.act ? (m.act.type === 'grenade' && m.nade === 'frag' ? 'Lance une grenade' : acts[m.act.type] || 'Ouvre la porte') : m.target ? (m.blockedLine ? 'Axe bouché' : 'Au contact') : m.reloadT > 0 ? 'Recharge'
         : m.hunter ? (m.entry ? 'En colonne' : m.clear ? 'Entre' : m.group && g.leaderOf(m.group) !== m ? 'Suit' : 'En tête')
         : m.order === 'stack' ? orders.stack
+        : m.cuffing ? 'Va menotter' : m === guard ? 'Couvre le VIP'
         : m.coverAngle !== null ? (m.order === 'move' ? 'Se déplace ▸ couvre' : 'Couvre') : orders[m.order];
       el.querySelector('.morder').textContent = s;
-      // flashs (ou grenades) qui lui restent (l'entrée à la flash en consomme une)
-      el.querySelector('.mnade').textContent = !m.vip && m.alive && m.flashbangs > 0 ? `${m.nade === 'frag' ? 'Grenade' : 'Flash'} ${m.flashbangs}` : '';
+      // flashs et grenades qui lui restent (l'entrée à la flash ou à la grenade en consomme une)
+      const n = !m.vip && m.alive && m.nades ? m.nades : {};
+      el.querySelector('.mnade').textContent = [n.flash > 0 && `Flash ${n.flash}`, n.frag > 0 && `Grenade ${n.frag}`].filter(Boolean).join(' · ');
     });
   }
 
@@ -302,14 +369,14 @@ class UI {
     if (g.defense) {
       return `Le groupe armé tient le terrain : ${DEFENSE_RATIO * 9} hommes postés partout hors des abords de votre base,
         surtout dans les bâtiments, quelques-uns en ronde ; celui qui vous voit et tient ${ALARM_TIME} secondes donne l'alerte
-        générale. Vous commandez de haut trois trinômes d'intervention, qui attendent vos ordres à la base ; sans ordre, ils se
-        partagent le ratissage du terrain. Ni renforts ni limite de temps : la mission est accomplie quand le groupe armé est
-        entièrement neutralisé, et échoue quand vos trois trinômes sont anéantis. ${g.def.briefing || ''}`;
+        générale. Vous commandez de haut trois groupes d'intervention (assaut, standard ou précision, au choix), qui attendent
+        vos ordres à la base ; sans ordre, ils se partagent le ratissage du terrain. Ni renforts ni limite de temps : la mission
+        est accomplie quand le groupe armé est entièrement neutralisé, et échoue quand vos trois groupes sont anéantis. ${g.def.briefing || ''}`;
     }
     return `Deux armées de trois trinômes, ${g.camp === 'armed' ? "la vôtre, celle du groupe armé, contre l'intervention" : "la vôtre, celle de l'intervention, contre le groupe armé"}.
-      Vous ne vous battez pas : vous commandez de haut vos trois trinômes, qui attendent vos ordres à la base. Choisissez-les,
-      envoyez-les, faites-les tenir, attaquer${g.camp === 'armed' ? '' : ' ou entrer en colonne'} ; sans ordre, un trinôme ratisse
-      seul son couloir. Un trinôme anéanti revient de la base ${WAR_RESPAWN} s plus tard. Au bout de ${min} minutes, l'armée qui a
+      Vous ne vous battez pas : vous commandez de haut vos trois groupes (assaut, standard ou précision, au choix), qui attendent
+      vos ordres à la base. Choisissez-les, envoyez-les, faites-les tenir, attaquer${g.camp === 'armed' ? '' : ' ou entrer en colonne'} ;
+      sans ordre, un groupe ratisse seul son couloir. Un groupe anéanti revient de la base ${WAR_RESPAWN} s plus tard. Au bout de ${min} minutes, l'armée qui a
       abattu le plus d'adversaires l'emporte. ${g.def.briefing || ''}`;
   }
 
@@ -360,7 +427,7 @@ class UI {
     const middle = g.strat ? this.armyList() : `
           <h2>Équipement</h2>
           <div class="loadout">
-            ${['ar', 'smg', 'sg'].map(c => this.weaponGroup(c, MODES[g.mode].primaries, 'primary')).join('')}
+            ${['ar', 'smg', 'sg', 'sr'].map(c => this.weaponGroup(c, MODES[g.mode].primaries, 'primary')).join('')}
             ${this.shieldGroup(MODES[g.mode].shields)}
             ${this.weaponGroup('hg', MODES[g.mode].sidearms, 'sidearm')}
           </div>
@@ -399,6 +466,16 @@ class UI {
     });
     this.panel.querySelectorAll('.nadebtn').forEach(b => {
       b.onclick = () => { g.setLoadout({ nades: b.dataset.nades }); this.refreshLoadout(); };
+    });
+    // stratégie : la sorte d'un groupe ou son mode ; changer reforme vos groupes (la mission se recharge)
+    this.panel.querySelectorAll('.armybtn').forEach(b => {
+      b.onclick = () => {
+        const k = +b.dataset.k, a = g.loadout.army[k];
+        const o = b.dataset.type ? { type: b.dataset.type } : { sup: b.dataset.sup === '1' };
+        if (Object.keys(o).every(n => o[n] === a[n])) return;
+        g.setArmy(k, o);
+        this.showBriefing();
+      };
     });
     this.panel.querySelectorAll('.powbtn').forEach(b => {
       b.onclick = () => { const cut = b.dataset.cut === '1'; if (cut !== !!g.loadout.cutPower) { g.setLoadout({ cutPower: cut }); this.showBriefing(); } };
@@ -445,7 +522,7 @@ class UI {
 
   // Stratégie : assaut : pas de camp à choisir (vous menez l'intervention) ; ce qui vous attend, sous le plan.
   defenseNote() {
-    return `<div class="powerrow"><small>Vos trois trinômes partent de la base choisie. Le groupe armé, ${DEFENSE_RATIO} fois plus nombreux, tient tout le
+    return `<div class="powerrow"><small>Vos trois groupes partent de la base choisie. Le groupe armé, ${DEFENSE_RATIO} fois plus nombreux, tient tout le
       reste du terrain, à ${Math.round(DEFENSE_CLEAR / U)} cases au moins de votre base ; ses postes changent à chaque partie et ne se voient qu'une fois dans
       le champ de vision de vos hommes.</small></div>`;
   }
@@ -455,52 +532,63 @@ class UI {
   campRow() {
     const g = this.game, police = MODES[g.mode].variantOf || g.mode, armed = Object.keys(MODES).find(m => MODES[m].variantOf === police);
     const btn = (mode, label, tip) => `<button class="supbtn campbtn${g.mode === mode ? ' sel' : ''}" data-mode="${mode}" title="${tip}">${label}</button>`;
-    const tips = g.strat ? ["Vos trinômes ont des flashs, une charge de brèche chacun et entrent en colonne ; en face, le groupe armé et ses grenades à fragmentation.", "Vos trinômes ont des grenades à fragmentation ; en face, l'intervention, ses flashs, ses charges et ses colonnes."]
+    const tips = g.strat ? ["Vos groupes ont des flashs, une charge de brèche chacun et entrent en colonne, un bouclier en tête du groupe d'assaut ; en face, le groupe armé et ses grenades à fragmentation.", "Vos groupes ont des grenades à fragmentation ; en face, l'intervention, ses flashs, ses charges, ses boucliers et ses colonnes."]
       : ['Flashs ou grenades à fragmentation (au choix), charges de brèche, fibre, gilet ; en face, le groupe armé et ses grenades à fragmentation.', "Grenades à fragmentation ; en face, l'intervention, ses flashs, ses charges et ses colonnes."];
     return `<div class="powerrow"><div class="suprow"><span class="rowlabel">Camp</span>${btn(police, '🛡 Intervention', tips[0])}${btn(armed, '☠ Groupe armé', tips[1])}</div>
-      <small>${g.strat ? "Vos trois trinômes attendent vos ordres à votre base ; l'armée d'en face part de l'autre."
+      <small>${g.strat ? "Vos trois groupes attendent vos ordres à votre base ; l'armée d'en face, trois trinômes, part de l'autre."
         : g.war ? 'Vos deux autres trinômes partent de votre base, sur les flancs ; l\'armée d\'en face, de l\'autre base.'
         : "Votre second trinôme entre par l'ouverture la plus proche de la vôtre, les deux d'en face par les plus éloignées."}</small></div>`;
   }
 
-  // Stratégie : vos trois trinômes, leur couleur, leur couloir de départ, et l'arme de chacun avec ses accessoires.
+  // Stratégie : vos trois groupes, leur couleur, leur couloir de départ, et l'arme de chacun avec ses accessoires ; la
+  // sorte de chaque groupe (GROUP_TYPES, effectif en chiffre) et son mode, normal ou silencieux, se choisissent ici
+  // (.armybtn : la mission se recharge, les groupes se reforment).
   armyList() {
-    const g = this.game, lanes = ['un flanc', 'le centre', "l'autre flanc"];
+    const g = this.game, lanes = ['un flanc', 'le centre', "l'autre flanc"], camp = g.camp;
     const names = { sup: 'silencieux', laser: 'laser', light: 'lampe', grip: 'poignée', mag: 'chargeur long', scope: 'lunette' };
     const rows = g.war.slots.ops.map((grp, k) => {
       if (!grp) return '';
+      const pick = g.loadout.army[k], T = GROUP_TYPES[pick.type];
       const men = grp.members.map(m => {
         const w = m.weapon, on = Object.keys(names).filter(n => w.acc && w.acc[n]).map(n => names[n]);
+        if (m.shield) on.unshift(m.shield.name.toLowerCase());
         return `${m.name} : ${w.name}${on.length ? ` (${on.join(', ')})` : ''}`;
       }).join(' · ');
       const alone = g.defense ? 'Sans ordre, il ratisse le terrain avec les deux autres.' : `Sans ordre, il ratisse ${lanes[Game.warLane('ops', k)]}.`;
-      return `<div class="armyrow"><span class="skey" style="background:${grp.color}">${k + 1}</span><div><b style="color:${grp.color}">Trinôme ${grp.label}</b><small>${alone}</small><small>${men}</small></div></div>`;
+      const types = GROUP_KEYS.map(t => `<button class="supbtn armybtn${t === pick.type ? ' sel' : ''}" data-k="${k}" data-type="${t}" title="${GROUP_TYPES[t].note[camp]}">${GROUP_TYPES[t].name} <b>${GROUP_TYPES[t].n}</b></button>`).join('');
+      const modes = [[false, 'Normal'], [true, 'Silencieux']].map(([on, label]) => `<button class="supbtn armybtn${pick.sup === on ? ' sel' : ''}" data-k="${k}" data-sup="${on ? 1 : 0}">${label}</button>`).join('');
+      return `<div class="armyrow"><span class="skey" style="background:${grp.color}">${k + 1}</span><div><b style="color:${grp.color}">Groupe ${grp.label}</b>`
+        + `<div class="armypick">${types}<i></i>${modes}</div><small>${T.note[camp]} ${alone}</small><small>${men}</small></div></div>`;
     }).join('');
-    const kit = g.camp === 'armed' ? 'deux grenades à fragmentation par homme' : 'deux flashs par homme et une charge de brèche par trinôme';
+    const kit = camp === 'armed' ? 'deux grenades à fragmentation par homme' : 'deux flashs par homme et une charge de brèche par groupe';
     return `<h2>Votre armée</h2><div class="army">${rows}</div>
-      <p class="brief-note">Ils emportent ${kit}. Vous ne vous battez pas vous-même : vous commandez, l'équipement ne se choisit pas. ${g.defense
-        ? 'Pas de renforts : un trinôme anéanti ne revient pas.' : 'Un trinôme anéanti revient de la base sous le même numéro.'}</p>`;
+      <p class="brief-note">Ils emportent ${kit}. Vous ne vous battez pas vous-même : vous choisissez la sorte de chaque groupe et son mode, puis vous commandez. ${g.defense
+        ? 'Pas de renforts : un groupe anéanti ne revient pas.' : 'Un groupe anéanti revient de la base sous le même numéro.'}</p>`;
   }
 
   // Stratégie : les commandes, à la place des fiches d'armes du briefing (armed : le groupe armé, sans colonne ni charge ;
   // defense : la stratégie d'assaut, où l'on ratisse tout le terrain).
   static commandList(armed, defense) {
     const rows = [
-      ['Clic molette', "menu d'actions : sur l'un de vos trinômes, ses ordres à lui ; sur un adversaire, une porte ou au sol, ceux des trinômes choisis ; chaque ligne rappelle son raccourci"],
-      ['Clic gauche', "choisir un trinôme (clic sur l'un de ses hommes) ; glissé : un rectangle, tous ceux qui y sont ; Maj : en plus"],
-      ['1, 2, 3', 'choisir ce trinôme (Maj : en plus) ; deux fois de suite : la vue y va'],
+      ['Barre latérale', 'vos groupes (un clic les choisit) et vos ordres en boutons, chacun avec sa touche ; la minimap'],
+      ['Clic gauche', "choisir un groupe (clic sur l'un de ses hommes) ; glissé : un rectangle, tous ceux qui y sont ; Maj : en plus"],
+      ['1, 2, 3', 'choisir ce groupe (Maj : en plus) ; deux fois de suite : la vue y va'],
       ['A', "toute l'armée"],
       ['Clic droit', "y aller ; maintenu et tiré : la direction à tenir à l'arrivée ; Maj : après le déplacement en cours"],
       ['… sur un adversaire', "l'attaquer : ils le poursuivent tant que l'armée le voit"],
-      armed ? ['… sur une porte fermée', 'la franchir en l’ouvrant'] : ['… sur une porte fermée', "en colonne de part et d'autre, puis entrée (à la flash ou à la charge s'ils en ont)"],
+      ['… sur une porte fermée', armed ? "en colonne de part et d'autre ; en place, des boutons sur la porte : entrer, ou entrer à la grenade"
+        : "en colonne de part et d'autre ; en place, des boutons sur la porte : entrer, poser une charge, entrer à la flash, à la grenade (la charge posée : la mise à feu, puis entrer, à la flash, à la grenade)"],
+      ['Double clic droit', "le menu de l'endroit : y lancer une " + (armed ? 'grenade' : 'flash ou une grenade') + ", attaquer, s'y mettre en colonne, y aller ; molette : choisir, E ou un clic : valider"],
       ['H', "tenir la position : ils tirent sur ce qu'ils voient, sans poursuivre"],
-      ['R', defense ? 'plus d’ordre : les trinômes se partagent le ratissage du terrain' : 'plus d’ordre : le trinôme ratisse seul son couloir'],
+      ['R', defense ? 'plus d’ordre : les groupes se partagent le ratissage du terrain' : 'plus d’ordre : le groupe ratisse seul son couloir'],
       ['C', 'au pas de course (plus vite, mais on les entend) ou au pas'],
-      ['G', armed ? 'grenade à fragmentation au curseur' : 'flash au curseur ; sur une porte fermée : entrée à la flash'],
-      !armed && ['B', 'sur une porte fermée : entrée à la charge'],
+      ['G', armed ? 'grenade au curseur ; sur une porte fermée : entrée à la grenade' : 'flash au curseur ; sur une porte fermée : entrée à la flash'],
+      !armed && ['N', 'grenade explosive au curseur (une par homme) ; sur une porte fermée : entrée à la grenade'],
+      !armed && ['B', 'sur une porte fermée : en colonne, charge posée, puis vos ordres'],
+      ['Boutons de grenade', 'le clic suivant sur le terrain dit où la lancer ; clic droit : renoncer'],
       ['Espace', "pause tactique : le temps s'arrête, les ordres se donnent"],
-      ['ZQSD, flèches, bords', 'déplacer la vue ; molette : zoom ; F : centrer sur les trinômes choisis'],
-      ['M', 'minimap ; un clic dessus y emmène la vue, un clic droit y envoie les trinômes choisis'],
+      ['ZQSD, flèches, bords', 'déplacer la vue ; molette : zoom ; F : centrer sur les groupes choisis'],
+      ['M', 'minimap ; un clic dessus y emmène la vue, un clic droit y envoie les groupes choisis'],
     ].filter(Boolean);
     return `<dl class="cmds">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl>`;
   }
@@ -539,7 +627,7 @@ class UI {
       <small class="teamarms">${arms}</small>`;
   }
 
-  // Trinômes, côté groupe armé : l'arme de chacun de vos complices et ce qu'elle porte (tiré au sort, MILITANT_KITS).
+  // Trinômes, côté groupe armé : l'arme de chacun de vos complices et ce qu'elle porte (selon son rôle, ROLE_KITS).
   crewKit() {
     const names = { sup: 'silencieux', laser: 'laser', light: 'lampe', grip: 'poignée', mag: 'chargeur long', scope: 'lunette' };
     const arms = this.game.crew.map(m => {
@@ -703,7 +791,7 @@ class UI {
     };
     const supWhy = w && w.kind === 'shotgun' ? 'Pas de silencieux sur un fusil à pompe' : 'Pas de silencieux pour cette arme';
     const gripWhy = w && w.cat === 'hg' ? 'Pas de poignée avant sur une arme de poing' : key === 'mp7' ? 'Le MP7 a déjà sa poignée avant, repliable' : 'Pas de rail sous le garde-main';
-    const scopeWhy = w && w.cat === 'hg' ? 'Pas de lunette sur une arme de poing' : w && w.kind === 'shotgun' ? 'Pas de lunette sur un fusil à pompe : la gerbe ne porte pas assez loin'
+    const scopeWhy = w && w.optic ? `Sa lunette de précision est montée d'origine (${scopeOf(w).name})` : w && w.cat === 'hg' ? 'Pas de lunette sur une arme de poing' : w && w.kind === 'shotgun' ? 'Pas de lunette sur un fusil à pompe : la gerbe ne porte pas assez loin'
       : key === 'mp7' ? 'Le MP7 garde son point rouge : trop court pour une lunette' : 'Pas de rail pour fixer une lunette';
     return `<div class="accrow"><span class="accname">${w ? w.name : label}</span><div class="accbtns">${btn('sup', 'Silencieux', supWhy)}${btn('laser', 'Laser', 'Pas de rail pour fixer un laser')}${btn('light', 'Lampe', 'Pas de rail pour fixer une lampe')}${btn('grip', 'Poignée', gripWhy)}${btn('mag', 'Chargeur', 'Pas de chargeur grande capacité pour cette arme')}${btn('scope', 'Lunette', scopeWhy)}</div></div>`;
   }
@@ -713,6 +801,7 @@ class UI {
     const m = MODES[this.game.mode], a = accOf(this.game.loadout, key);
     const notes = [['sup', 'Silencieux'], ['laser', 'Laser'], ['light', 'Lampe'], ['grip', 'Poignée avant'], ['mag', 'Chargeur grande capacité'], ['scope', 'Lunette']]
       .filter(([name]) => accFits(key, name, m) && a[name]).map(([name, label]) => `<b>${UI.icon(name)} ${label}</b> : ${UI.accEffect(key, name)}`);
+    if (WEAPONS[key].optic) notes.unshift(`<b>${UI.icon('scope')} Lunette</b> : ${UI.accEffect(key, 'optic')}`);
     return notes.length ? `<p class="wd-acc">${notes.join('<br>')}</p>` : '';
   }
 
@@ -731,6 +820,11 @@ class UI {
     if (name === 'scope') {
       const pct = v => Math.round((v - 1) * 100);
       return `${SCOPES[key].name}, à l'arrêt seulement : l'arme épaulée, il faut ${num(SCOPE.settle)} s pour poser l'œil. Elle porte la vue ${pct(SCOPE.sight)} % plus loin dans l'axe, divise par deux la dispersion de base, allonge de ${pct(SCOPE.reach)} % la portée efficace. La vue glisse vers le point visé sans le lâcher : on peut pousser le viseur plus loin, même pris au bord de l'écran. Le moindre pas la fait quitter l'œil. +${num(SCOPES[key].weight)} kg.`;
+    }
+    if (name === 'optic') {
+      // la lunette de précision d'un fusil de précision, montée d'origine
+      const o = scopeOf(w), pct = v => Math.round((v - 1) * 100);
+      return `${o.name}, montée d'origine, à l'arrêt seulement : il faut ${num(o.settle)} s pour poser l'œil. Elle porte la vue ${pct(o.sight)} % plus loin dans l'axe, divise par ${num(Math.round(10 / o.spread) / 10)} la dispersion de base, allonge de ${pct(o.reach)} % la portée efficace, et la vue recule pour montrer ce qu'elle voit. Le moindre pas la fait quitter l'œil.`;
     }
     if (name === 'light') {
       return "éclaire un cône devant l'arme. Inutile si le bâtiment est éclairé ; courant coupé, c'est elle qui fait voir loin. Prise en face de près, elle éblouit un suspect, qui met plus de temps à viser. Mais elle se voit de loin dans le noir. X l'éteint ou la rallume (celles de l'équipe avec).";
@@ -787,10 +881,10 @@ class UI {
       ['Puissance', Math.sqrt(w.damage * (w.pellets || 1) / 135)],
       ['Cadence', n(w.rof, 0, 16)],
       // la lunette, à l'arrêt : dispersion de base réduite et portée efficace allongée
-      ['Précision', n(12 * DEG - (2 * (w.spread * (w.scope ? SCOPE.spread : 1) + (w.pattern || 0)) + w.bloom), 0, 12 * DEG)],
+      ['Précision', n(12 * DEG - (2 * (w.spread * (w.scope ? scopeOf(w).spread : 1) + (w.pattern || 0)) + w.bloom), 0, 12 * DEG)],
       // ce que le laser améliore : la visée sans épauler
       ['En mouvement', n(6 * DEG - w.moveSpread * (w.laser ? LASER_MOVE : 1), 0, 6 * DEG)],
-      ['Portée', n(w.effRange * (w.scope ? SCOPE.reach : 1), 0, 12 * U)],
+      ['Portée', n(w.effRange * (w.scope ? scopeOf(w).reach : 1), 0, 12 * U)],
       // une arme légère pèse moins dans la charge, donc ralentit moins (voir loadMobility)
       ['Mobilité', n(5.5 - w.weight, 0, 4.7)],
       ['Discrétion', n(12 - w.noise, 0, 10)],
@@ -855,8 +949,8 @@ class UI {
     let html = `<h1>${M.name} — choisissez la carte</h1>${UI.steps(2, M.name, null, M.strategy ? 'Armée' : undefined)}<p>${siege
       ? `Objectif : repousser les ${SIEGE_WAVES.length} vagues d'assaut avec vos otages vivants et entre vos mains.`
       : escort ? "Objectif : conduire le VIP vivant du point A au point B, à travers les pièces tenues par le commando. Inutile de neutraliser tout le monde."
-      : M.defense ? `Objectif : commander de haut vos trois trinômes et neutraliser les ${DEFENSE_RATIO * 9} hommes du groupe armé retranchés sur le terrain. Pas de renforts : chaque trinôme anéanti est perdu.`
-      : M.strategy ? `Objectif : commander vos trois trinômes de haut et abattre plus d'adversaires que l'armée d'en face en ${Math.round(WAR_TIME / 60)} minutes. Chaque trinôme anéanti revient de sa base.`
+      : M.defense ? `Objectif : commander de haut vos trois groupes et neutraliser les ${DEFENSE_RATIO * 9} hommes du groupe armé retranchés sur le terrain. Pas de renforts : chaque groupe anéanti est perdu.`
+      : M.strategy ? `Objectif : commander vos trois groupes de haut et abattre plus d'adversaires que l'armée d'en face en ${Math.round(WAR_TIME / 60)} minutes. Chaque groupe anéanti revient de sa base.`
       : war ? `Objectif : abattre plus d'adversaires que l'armée d'en face en ${Math.round(WAR_TIME / 60)} minutes. Chaque trinôme anéanti revient de sa base.`
       : squads ? "Objectif : deux trinômes contre deux, l'intervention contre le groupe armé. Le premier camp entièrement hors de combat a perdu."
       : "Objectif : neutraliser tous les suspects, sans perdre toute l'équipe ni tuer d'otage. Escorter les otages dehors, par une porte extérieure ou une fenêtre, les met à l'abri en attendant."}</p>
@@ -869,7 +963,7 @@ class UI {
       const h = txt.split('').filter(c => c === 'H').length;
       // en plein air, on arrive par les entrées du terrain (O) ; ailleurs, par les portes extérieures et les fenêtres
       const ent = txt.split('').filter(c => (l.outdoor ? 'O' : 'XW').includes(c)).length;
-      const what = M.defense ? `votre base · vos 3 trinômes contre ${DEFENSE_RATIO * 9} retranchés` : M.strategy ? '2 bases · vos 3 trinômes contre 3' : war ? '2 bases · 3 trinômes contre 3' : squads ? `${ent} ouvertures · 2 trinômes contre 2`
+      const what = M.defense ? `votre base · vos 3 groupes contre ${DEFENSE_RATIO * 9} retranchés` : M.strategy ? '2 bases · vos 3 groupes contre 3 trinômes' : war ? '2 bases · 3 trinômes contre 3' : squads ? `${ent} ouvertures · 2 trinômes contre 2`
         : `${siege ? ent + ' entrées à surveiller' : n + ' suspects'} · ${escort ? 'VIP à conduire de A à B' : h + ' otages'}`;
       html += `<button class="levelbtn${i === g.levelIndex ? ' sel' : ''}" data-i="${i}"><canvas></canvas>
         <span class="lname">${i + 1}. ${l.name}${war ? ' <em>· champ de bataille</em>' : l.outdoor ? ' <em>· plein air</em>' : ''}</span><small>${what}</small></button>`;
@@ -952,8 +1046,10 @@ class UI {
   showPause() {
     const g = this.game;
     this.showOverlay(`<h1>Pause</h1><p>${g.strat ? this.strategyBriefing() : g.war ? this.warBriefing() : g.squads ? this.squadsBriefing() : g.def.briefing}</p>
-      <div class="row"><button class="primary" id="ovResume">Reprendre</button><button id="ovRestart">↺ Recommencer</button><button id="ovLevels">Cartes</button><button id="ovModes">Modes</button><button id="ovHelp">Aide</button></div>`);
+      <div class="row"><button class="primary" id="ovResume">Reprendre</button><button id="ovRestart">↺ Recommencer</button><button id="ovLevels">Cartes</button><button id="ovModes">Modes</button><button id="ovHelp">Aide</button>${this.voiceButton()}</div>`);
     this.panel.querySelector('#ovResume').onclick = () => g.setPaused(false);
+    // les répliques dites par la synthèse vocale (« Contact ! », « Police ! À terre ! ») : on peut les couper
+    this.panel.querySelector('#ovVoices').onclick = () => { if (Sound.maleVoices().length) { Sound.setVoices(!Sound.voices); this.showPause(); } };
     this.panel.querySelector('#ovRestart').onclick = () => { g.restart(); this.showBriefing(); };
     this.panel.querySelector('#ovLevels').onclick = () => this.showLevels(() => this.showPause());
     this.panel.querySelector('#ovModes').onclick = () => this.showModes(() => this.showPause());
@@ -988,7 +1084,7 @@ class UI {
         <span>Temps</span><b>${fmtTime(g.time)}</b>
         <span>${D ? 'Groupe armé neutralisé' : 'Abattus par votre armée'}</span><b id="endKills">${D ? `${W.kills.ops} / ${D.total}` : W.kills.ops}</b>
         <span>Pertes de votre armée</span><b>${W.kills.enemy}</b>
-        <span>Trinômes anéantis</span><b>${W.lost}</b>` : `
+        <span>Groupes anéantis</span><b>${W.lost}</b>` : `
         <span>Temps</span><b>${fmtTime(g.time)}</b>
         <span>${siege ? 'Opérateurs neutralisés' : war ? 'Abattus par votre armée / par vous' : squads ? 'Adversaires neutralisés' : 'Suspects abattus / arrêtés'}</span><b id="endKills">${war ? `${W.kills.ops} / ${W.mine}` : siege || squads ? `${s.kills} / ${g.enemies.length}` : `${s.kills} / ${s.arrests}`}</b>
         <span>Tirs / touchés</span><b>${s.shots} / ${s.hits}</b>
@@ -1020,26 +1116,38 @@ class UI {
     this.panel.querySelector('#ovModes').onclick = () => this.showModes(() => this.showEnd(result));
   }
 
+  // Le bouton « Voix » de la pause : oui ou non ; sans voix d'homme naturelle en français dans le navigateur, il dit
+  // pourquoi elles se taisent (Sound.maleVoices).
+  voiceButton() {
+    if (!Sound.maleVoices().length) {
+      return `<button id="ovVoices" class="off" title="Ce navigateur n'a pas de voix d'homme naturelle en français (Microsoft Edge en a : Henri, Rémy...). Plutôt qu'une voix de robot, les répliques se taisent.">Voix : indisponibles</button>`;
+    }
+    return `<button id="ovVoices" title="Voix : ${Sound.maleVoices().map(v => v.name).join(', ')}">Voix : ${Sound.voices ? 'oui' : 'non'}</button>`;
+  }
+
   // back : écran à rouvrir en fermant l'aide (le briefing) ; sinon la pause, ou le jeu.
   showHelp(back) {
     this.showOverlay(`<h1>Comment jouer</h1>
       <p>Vous contrôlez un seul opérateur en temps réel. Les ennemis ne sont visibles que dans votre champ de vision ; les portes fermées bloquent la vue dans les deux sens.</p>
       <p><b>Déplacement</b> : <kbd>ZQSD</kbd> / <kbd>WASD</kbd> / flèches. <kbd>A</kbd> (ou <kbd>Maj</kbd>) bascule entre course et marche : en marchant on est lent mais précis.<br>
       <b>Précision</b> : le viseur montre la zone réelle où les balles peuvent tomber. Elle grandit avec la distance, en courant, et à chaque tir (recul) ; au-delà de la portée efficace de l'arme elle s'ouvre encore. Tirez par courtes rafales et laissez le viseur se resserrer.<br>
-      <b>Menu d'actions</b> : inutile de retenir toutes les touches. Un <b>clic molette</b> ouvre, à côté du curseur, ce que vous pouvez faire de ce qu'il désigne. Sur <b>vous</b> : recharger, changer d'arme ou de grenade, marche ou course, laser, lampe, sommation, ce qui est à portée de main (otage, suspect à menotter, arme au sol, charge à faire sauter), les ordres de suivi à l'équipe et la minimap. Sur une <b>porte</b> : l'ouvrir en grand, l'entrouvrir, l'entrebâiller ou la fermer, la crocheter, y glisser la fibre, y poser une charge, y mettre l'équipe en colonne ou la faire entrer à la flash. Au <b>sol</b> : y envoyer l'équipe, y lancer une grenade. Un clic (gauche ou molette) choisit une ligne ; on peut aussi maintenir la molette, glisser jusqu'à la ligne et relâcher. Un clic ailleurs, ou le clic droit, ferme le menu. Ce qui est impossible pour l'instant est grisé, avec la raison (trop loin, mains occupées...). Le jeu ne s'arrête pas pendant ce temps : vous gardez votre visée, mais vous ne tirez pas. Chaque ligne rappelle son raccourci clavier, qui reste valable.<br>
-      <b>Tir</b> : clic gauche (maintenu pour les armes automatiques). <kbd>R</kbd> recharge, <kbd>Alt</kbd> (ou <kbd>1</kbd>/<kbd>2</kbd>) change d'arme.<br>
+      <b>Menu contextuel (E)</b> : <kbd>E</kbd> ouvre, à côté de ce qui est à portée de main, ce que vous pouvez en faire, la ligne la plus simple déjà choisie : <kbd>E</kbd> à nouveau la valide, la <b>molette</b> en choisit une autre, et « Annuler », tout en haut, le referme ; toute autre touche ne fait que le fermer (un clic ne tire pas, un clic droit ne donne pas d'ordre). Votre colonne en place passe avant tout, même de loin, avec la fibre si vous êtes devant sa porte ; les armes au sol à portée ont chacune leur ligne (« Ramasser »). Près d'une <b>porte</b> : l'ouvrir en grand (ou la fermer), l'entrouvrir, l'entrebâiller, la crocheter, y glisser la fibre, y poser une charge, y mettre l'équipe en colonne. Votre <b>colonne en place</b> : entrer (le plus proche ouvre), poser une charge, entrer à la flash, entrer à la grenade ; la charge posée, de nouveau entrer, à la flash ou à la grenade, mais c'est elle qui ouvre la porte. Près d'un <b>coéquipier</b> : ses ordres à lui seul (le rappeler, le faire tenir, en escorte le charger du VIP). Ce qui est impossible pour l'instant est grisé, avec la raison. Le jeu ne s'arrête pas, la visée suit le curseur, et le menu se ferme quand vous vous éloignez.<br>
+      <b>Double clic droit</b> : le même menu, pour l'endroit cliqué : y lancer une flash ou une grenade vous-même, la faire lancer par le coéquipier qui a une trajectoire libre jusque-là, ou y envoyer l'équipe. La molette choisit, <kbd>E</kbd> valide. (Un clic droit simple donne son ordre un tiers de seconde plus tard, le temps de savoir s'il est double.)<br>
+      <b>Tir</b> : clic gauche (maintenu pour les armes automatiques). <kbd>R</kbd> ou le <kbd>clic molette</kbd> recharge, <kbd>Alt</kbd> (ou <kbd>1</kbd>/<kbd>2</kbd>) change d'arme.<br>
       <b>Gestes</b> : manœuvrer une porte ou lancer une grenade occupe les deux mains. Le geste dure un instant (l'anneau du viseur montre où il en est), pendant lequel on ne tire pas et on avance au ralenti, et la visée reste perturbée juste après : ne le faites pas nez à nez avec un suspect. Les coéquipiers et les suspects sont soumis aux mêmes délais.<br>
-      <b>Portes</b> : <kbd>E</kbd> ouvre en grand la porte la plus proche, ou la ferme si elle est ouverte. La molette agit par crans : fermée, entrebâillée, entrouverte, ouverte ; vers le bas, l'inverse. Une porte qui n'est pas grande ouverte ne laisse ni passer ni voir autrement que par l'entrebâillement : le battant arrête le regard, et vous ne découvrez qu'un mince cône de la pièce (le vôtre comme celui des ennemis s'élargit avec le cran). Entrebâiller est silencieux et plus rapide qu'ouvrir en grand, puisque le battant a moins de chemin à faire ; comptez un second geste pour entrer. On ne peut pas fermer une porte si quelqu'un se trouve dans l'embrasure.<br>
-      <b>Portes verrouillées</b> : en assaut, certaines portes sont fermées à clé. <kbd>E</kbd> (ou la molette) sur l'une d'elles lance le crochetage : quatre secondes, presque sans bruit, arme basse ; la porte est alors déverrouillée et c'est à vous de l'ouvrir comme vous voulez. Une serrure rouge marque celles qu'on a essayées. Plus vite : la chevrotine dans la serrure, ou une charge. Les suspects, eux, ont les clés.<br>
-      <b>Charge de brèche</b> : deux par mission. <kbd>B</kbd> devant une porte fermée pose une charge sur le battant, de votre côté ; <kbd>B</kbd> à nouveau la fait sauter, où que vous soyez. La porte vole en éclats (elle ne se referme plus) ; derrière, tout ce qui se tient près de l'embrasure est sonné quelques secondes, et blessé tout contre — un otage aussi : regardez d'abord à la fibre. De votre côté, écartez-vous. Si quelqu'un ouvre la porte avant, la charge tombe.<br>
-      <b>Fibre optique</b> : devant une porte fermée ou entrouverte, maintenez <kbd>F</kbd> pour glisser une fibre sous le battant : vous découvrez un large cône de la pièce voisine, suspects compris, sans ouvrir ni faire de bruit. La mise en place demande un geste ; tant que vous observez, vous ne tirez pas et vous ne pouvez pas bouger — le moindre pas retire la fibre. Glissée depuis le menu d'actions, elle reste en place sans tenir la touche : un pas, un clic ou <kbd>F</kbd> la retire.<br>
+      <b>Portes</b> : <kbd>E</kbd>, <kbd>E</kbd> ouvre en grand la porte la plus proche, ou la ferme si elle est ouverte ; dans le menu de <kbd>E</kbd>, la molette choisit un autre cran : entrebâillée, entrouverte. Une porte qui n'est pas grande ouverte ne laisse ni passer ni voir autrement que par l'entrebâillement : le battant arrête le regard, et vous ne découvrez qu'un mince cône de la pièce (le vôtre comme celui des ennemis s'élargit avec le cran). Entrebâiller est silencieux et plus rapide qu'ouvrir en grand, puisque le battant a moins de chemin à faire ; comptez un second geste pour entrer. On ne peut pas fermer une porte si quelqu'un se trouve dans l'embrasure.<br>
+      <b>Portes verrouillées</b> : en assaut, certaines portes sont fermées à clé. <kbd>E</kbd>, <kbd>E</kbd> sur l'une d'elles lance le crochetage : quatre secondes, presque sans bruit, arme basse ; la porte est alors déverrouillée et c'est à vous de l'ouvrir comme vous voulez. Une serrure rouge marque celles qu'on a essayées. Plus vite : la chevrotine dans la serrure, ou une charge. Les suspects, eux, ont les clés.<br>
+      <b>Charge de brèche</b> : deux par mission. <kbd>B</kbd> devant une porte fermée pose une charge sur le battant, de votre côté ; <kbd>B</kbd> à nouveau la fait sauter, où que vous soyez (ou <kbd>E</kbd>, <kbd>E</kbd> : tant qu'elle est posée, le menu de <kbd>E</kbd> s'ouvre sur sa mise à feu). La porte vole en éclats (elle ne se referme plus) ; derrière, tout ce qui se tient près de l'embrasure est sonné quelques secondes, et blessé tout contre — un otage aussi : regardez d'abord à la fibre. De votre côté, écartez-vous. Si quelqu'un ouvre la porte avant, la charge tombe.<br>
+      <b>Fibre optique</b> : devant une porte fermée ou entrouverte, maintenez <kbd>F</kbd> pour glisser une fibre sous le battant : vous découvrez un large cône de la pièce voisine, suspects compris, sans ouvrir ni faire de bruit. La mise en place demande un geste ; tant que vous observez, vous ne tirez pas et vous ne pouvez pas bouger — le moindre pas retire la fibre. Glissée depuis le menu de <kbd>E</kbd>, elle reste en place sans tenir la touche : un pas, un clic ou <kbd>F</kbd> la retire.<br>
       <b>Flash</b> : <kbd>Espace</kbd> (ou <kbd>G</kbd>) lance une grenade aveuglante vers le curseur : la distance au curseur règle la force du lancer. Elle vole par-dessus le mobilier (tables, plantes, caisses...), retombe, puis roule et rebondit sur les murs, les meubles et les portes fermées, et explose au bout d'environ 1,7 s. Attention aux retours contre un mur proche. Collé à une porte entrouverte, visez l'embrasure pour glisser la grenade par l'entrebâillement ; de plus loin, elle rebondit sur le battant. Les ennemis aveuglés ne tirent plus pendant quelques secondes. Ne regardez pas l'explosion.<br>
-      <b>Grenades à emporter</b> : au briefing, l'intervention choisit son lot : trois flashs, deux flashs et une grenade à fragmentation, ou deux grenades à fragmentation. La fragmentation se lance pareil et éclate au bout de 2 s : elle tue dans un rayon de trois cases et demie, vous, les vôtres et les otages compris ; un mur ou une porte fermée arrête l'éclat. <kbd>N</kbd> passe d'une sorte à l'autre (le HUD montre celle en main, et ce qui reste de l'autre) ; la dernière d'une sorte lancée, l'autre passe en main. Bravo et Charlie gardent leurs flashs pour l'entrée à la flash, et une colonne n'entre pas tant que votre grenade n'a pas éclaté.<br>
+      <b>Grenades à emporter</b> : au briefing, l'intervention choisit son lot : trois flashs, deux flashs et une grenade à fragmentation, ou deux grenades à fragmentation. La fragmentation se lance pareil et éclate au bout de 2 s : elle tue dans un rayon de trois cases et demie, vous, les vôtres et les otages compris ; un mur ou une porte fermée arrête l'éclat. <kbd>N</kbd> passe d'une sorte à l'autre (le HUD montre celle en main, et ce qui reste de l'autre) ; la dernière d'une sorte lancée, l'autre passe en main. Bravo et Charlie ont chacun deux flashs et une grenade à fragmentation pour l'entrée à la grenade, et une colonne n'entre pas tant que votre grenade n'a pas éclaté.<br>
       <b>À travers les portes</b> : un battant n'est pas un abri. Les balles le traversent en perdant de l'énergie (un tiers pour du 7,62, les quatre cinquièmes pour de la chevrotine) et en déviant un peu. Vous pouvez arroser une porte fermée — et un suspect peut faire de même. Les murs, eux, arrêtent tout.<br>
       <b>Balles</b> : elles partent à leur vitesse réelle (de 260 à 900 m/s) et traversent une pièce en une image : qui tire juste le premier touche le premier. Celle qui manque sa cible continue sa course jusqu'au premier obstacle, par une porte ouverte jusque dans la pièce voisine : pensez à ce qu'il y a derrière. La chevrotine part en gerbe serrée : à quelques mètres, toute la charge arrive où vous visez.<br>
       <b>Relais et armes au sol</b> : si vous tombez, vous reprenez la main dans le coéquipier debout le plus proche ; la mission n'est perdue que quand toute l'équipe est à terre. Près d'un corps, <kbd>V</kbd> ramasse son arme et laisse au sol la vôtre de même catégorie (vous pouvez la reprendre).<br>
+      <b>Couvert bas</b> : sacs de sable, murets et voitures garées arrêtent le pas, pas le regard, mais ils arrêtent aussi les balles : collé derrière, on est à l'abri d'un tir venu de l'autre côté (la plupart des balles et des éclats s'y arrêtent) ; appuyé dessus, on tire par-dessus.<br>
+      <b>Son et voix</b> : chaque son vient de son côté, faiblit avec la distance et s'étouffe derrière les murs ; on entend les pas de course selon le sol, chaque temps d'un rechargement, les impacts. Les voix (« Contact ! », « Je me rends ! ») passent par la synthèse vocale du navigateur, avec une voix d'homme naturelle en français (Microsoft Edge en a) ; sans elle, elles se taisent plutôt que de sonner comme un robot. Le bouton « Voix » de la pause les coupe. Touché, un arc rouge autour de vous montre d'où vient le coup.<br>
       <b>Bruit</b> : coups de feu, portes, impacts, grenades, cris et pas de course s'entendent à une certaine distance, qui fond à travers les murs et les portes fermées (le son contourne les angles par les portes ouvertes). Marcher (<kbd>A</kbd>) est silencieux ; courir s'entend à deux ou trois cases. Un suspect qui entend quelque chose se tourne vers le bruit et s'inquiète ; un bruit fort (tir, cri, explosion) ou des bruits qui se répètent le font venir voir — deux au plus à la fois, les autres guettent de ce côté —, puis il regagne son poste. Un « ? » au-dessus de lui le signale. Celui qui vous repère crie l'alerte, celui qui découvre le corps d'un des siens aussi.<br>
-      <b>Rondes et alerte générale</b> : en assaut, deux suspects ne tiennent pas un poste mais font une ronde, au pas, entre deux ou trois points, avec une pause à chacun : observez avant d'entrer. Un suspect qui vous a vu et reste debout trois secondes prévient tout le bâtiment (un « ! » rouge, dont l'anneau se remplit, le signale) : tous les autres réagissent alors plus vite et les plus proches viennent voir. Abattez-le, arrêtez-le ou aveuglez-le avant (sonné, le temps ne compte pas). L'alerte générale coûte cinq points à la note de fin. Autour de vous, des arcs montrent la direction et la force de ce que vous entendez hors de vue : rouge pour un tir, jaune pour une porte, gris pour des pas ou une grenade qui rebondit, orange pour un cri, blanc pour une explosion. Après chacun de vos propres bruits, un halo montre jusqu'où il a porté.<br>
+      <b>Rondes et alerte générale</b> : en assaut, deux suspects ne tiennent pas un poste mais font une ronde, au pas, entre deux ou trois points, avec une pause à chacun : observez avant d'entrer. Un suspect qui vous a vu et reste debout trois secondes prévient tout le bâtiment (un « ! » rouge, dont l'anneau se remplit, le signale) : tous les autres réagissent alors plus vite et les plus proches viennent voir ; le plus proche de chaque otage le tient en joue et l'abat s'il vous voit trois secondes et demie (un trait rouge et un anneau autour de l'otage) — aveuglez-le, sommez-le ou tirez juste —, et d'autres se barricadent, portes fermées à clé. Une ronde referme derrière elle les portes qu'elle ouvre ; un suspect blessé ou seul contre plusieurs peut se replier hors de vue. Abattez-le, arrêtez-le ou aveuglez-le avant (sonné, le temps ne compte pas). L'alerte générale coûte cinq points à la note de fin. Autour de vous, des arcs montrent la direction et la force de ce que vous entendez hors de vue : rouge pour un tir, jaune pour une porte, gris pour des pas ou une grenade qui rebondit, orange pour un cri, blanc pour une explosion. Après chacun de vos propres bruits, un halo montre jusqu'où il a porté.<br>
       <b>Sommation et arrestation</b> : <kbd>C</kbd> crie « Police ! À terre ! ». Chaque suspect que vous voyez à portée de voix peut se rendre : il lâche son arme et se met à genoux, mains sur la tête. Il cède plus facilement aveuglé par une flash, blessé, pris de dos ou tenu en joue par plusieurs d'entre vous ; bien moins en plein échange de tirs ou avec un complice à côté. Approchez-vous et <kbd>H</kbd> le menotte. Un suspect rendu que plus personne ne surveille finit par reprendre son arme. Il compte comme neutralisé une fois menotté. Le cri s'entend : les autres viennent voir. Abattre un suspect rendu coûte cher dans la note de fin.<br>
       <b>Note de fin</b> : chaque mission est notée sur 100, de S à D : otages en vie et évacués, suspects arrêtés plutôt qu'abattus, équipe indemne ; un suspect abattu après sa reddition, une balle dans un coéquipier ou l'alerte générale retirent des points. Votre meilleure note par mission est gardée.<br>
       <b>Courant coupé et lampe</b> : au briefing, vous pouvez couper le courant avant d'entrer. Dans le noir, on ne voit qu'à quatre cases, vous comme les suspects, sauf ce qu'éclaire une lampe, et un tireur sans silencieux se trahit un instant par sa flamme. La <b>lampe</b> (accessoire, sur toute arme à rail) éclaire un cône loin devant vous et éblouit un suspect pris en face de près, mais dans le noir elle se voit de loin. <kbd>X</kbd> l'éteint ou la rallume ; Bravo et Charlie, équipés d'une lampe quand le courant est coupé, font comme vous.<br>
@@ -1049,7 +1157,7 @@ class UI {
       <b>Bouclier</b> : à choisir au briefing à la place de l'arme principale. Tenu au bras gauche, il ne laisse que l'arme de poing, tirée d'une main par-dessus le bord, donc moins précise (un laser compense en partie), avec deux chargeurs de plus. De face, il arrête les balles de son niveau : le léger (NIJ IIIA) celles d'arme de poing, de pistolet mitrailleur et la chevrotine, mais pas celles d'un fusil (une balle d'AK le traverse) ; le lourd (NIJ III) arrête tout, mais il ralentit nettement et sa lucarne rétrécit le champ de vision. De flanc et de dos, on est à découvert. Bouclier au bras, on ne ramasse qu'une arme de poing.<br>
       <b>Minimap</b> : en haut à droite, le plan de ce que vous avez exploré, avec les portes, les fenêtres, le mobilier, votre équipe, les otages connus et les adversaires visibles. En siège, la pièce où une vague d'assaut vient d'entrer y clignote en rouge quelques secondes. <kbd>M</kbd> la replie.<br>
       <b>Otages</b> : ne tirez pas dessus, y compris à travers une porte. Un otage n'est sauvé qu'une fois sorti du bâtiment : près de lui, <kbd>H</kbd> le relève et il vous suit, en file s'ils sont plusieurs ; <kbd>H</kbd> à nouveau, il attend à genoux. Il n'ouvre pas les portes lui-même (laissez-les au moins entrouvertes derrière vous) et se jette à terre quand on tire près de lui. Amenez-le devant une porte extérieure ouverte ou une fenêtre : il sort, et il est évacué. Pendant l'escorte, les sorties battent en vert sur la minimap. Les faire sortir n'est pas exigé, mais un otage dehors ne risque plus rien : la mission est accomplie dès que tous les suspects sont neutralisés, et perdue si un otage meurt.<br>
-      <b>Équipe</b> : Bravo et Charlie vous suivent en formation et couvrent vos flancs et vos arrières. <kbd>T</kbd> leur fait tenir la position (ou reprendre le suivi), le clic droit les envoie sur un point (ils ouvrent les portes sur ce trajet), et un clic droit sur vous-même les rappelle en suivi. Un clic droit sur une <b>porte fermée</b> les met en colonne de part et d'autre de l'embrasure, de votre côté : dès que la porte s'ouvre (vous l'ouvrez, la charge la souffle, la chevrotine fait sauter la serrure), ils entrent chacun vers son angle de la pièce ; si une flash est dégoupillée ou en vol, ils attendent qu'elle éclate. Un <b>second clic droit</b> sur la même porte : entrée à la flash — celui qui a l'angle entrouvre, glisse une flash dans la pièce, puis ouvre en grand à l'éclair, et ils entrent (deux flashs chacun, comptées dans le HUD de l'équipe). En <b>maintenant</b> le clic droit puis en tirant vers une direction, vous ajoutez une consigne de couverture : celui des deux qui se place de ce côté gardera cet angle au lieu de choisir lui-même son point d'intérêt (jusqu'à l'ordre suivant ; un contact reste prioritaire). Ils tirent sur tout suspect visible, mais jamais à travers vous ou un otage : quand l'axe reste bouché, ils se décalent pour dégager l'angle (le HUD indique « Axe bouché »). Un ordre de déplacement reste prioritaire sur un contact : ils rompent et progressent en gardant le suspect en joue. Attention, vos propres balles peuvent les blesser.<br>
+      <b>Équipe</b> : Bravo et Charlie vous suivent en formation et couvrent vos flancs et vos arrières. Sans contact, ils menottent d'eux-mêmes un suspect rendu, et somment avant de tirer un suspect sonné ou qui ne les a pas vus ; en escorte, le dernier couvre le VIP. <kbd>T</kbd> leur fait tenir la position (ou reprendre le suivi), le clic droit les envoie sur un point (ils ouvrent les portes sur ce trajet), et un clic droit sur vous-même les rappelle en suivi. Un clic droit sur une <b>porte fermée</b> les met en colonne de part et d'autre de l'embrasure, de votre côté : dès que la porte s'ouvre (vous l'ouvrez, la charge la souffle, la chevrotine fait sauter la serrure), ils entrent chacun vers son angle de la pièce ; si une flash est dégoupillée ou en vol, ils attendent qu'elle éclate. Un <b>second clic droit</b> sur la même porte : ils entrent, porte simplement ouverte. L'entrée à la flash passe par le menu de <kbd>E</kbd> — celui qui a l'angle entrouvre, glisse une flash dans la pièce, puis ouvre en grand à l'éclair, et ils entrent (deux flashs chacun, comptées dans le HUD de l'équipe). En <b>maintenant</b> le clic droit puis en tirant vers une direction, vous ajoutez une consigne de couverture : celui des deux qui se place de ce côté gardera cet angle au lieu de choisir lui-même son point d'intérêt (jusqu'à l'ordre suivant ; un contact reste prioritaire). Ils tirent sur tout suspect visible, mais jamais à travers vous ou un otage : quand l'axe reste bouché, ils se décalent pour dégager l'angle (le HUD indique « Axe bouché »). Un ordre de déplacement reste prioritaire sur un contact : ils rompent et progressent en gardant le suspect en joue. Attention, vos propres balles peuvent les blesser.<br>
       <kbd>Échap</kbd> pause.</p>
       <p><b>Mode siège</b> : vous incarnez le chef du groupe armé. L'équipe d'intervention entre par l'entrée
       de la carte après un court temps de préparation, progresse secteur par secteur et converge sur le moindre coup
@@ -1073,9 +1181,12 @@ class UI {
       habituels) ; le second trinôme de votre camp entre par l'ouverture la plus proche et progresse seul, et les deux
       d'en face entrent par les plus éloignées. Chaque trinôme autonome ratisse le bâtiment pièce par pièce (les deux d'en face
       se le partagent), converge sur ce qu'il voit ou entend en gardant le cap sur le plus proche, fouille là où il n'a
-      rien trouvé, partage ses contacts et reste groupé ; ceux de l'intervention se mettent de temps en temps en
-      colonne sur une porte et entrent porte ouverte, à la flash ou à la charge, ceux du groupe armé lancent leur grenade
-      à fragmentation là où ils vous savent. Ni otage ni sommation. Si vous tombez, vous reprenez la main dans un
+      rien trouvé, partage ses contacts (avec les autres trinômes de son camp aussi, et le vôtre lui apprend ce que vous
+      voyez) et reste groupé ; ils se mettent de temps en temps en colonne sur une porte et entrent porte ouverte, à la
+      flash ou à la charge pour l'intervention, à la grenade à fragmentation pour le groupe armé, qui la lance aussi là où il
+      vous sait. Réduit à deux contre plus nombreux, un trinôme décroche hors de vue et tient l'angle ; un bruit tout proche,
+      il peut l'attendre en embuscade. Chacun est équipé selon son rang (le chef de file au silencieux) et n'allume son
+      laser qu'au contact. Le fil des morts, en haut à gauche, dit qui a abattu qui. Ni otage ni sommation. Si vous tombez, vous reprenez la main dans un
       coéquipier, puis, quand votre trinôme n'est plus, dans un homme de l'autre. Le premier camp entièrement hors de
       combat a perdu.</p>
       <p><b>Guerre totale</b> : sur des champs de bataille en plein air, deux armées de trois trinômes, l'intervention contre
@@ -1088,34 +1199,36 @@ class UI {
       à égalité personne. Le champ de bataille est connu d'avance : la minimap le montre en entier, mais l'adversaire ne se
       voit que dans le champ de vision de votre armée.</p>
       <p><b>Mode stratégie</b> : la même bataille, sur les mêmes champs de bataille, mais vous n'y incarnez personne : vue de
-      haut, vous commandez les trois trinômes de votre armée, chacun sa couleur et son numéro. Au départ, ils attendent vos
-      ordres à la base. Le <kbd>clic gauche</kbd> sur l'un de vos hommes choisit son trinôme (glissé : tous ceux du rectangle ;
+      haut, vous commandez les trois groupes de votre armée, chacun sa couleur et son numéro. Au briefing, chacun se choisit
+      parmi trois sortes, en mode normal ou silencieux (un silencieux sur chaque arme qui en prend un) : <b>assaut</b>, quatre
+      hommes aux armes courtes, menés dans l'intervention par un bouclier lourd ; <b>standard</b>, trois fusils d'assaut ;
+      <b>précision</b>, un binôme dont l'un porte une lunette : arrêté, il voit et tire bien plus loin. Au départ, ils attendent
+      vos ordres à la base. Le <kbd>clic gauche</kbd> sur l'un de vos hommes choisit son groupe (glissé : tous ceux du rectangle ;
       <kbd>Maj</kbd> : en plus), de même que <kbd>1</kbd>, <kbd>2</kbd>, <kbd>3</kbd> (deux fois de suite, la vue y va) et
       <kbd>A</kbd> (toute l'armée). Le <kbd>clic droit</kbd> les envoie : en file derrière leur chef, au pas, sans bruit, ils
       tirent sur ce qu'ils voient en route et tiennent le point d'arrivée, en ligne, face à leur direction de marche ou à
       celle que vous tracez en maintenant le clic. Avec <kbd>Maj</kbd>, le point s'ajoute à la suite du déplacement en cours.
-      Sur un adversaire en vue, ils l'attaquent et le poursuivent ; sur une porte fermée, l'intervention se met en colonne et
-      entre (à la flash ou à la charge si elle en a encore ; <kbd>G</kbd> ou <kbd>B</kbd> sur la porte imposent l'une ou
-      l'autre), le groupe armé la franchit. <kbd>H</kbd> : tenir là où ils sont ; <kbd>R</kbd> : plus d'ordre, le trinôme
-      ratisse seul son couloir comme en guerre totale ; <kbd>C</kbd> : au pas de course (on les entend) ou au pas ;
-      <kbd>G</kbd> ailleurs : une grenade vers le curseur, lancée par celui qui a une trajectoire libre. Sous vos ordres,
-      un trinôme ne lance de grenade que sur votre ordre ; à l'assaut, ou laissé à ratisser seul, il en lance de lui-même
-      là où il a vu ou entendu l'adversaire. <kbd>Espace</kbd>
-      arrête le temps (pause tactique) sans empêcher de donner des ordres. Le <kbd>clic molette</kbd> ouvre là aussi un menu
-      d'actions : sur l'un de vos hommes, ce que vous pouvez ordonner à son trinôme seul (le choisir ou l'ajouter au choix,
-      tenir, ratisser seul, courir, centrer la vue) ; sur un adversaire (l'attaquer, une grenade), sur une porte fermée (en
-      colonne puis entrée, à la flash, à la charge ; la franchir pour le groupe armé) ou au sol (y aller, ensuite, une
-      grenade, toute l'armée, pause tactique, minimap), ce que feront les trinômes choisis, nommés en titre. Il marche
-      aussi en pause tactique, et la vue ne glisse pas par les bords tant qu'il est ouvert. La vue se déplace avec <kbd>ZQSD</kbd>, les flèches ou
+      Sur un adversaire en vue, ils l'attaquent et le poursuivent ; sur une porte fermée, le groupe le plus proche se met
+      en colonne, et une fois en place des boutons apparaissent sur la porte : entrer, poser une charge, entrer à la flash,
+      entrer à la grenade (le groupe armé n'a que l'entrée simple et la grenade). La charge posée, les boutons reviennent :
+      entrer, à la flash ou à la grenade, mais c'est la charge qui ouvre la porte. <kbd>G</kbd>, <kbd>N</kbd> ou
+      <kbd>B</kbd> sur la porte imposent la flash, la grenade ou la charge. La <b>barre latérale</b>, à droite, montre vos
+      groupes (un clic les choisit) et donne vos ordres en boutons, chacun avec sa touche : <kbd>H</kbd> tenir là où ils
+      sont ; <kbd>R</kbd> plus d'ordre, le groupe ratisse seul son couloir comme en guerre totale ; <kbd>C</kbd> au pas de
+      course (on les entend) ou au pas ; <kbd>G</kbd> une grenade aveuglante, <kbd>N</kbd> une grenade explosive (une par
+      homme dans l'intervention) : le bouton attend un clic sur le terrain, la touche lance vers le curseur, par celui qui a
+      une trajectoire libre. Sous vos ordres, un groupe ne lance de grenade que sur votre ordre ; à l'assaut, ou laissé à
+      ratisser seul, il lance ses flashs de lui-même là où il a vu ou entendu l'adversaire. <kbd>Espace</kbd>
+      arrête le temps (pause tactique) sans empêcher de donner des ordres. La vue se déplace avec <kbd>ZQSD</kbd>, les flèches ou
       les bords de l'écran, la molette zoome (de toute la carte jusqu'au cadrage du jeu à pied), <kbd>F</kbd> la centre sur les
-      trinômes choisis, et un clic sur la minimap l'y emmène (un clic droit y envoie les trinômes). Un trinôme anéanti revient
+      groupes choisis, et un clic sur la minimap l'y emmène (un clic droit y envoie les groupes). Un groupe anéanti revient
       de la base ${WAR_RESPAWN} secondes plus tard sous le même numéro, et attend vos ordres.</p>
       <p><b>Stratégie : assaut</b> : les mêmes commandes et les mêmes champs de bataille, mais en face, pas d'armée : un
-      groupe armé ${DEFENSE_RATIO} fois plus nombreux que vos neuf hommes, retranché sur tout le terrain hors des abords de votre
+      groupe armé ${DEFENSE_RATIO} fois plus nombreux qu'une armée de neuf hommes, retranché sur tout le terrain hors des abords de votre
       base, surtout dans les bâtiments. Comme les suspects de l'assaut, chacun tient son poste (quelques-uns font des rondes),
-      vient voir ce qu'il entend, et celui qui vous voit sans être abattu donne l'alerte générale. Vous commandez trois trinômes
+      vient voir ce qu'il entend, et celui qui vous voit sans être abattu donne l'alerte générale. Vous commandez trois groupes
       d'intervention ; sans ordre (<kbd>R</kbd>), ils se partagent le ratissage du terrain. Ni renforts ni limite de temps :
-      la mission est accomplie quand tout le groupe armé est neutralisé, et échoue quand vos trois trinômes sont anéantis.</p>
+      la mission est accomplie quand tout le groupe armé est neutralisé, et échoue quand vos trois groupes sont anéantis.</p>
       <p><b>Pour commencer</b> : choisissez le mode, puis la carte (chaque mode a les siennes), puis l'équipement au briefing.
       Le fil en haut du briefing ramène au choix du mode ou de la carte ; en pause et en fin de partie, « Cartes » et
       « Modes » aussi.</p>

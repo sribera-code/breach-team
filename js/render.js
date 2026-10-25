@@ -18,9 +18,12 @@ const VIEW_HALF = 7 * U, LOOK_AHEAD = 0.4, LOOK_MAX = 0.5;
 // STRAT_ZOOM_STEP, de toute la carte jusqu'au cadrage du jeu à pied ; les touches et les bords de l'écran (souris
 // verrouillée, à STRAT_EDGE px) font glisser la vue à STRAT_PAN px d'écran par seconde.
 const STRAT_VIEW = 30 * U, STRAT_ZOOM_STEP = 1.15, STRAT_PAN = 900, STRAT_EDGE = 14;
-// Menu d'actions (clic molette) : hauteur d'une ligne, du titre, marge intérieure et trait de séparation, en px CSS ;
-// bandes du HUD en haut et en bas de l'écran, que le menu évite (il passe au-dessus du curseur plutôt que dessous).
-const MENU_ROW = 22, MENU_HEAD = 22, MENU_PAD = 6, MENU_SEP = 7, MENU_TOP = 46, MENU_BOTTOM = 110;
+// Stratégie : la barre latérale est une bande à part, à droite, de STRAT_PANEL px CSS (la largeur de #stratPanel) : le
+// terrain s'arrête à son bord (viewW), comme dans un jeu de stratégie en temps réel.
+const STRAT_PANEL = 300;
+// Menus contextuels (E à pied, boutons des portes en stratégie) : hauteur d'une ligne, du titre, marge intérieure, en px
+// CSS ; bandes du HUD en haut et en bas de l'écran, que le menu évite.
+const MENU_ROW = 22, MENU_HEAD = 22, MENU_PAD = 6, MENU_TOP = 46, MENU_BOTTOM = 110;
 // Teinte des sols sur les plans réduits, dans l'ordre de FLOOR (js/map.js).
 const MINI_FLOORS = ['#2f3742', '#3a3327', '#2d3a3d', '#3d2a30', '#403d37', '#343b42', '#2c3d26', '#46413a', '#3e3b35', '#26292e'];
 // Rendu canvas : calque statique (sols, murs, mobilier), décalques, entités, brouillard, HUD canvas.
@@ -58,12 +61,13 @@ class Renderer {
   }
 
   // À pied : à la largeur, sans montrer moins de VIEW_HALF en hauteur (ni descendre sous 1,1 dans une toute petite
-  // fenêtre). En stratégie, ce cadrage est le zoom le plus fort ; le plus faible montre toute la carte ; reset : la vue
+  // fenêtre), recul de la vue d'une lunette de précision compris (scopeK, voir updateCamera). En stratégie, ce cadrage
+  // est le zoom le plus fort ; le plus faible montre toute la carte ; reset : la vue
   // de départ (STRAT_VIEW en hauteur), sinon le zoom choisi, gardé dans ces bornes.
   fitZoom(reset) {
-    const W = this.canvas.width / this.dpr, H = this.canvas.height / this.dpr, g = this.game;
+    const W = this.viewW() / this.dpr, H = this.canvas.height / this.dpr, g = this.game;
     const foot = this.dpr * Math.max(1.1, Math.min(1.9 * clamp(W / 1280, 0.75, 1.3), H / (2 * VIEW_HALF)));
-    if (!g.strat || !g.map) { this.zoom = foot; return; }
+    if (!g.strat || !g.map) { this.footZoom = foot; this.zoom = foot * (this.scopeK || 1); return; }
     this.zoomMax = foot;
     this.zoomMin = Math.min(foot, this.dpr * 0.95 * Math.min(W / (g.map.w * TILE), H / (g.map.h * TILE)));
     this.zoom = clamp(reset || !this.stratZoomed ? this.dpr * H / STRAT_VIEW : this.zoom, this.zoomMin, this.zoomMax);
@@ -96,13 +100,19 @@ class Renderer {
     this.scopeAim = null;
     this.cam.x = this.game.player.x; this.cam.y = this.game.player.y;
     if (this.game.strat) this.clampCam();
-    this.tx = this.canvas.width / 2 - this.cam.x * this.zoom;
+    this.tx = this.viewW() / 2 - this.cam.x * this.zoom;
     this.ty = this.canvas.height / 2 - this.cam.y * this.zoom;
+  }
+
+  // Largeur du terrain à l'écran, en px du canvas : tout l'écran à pied, sans la barre latérale en stratégie.
+  viewW() {
+    if (!this.game.strat) return this.canvas.width;
+    return Math.max(1, this.canvas.width - (this.panelW || STRAT_PANEL) * this.dpr);
   }
 
   // Stratégie : la vue ne sort guère de la carte (deux cases de marge), et la centre si elle la montre tout entière.
   clampCam() {
-    const m = this.game.map, hw = this.canvas.width / 2 / this.zoom, hh = this.canvas.height / 2 / this.zoom;
+    const m = this.game.map, hw = this.viewW() / 2 / this.zoom, hh = this.canvas.height / 2 / this.zoom;
     const fit = (c, half, size) => (size + 4 * U > 2 * half ? clamp(c, half - 2 * U, size - half + 2 * U) : size / 2);
     this.cam.x = fit(this.cam.x, hw, m.w * TILE);
     this.cam.y = fit(this.cam.y, hh, m.h * TILE);
@@ -145,8 +155,11 @@ class Renderer {
       ctx.fillStyle = 'rgba(111,207,122,0.6)';
       for (const c of m.goal.cells) ctx.fillRect(c.x * s, c.y * s, s, s);
     }
-    ctx.fillStyle = 'rgba(170,180,190,0.3)'; // mobilier : il arrête les pas, pas le regard
-    for (const i of m.propAt.keys()) ctx.fillRect((i % m.w) * s, Math.floor(i / m.w) * s, s, s);
+    // mobilier : il arrête les pas, pas le regard ; le couvert bas (qui arrête aussi les balles) se voit plus franc
+    for (const [i, p] of m.propAt) {
+      ctx.fillStyle = LOW_COVER[p.type] ? 'rgba(214,196,150,0.55)' : 'rgba(170,180,190,0.3)';
+      ctx.fillRect((i % m.w) * s, Math.floor(i / m.w) * s, s, s);
+    }
     ctx.fillStyle = '#7fd7ff';
     for (const w of m.windows) for (const c of w.cells) ctx.fillRect(c.x * s, c.y * s, s, s);
     if (doors) {
@@ -240,7 +253,7 @@ class Renderer {
   // Stratégie : la vue est libre. Molette : zoom vers le curseur (le point dessous ne bouge pas) ; ZQSD, flèches et bords
   // de l'écran : elle glisse ; elle rejoint le point demandé par le jeu (strat.camTo : minimap, F, numéro tapé deux fois).
   stratCamera(dt) {
-    const g = this.game, S = g.strat, k = g.input.keys, d = this.dpr, W = this.canvas.width, H = this.canvas.height;
+    const g = this.game, S = g.strat, k = g.input.keys, d = this.dpr, W = this.viewW(), H = this.canvas.height;
     if (S.zoom) {
       const at = this.toWorld(this.mouse.sx, this.mouse.sy);
       this.zoom = clamp(this.zoom * Math.pow(STRAT_ZOOM_STEP, S.zoom), this.zoomMin, this.zoomMax);
@@ -250,11 +263,14 @@ class Renderer {
     }
     let vx = (k.KeyD || k.ArrowRight ? 1 : 0) - (k.KeyA || k.ArrowLeft ? 1 : 0);
     let vy = (k.KeyS || k.ArrowDown ? 1 : 0) - (k.KeyW || k.ArrowUp ? 1 : 0);
-    // (menu d'actions ouvert : le curseur qui va vers une ligne au bord de l'écran ne fait pas glisser la vue)
-    if (this.locked && !this.overMinimap() && !g.menu) {
+    // (le curseur sur la barre latérale ne fait glisser la vue que tout contre le bord droit de l'écran)
+    if (this.locked && !this.overMinimap()) {
       const e = STRAT_EDGE * d, x = this.mouse.sx * d, y = this.mouse.sy * d;
-      if (x <= e) vx = -1; else if (x >= W - e - 1) vx = 1;
-      if (y <= e) vy = -1; else if (y >= H - e - 1) vy = 1;
+      if (x >= W) { if (x >= this.canvas.width - 3 * d) vx = 1; }
+      else {
+        if (x <= e) vx = -1; else if (x >= W - e - 1) vx = 1;
+        if (y <= e) vy = -1; else if (y >= H - e - 1) vy = 1;
+      }
     }
     if (vx || vy) {
       S.camTo = null;
@@ -276,23 +292,27 @@ class Renderer {
     const g = this.game, p = g.player;
     if (!isFinite(this.cam.x) || !isFinite(this.cam.y)) { this.cam.x = p.x; this.cam.y = p.y; }
     if (g.strat) { this.stratCamera(dt); return; }
-    const k = 1 - Math.pow(0.001, dt);
-    if (g.scoped(p)) {
-      // Lunette à l'œil : le point visé reste où il est, et la vue glisse vers lui (à mi-chemin du tireur, SCOPE.lead,
-      // jusqu'à SCOPE.look de la demi-largeur de l'écran) ; le viseur se déplace à l'écran avec le décor, sans
+    const k = 1 - Math.pow(0.001, dt), o = scopeOf(p.weapon), scoped = g.scoped(p);
+    // une lunette de précision à l'œil fait reculer la vue (o.view), en douceur, pour montrer ce qu'elle voit
+    const view = scoped ? o.view : 1;
+    this.scopeK = lerp(this.scopeK || 1, view, 1 - Math.pow(0.02, dt));
+    if (Math.abs(this.scopeK - view) < 0.002) this.scopeK = view;
+    if (this.footZoom) this.zoom = this.footZoom * this.scopeK;
+    if (scoped) {
+      // Lunette à l'œil : le point visé reste où il est, et la vue glisse vers lui (à mi-chemin du tireur, o.lead,
+      // jusqu'à o.look de la demi-largeur de l'écran) ; le viseur se déplace à l'écran avec le décor, sans
       // jamais quitter son point. Il garde ainsi de la marge pour viser plus loin, même pris au bord de l'écran.
       const a = this.scopeAim || (this.scopeAim = this.toWorld(this.mouse.sx, this.mouse.sy));
       const hw = this.canvas.width / 2 / this.zoom, hh = this.canvas.height / 2 / this.zoom;
-      const lx = p.x + clamp((a.x - p.x) * SCOPE.lead, -hw * SCOPE.look, hw * SCOPE.look);
-      const ly = p.y + clamp((a.y - p.y) * SCOPE.lead, -hh * SCOPE.look, hh * SCOPE.look);
+      const lx = p.x + clamp((a.x - p.x) * o.lead, -hw * o.look, hw * o.look);
+      const ly = p.y + clamp((a.y - p.y) * o.lead, -hh * o.look, hh * o.look);
       this.cam.x = lerp(this.cam.x, lx, k); this.cam.y = lerp(this.cam.y, ly, k);
       const m = 2 * this.dpr / this.zoom; // le point visé ne sort pas de l'écran
       a.x = clamp(a.x, this.cam.x - hw + m, this.cam.x + hw - m); a.y = clamp(a.y, this.cam.y - hh + m, this.cam.y + hh - m);
     } else {
       this.scopeAim = null;
-      // la vue regarde où l'on vise : de quoi voir venir un tireur jusqu'à sa portée de tir (menu d'actions ouvert, là
-      // où on l'a ouvert : le curseur qui va vers le menu ne déplace pas la vue)
-      const m = g.menu ? { x: g.menu.x, y: g.menu.y } : this.toWorld(this.mouse.sx, this.mouse.sy);
+      // la vue regarde où l'on vise : de quoi voir venir un tireur jusqu'à sa portée de tir
+      const m = this.toWorld(this.mouse.sx, this.mouse.sy);
       const r = Math.min(this.canvas.width, this.canvas.height) / 2 / this.zoom * LOOK_MAX;
       const lx = p.x + clamp((m.x - p.x) * LOOK_AHEAD, -r, r), ly = p.y + clamp((m.y - p.y) * LOOK_AHEAD, -r, r);
       this.cam.x = lerp(this.cam.x, lx, k); this.cam.y = lerp(this.cam.y, ly, k);
@@ -390,23 +410,23 @@ class Renderer {
     if (g.dark) this.drawGlimpsed();
     this.drawFlashes();
     if (g.strat) this.drawStratOrders();
-    const menu = g.menu && !g.over ? g.menu : null;
-    if (menu) this.drawMenuTarget(menu);
+    // menus contextuels : celui de E à pied, les boutons des portes où une colonne attend vos ordres en stratégie
+    const menus = g.over ? [] : g.strat ? [...(g.strat.menus || []), ...(g.strat.zone ? [g.strat.zone] : [])] : g.menu ? [g.menu] : [];
+    for (const mn of menus) this.drawMenuTarget(mn);
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    if (g.strat) this.drawStratScreen();
+    if (g.strat) { this.drawStratScreen(); this.drawStratPanel(); }
     else {
       this.drawVignette();
       this.drawBlind();
       this.drawHeard();
-      if (!menu) this.drawCrosshair();
+      this.drawHurt();
+      this.drawCrosshair();
     }
     if (g.minimap) this.drawMinimap();
-    if (g.strat && !menu) this.drawStratCursor();
-    if (menu) {
-      this.drawMenu(menu);
-      this.drawArrow(this.mouse.sx * this.dpr, this.mouse.sy * this.dpr, '#ffffff');
-    }
+    this.menuRects = [];
+    for (const mn of menus) this.drawMenu(mn, !g.strat || mn.kind === 'zone');
+    if (g.strat) this.drawStratCursor();
     if (!still) for (const a of [...g.ops, ...g.enemies]) if (a.muzzleT > 0) a.muzzleT -= dt;
   }
 
@@ -534,19 +554,41 @@ class Renderer {
     }
     if (S.frozen) {
       ctx.strokeStyle = 'rgba(100,181,246,0.55)'; ctx.lineWidth = 6 * d;
-      ctx.strokeRect(3 * d, 3 * d, this.canvas.width - 6 * d, this.canvas.height - 6 * d);
+      ctx.strokeRect(3 * d, 3 * d, this.viewW() - 6 * d, this.canvas.height - 6 * d);
     }
     ctx.restore();
   }
 
   // Le curseur du commandant : une flèche ; un réticule rouge sur un adversaire (attaquer), un cadre ambre sur une porte
-  // fermée (colonne ou passage), dès qu'un trinôme est choisi.
+  // fermée (colonne ou passage), dès qu'un trinôme est choisi ; une grenade à lancer (bouton de la barre latérale) : un
+  // repère au sol, avec le rayon mortel d'une grenade à fragmentation. Sur la barre latérale ou un bouton : la flèche.
+  // Le fond de la barre latérale, une bande pleine à droite du terrain : les blocs de #stratPanel s'y posent, la minimap
+  // s'y dessine ensuite.
+  drawStratPanel() {
+    const ctx = this.ctx, x = this.viewW(), H = this.canvas.height;
+    ctx.fillStyle = '#0d1014'; ctx.fillRect(x, 0, this.canvas.width - x, H);
+    ctx.fillStyle = 'rgba(160,175,190,0.28)'; ctx.fillRect(x, 0, this.dpr, H);
+  }
+
   drawStratCursor() {
     const g = this.game, S = g.strat, ctx = this.ctx, d = this.dpr, h = S.hover, sel = S.sel.size > 0;
-    const x = this.mouse.sx * d, y = this.mouse.sy * d;
+    const x = this.mouse.sx * d, y = this.mouse.sy * d, plain = this.overUi || this.menuItemAt();
     ctx.save();
     ctx.lineJoin = 'round'; ctx.lineCap = 'round';
-    if (sel && h && h.kind === 'foe') {
+    if (S.nadeAim && !plain && !this.overMinimap()) {
+      const frag = S.nadeAim === 'frag', col = frag ? '#ff8a65' : '#ffe082', r = frag ? FRAG_RADIUS * this.zoom : 12 * d;
+      ctx.setLineDash(frag ? [6 * d, 5 * d] : []);
+      for (const [w, c] of [[4, 'rgba(0,0,0,0.55)'], [2, col]]) {
+        ctx.strokeStyle = c; ctx.lineWidth = w * d;
+        ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.stroke();
+      }
+      ctx.setLineDash([]);
+      ctx.fillStyle = col; ctx.beginPath(); ctx.arc(x, y, 3 * d, 0, TAU); ctx.fill();
+      ctx.font = `600 ${Math.round(11 * d)}px "Segoe UI", system-ui, sans-serif`; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+      ctx.lineWidth = 3 * d; ctx.strokeStyle = 'rgba(0,0,0,0.75)';
+      const t = frag ? 'Grenade explosive' : 'Grenade aveuglante';
+      ctx.strokeText(t, x + 10 * d, y - 12 * d); ctx.fillText(t, x + 10 * d, y - 12 * d);
+    } else if (!plain && sel && h && h.kind === 'foe') {
       const r = 9 * d;
       for (const [w, c] of [[4.5, 'rgba(0,0,0,0.6)'], [2.2, '#ef5350']]) {
         ctx.strokeStyle = c; ctx.lineWidth = w * d;
@@ -556,7 +598,7 @@ class Renderer {
         ctx.stroke();
       }
     } else {
-      const col = sel && h && h.kind === 'door' ? '#ffb347' : '#ffffff';
+      const col = !plain && sel && h && h.kind === 'door' ? '#ffb347' : '#ffffff';
       this.drawArrow(x, y, col);
       if (col !== '#ffffff') { // porte : un petit battant à côté de la flèche
         ctx.fillStyle = col; ctx.fillRect(x + 14 * d, y + 4 * d, 3 * d, 12 * d);
@@ -567,7 +609,7 @@ class Renderer {
     ctx.restore();
   }
 
-  // Flèche de pointeur, la pointe en (x, y) (px de l'écran) : en stratégie, et sur le menu d'actions.
+  // Flèche de pointeur, la pointe en (x, y) (px de l'écran) : le curseur de la stratégie.
   drawArrow(x, y, col) {
     const ctx = this.ctx, d = this.dpr;
     ctx.save();
@@ -581,38 +623,40 @@ class Renderer {
     ctx.restore();
   }
 
-  // ---- Menu d'actions (clic molette, voir Game.openMenu) ----
-  // Ce que le menu désigne, dans le monde : un anneau autour de vous (de chaque homme du trinôme, de l'adversaire, en
-  // rouge), le cadre de la porte, ou un repère au sol. Traits et repères gardent une taille lisible vue de haut.
+  // ---- Menus contextuels (E à pied, voir Game.openMenu ; boutons des portes en stratégie, Game.stratDoorMenus) ----
+  // Ce que le menu désigne, dans le monde : le cadre de la porte, ou un anneau autour du coéquipier. Traits et repères
+  // gardent une taille lisible vue de haut.
   drawMenuTarget(mn) {
-    const ctx = this.ctx, g = this.game, p = g.player, s = this.dpr / this.zoom; // (px du monde par px CSS)
-    const ring = (x, y, r) => { ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.stroke(); };
+    const ctx = this.ctx, g = this.game, s = this.dpr / this.zoom; // (px du monde par px CSS)
     ctx.save();
-    ctx.strokeStyle = mn.kind === 'foe' ? '#ef5350' : '#ffb347';
+    ctx.strokeStyle = '#ffb347';
     ctx.lineWidth = Math.max(1.5, 2 * s); ctx.globalAlpha = 0.75 + 0.2 * Math.sin(g.time * 7);
-    if (mn.kind === 'self' || mn.kind === 'unit' || mn.kind === 'foe') {
+    if (mn.kind === 'zone') {
+      // le point visé, et, la grenade choisie, ce qu'elle couvre
+      const at = mn.at, it = mn.items.find(o => o.id === mn.sel), frag = it && /frag$/.test(it.id);
       ctx.setLineDash([4 * Math.max(1, s), 3 * Math.max(1, s)]);
-      const who = mn.kind === 'self' ? [p] : mn.kind === 'foe' ? [mn.foe] : mn.group.members.filter(m => m.alive && m.group === mn.group);
-      for (const a of who) ring(a.x, a.y, Math.max(a.radius + 6, 9 * s));
-    } else if (mn.kind === 'door') {
+      ctx.beginPath(); ctx.arc(at.x, at.y, Math.max(8, 7 * s), 0, TAU); ctx.stroke();
+      if (frag) { ctx.globalAlpha *= 0.6; ctx.strokeStyle = '#ff8a65'; ctx.beginPath(); ctx.arc(at.x, at.y, FRAG_RADIUS, 0, TAU); ctx.stroke(); }
+    } else if (mn.kind === 'mate' || mn.kind === 'drop') {
+      const a = mn.kind === 'mate' ? mn.mate : mn.body;
+      ctx.setLineDash([4 * Math.max(1, s), 3 * Math.max(1, s)]);
+      ctx.beginPath(); ctx.arc(a.x, a.y, Math.max(a.radius + 6, 9 * s), 0, TAU); ctx.stroke();
+    } else {
       const d = mn.door, half = (d.len * TILE) / 2 + 2, t = TILE / 2 + 2;
       if (d.horizontal) ctx.strokeRect(d.cx - half, d.cy - t, 2 * half, 2 * t);
       else ctx.strokeRect(d.cx - t, d.cy - half, 2 * t, 2 * half);
-    } else {
-      const r = Math.max(7, 8 * s), c = 0.45 * r;
-      ring(mn.x, mn.y, r);
-      ctx.beginPath(); ctx.moveTo(mn.x - c, mn.y); ctx.lineTo(mn.x + c, mn.y); ctx.moveTo(mn.x, mn.y - c); ctx.lineTo(mn.x, mn.y + c); ctx.stroke();
     }
     ctx.restore();
   }
 
-  // Le menu s'ouvre à droite et sous le curseur (à gauche, au-dessus quand la place manque) et n'en bouge plus ;
-  // menuRects garde la place de chaque ligne, en px CSS, pour menuItemAt. Une ligne impossible est grisée, sa raison à
-  // la place du raccourci.
-  drawMenu(mn) {
-    const ctx = this.ctx, d = this.dpr, W = this.canvas.width / d, H = this.canvas.height / d;
-    if (this.menuFor !== mn) { this.menuFor = mn; this.menuAt = { x: this.mouse.sx, y: this.mouse.sy }; }
+  // Le menu se tient à côté de ce qu'il désigne (à droite, à gauche quand la place manque, sans couvrir la barre
+  // latérale de la stratégie) et le suit quand la vue bouge. La ligne en surbrillance : celle que E validera (mn.sel, à
+  // pied), ou celle sous le curseur (stratégie). Une ligne impossible est grisée, sa raison à la place du raccourci ;
+  // hint : la manière de s'en servir, en pied. menuRects reçoit la place de chaque ligne, en px CSS (menuItemAt).
+  drawMenu(mn, hint) {
+    const ctx = this.ctx, d = this.dpr, W = this.viewW() / d, H = this.canvas.height / d;
     const font = (wt, px, it) => `${it ? 'italic ' : ''}${wt} ${Math.round(px * d)}px "Segoe UI", system-ui, sans-serif`;
+    const foot = hint ? 'Molette : choisir · E : valider' : '';
     ctx.save();
     ctx.textBaseline = 'middle';
     ctx.font = font(700, 10.5);
@@ -621,36 +665,39 @@ class Renderer {
     for (const it of mn.items) wl = Math.max(wl, ctx.measureText(it.label).width / d);
     for (const it of mn.items) {
       ctx.font = it.off ? font(400, 11, true) : font(600, 10.5);
-      wk = Math.max(wk, ctx.measureText(it.off || it.key).width / d + (it.off ? 0 : 10));
+      const t = it.off || it.key;
+      if (t) wk = Math.max(wk, ctx.measureText(t).width / d + (it.off ? 0 : 10));
     }
-    const w = Math.max(190, 2 * MENU_PAD + 8 + wl + 24 + wk);
-    const h = MENU_HEAD + mn.items.reduce((t, it) => t + MENU_ROW + (it.sep ? MENU_SEP : 0), 0) + MENU_PAD;
-    const a = this.menuAt;
-    let x = a.x + 12, y = a.y + 4;
-    if (x + w > W - 6) x = a.x - 12 - w;
-    if (y + h > H - MENU_BOTTOM) y = a.y - 4 - h;
-    x = clamp(x, 6, Math.max(6, W - 6 - w)); y = clamp(y, MENU_TOP, Math.max(MENU_TOP, H - 6 - h));
-    // les lignes d'abord : la surbrillance suit le curseur dès cette image
-    let yy = y + MENU_HEAD;
-    const seps = [];
-    this.menuRects = mn.items.map(it => {
-      if (it.sep) { seps.push(yy + MENU_SEP / 2); yy += MENU_SEP; }
-      const r = { x: x + 3, y: yy, w: w - 6, h: MENU_ROW };
-      yy += MENU_ROW;
-      return r;
-    });
-    const hi = this.menuItemAt();
+    ctx.font = font(400, 10.5);
+    const wf = foot ? ctx.measureText(foot).width / d + 2 * MENU_PAD + 8 : 0;
+    const w = Math.max(170, wf, 2 * MENU_PAD + 8 + wl + 24 + wk);
+    const h = MENU_HEAD + mn.items.length * MENU_ROW + MENU_PAD + (foot ? MENU_ROW - 4 : 0);
+    const t = mn.kind === 'zone' ? mn.at : mn.kind === 'mate' ? mn.mate : mn.kind === 'drop' ? mn.body : { x: mn.door.cx, y: mn.door.cy };
+    const ax = (t.x * this.zoom + this.tx) / d, ay = (t.y * this.zoom + this.ty) / d, off = Math.max(18, 1.6 * TILE * this.zoom / d);
+    let x = ax + off, y = ay - MENU_HEAD - MENU_ROW / 2;
+    if (x + w > W - 6) x = ax - off - w;
+    x = clamp(x, 6, Math.max(6, W - 6 - w)); y = clamp(y, MENU_TOP, Math.max(MENU_TOP, H - MENU_BOTTOM - h));
+    const rects = mn.items.map((it, i) => ({ x: x + 3, y: y + MENU_HEAD + i * MENU_ROW, w: w - 6, h: MENU_ROW, mn, i }));
+    this.menuRects.push(...rects);
+    const mx = this.mouse.sx, my = this.mouse.sy;
+    const hi = hint ? mn.items.findIndex(it => it.id === mn.sel) : rects.findIndex(r => mx >= r.x && mx <= r.x + r.w && my >= r.y && my < r.y + r.h);
     ctx.fillStyle = 'rgba(11,14,18,0.94)'; ctx.strokeStyle = 'rgba(255,179,71,0.45)'; ctx.lineWidth = d;
     roundRect(ctx, x * d, y * d, w * d, h * d, 6 * d); ctx.fill(); ctx.stroke();
     ctx.font = font(700, 10.5); ctx.fillStyle = '#ffb347'; ctx.textAlign = 'left';
     ctx.fillText(mn.title.toUpperCase(), (x + MENU_PAD + 4) * d, (y + MENU_HEAD / 2 + 1) * d);
-    ctx.strokeStyle = 'rgba(255,255,255,0.09)';
-    for (const sy of seps) { ctx.beginPath(); ctx.moveTo((x + 8) * d, sy * d); ctx.lineTo((x + w - 8) * d, sy * d); ctx.stroke(); }
     mn.items.forEach((it, i) => {
-      const r = this.menuRects[i], cy = (r.y + r.h / 2) * d;
+      const r = rects[i], cy = (r.y + r.h / 2) * d;
+      if (it.sep) {
+        // intertitre d'une section (la porte à portée, les armes au sol), avec un filet au-dessus
+        ctx.fillStyle = 'rgba(255,255,255,0.08)'; ctx.fillRect((r.x + 2) * d, (r.y + 2) * d, (r.w - 4) * d, d);
+        ctx.textAlign = 'left'; ctx.font = font(700, 9.5); ctx.fillStyle = '#8e99a6';
+        ctx.fillText(it.label.toUpperCase(), (x + MENU_PAD + 4) * d, cy + 2 * d);
+        return;
+      }
       if (i === hi) {
-        ctx.fillStyle = it.off ? 'rgba(255,255,255,0.05)' : 'rgba(255,179,71,0.18)';
+        ctx.fillStyle = it.off ? 'rgba(255,255,255,0.05)' : 'rgba(255,179,71,0.2)';
         roundRect(ctx, r.x * d, r.y * d, r.w * d, r.h * d, 4 * d); ctx.fill();
+        if (hint && !it.off) { ctx.fillStyle = '#ffb347'; ctx.fillRect(r.x * d, (r.y + 4) * d, 2.5 * d, (r.h - 8) * d); }
       }
       ctx.textAlign = 'left';
       ctx.font = font(600, 12.5); ctx.fillStyle = it.off ? '#6f7985' : '#e8ecf0';
@@ -658,6 +705,7 @@ class Renderer {
       const right = (r.x + r.w - 6) * d;
       ctx.textAlign = 'right';
       if (it.off) { ctx.font = font(400, 11, true); ctx.fillStyle = '#7d8792'; ctx.fillText(it.off, right, cy); return; }
+      if (!it.key) return;
       // le raccourci, dans une petite touche
       ctx.font = font(600, 10.5);
       const tw = ctx.measureText(it.key).width;
@@ -665,15 +713,20 @@ class Renderer {
       roundRect(ctx, right - tw - 10 * d, cy - 8 * d, tw + 10 * d, 16 * d, 3 * d); ctx.fill(); ctx.stroke();
       ctx.fillStyle = '#aab3be'; ctx.fillText(it.key, right - 5 * d, cy + 0.5 * d);
     });
+    if (foot) {
+      ctx.textAlign = 'left'; ctx.font = font(400, 10.5); ctx.fillStyle = '#8e99a6';
+      ctx.fillText(foot, (x + MENU_PAD + 4) * d, (y + h - MENU_PAD - (MENU_ROW - 4) / 2) * d);
+    }
     ctx.restore();
   }
 
-  // Ligne du menu d'actions sous le curseur (main.js la passe au jeu dans input.mouse.item), ou -1.
+  // Stratégie : le bouton d'une porte sous le curseur, { door, id } (main.js le passe au jeu dans input.mouse.item), ou
+  // null. À pied, le menu ne se clique pas (E et la molette).
   menuItemAt() {
-    const g = this.game, rs = this.menuRects;
-    if (!g.menu || this.menuFor !== g.menu || !rs) return -1;
+    if (!this.game.strat || !this.menuRects) return null;
     const x = this.mouse.sx, y = this.mouse.sy;
-    return rs.findIndex(r => x >= r.x && x <= r.x + r.w && y >= r.y && y < r.y + r.h);
+    const r = this.menuRects.find(q => x >= q.x && x <= q.x + q.w && y >= q.y && y < q.y + q.h);
+    return r ? { door: r.mn.door, id: r.mn.items[r.i].id, zone: r.mn.kind === 'zone' } : null;
   }
 
   drawDoors() {
@@ -809,7 +862,7 @@ class Renderer {
   }
 
   enemyStyle(e) {
-    if (e.style) return { ...e.style, ...gunStyle(e.weapon), ...actStyle(e) }; // opérateurs du mode siège
+    if (e.style) return { ...e.style, ...gunStyle(e.weapon), ...shieldStyle(e), ...actStyle(e) }; // opérateurs du mode siège
     const l = e.look;
     return { body: l.jacket, shoulder: l.jacket, vest: null, pack: null, sleeve: l.jacket, skin: l.skin, hair: l.head === 'mask' ? '#1c1c20' : l.hair, head: l.head, pants: l.pants, band: l.head === 'hair' ? '#b33a2b' : null, ...gunStyle(e.weapon), ...actStyle(e) };
   }
@@ -907,6 +960,21 @@ class Renderer {
       const ctx = this.ctx;
       ctx.strokeStyle = 'rgba(255,240,120,0.9)'; ctx.lineWidth = 1.5;
       for (let i = 0; i < 3; i++) { const a = this.game.time * 5 + i * TAU / 3; ctx.beginPath(); ctx.arc(e.x + Math.cos(a) * 12, e.y + Math.sin(a) * 12 - 6, 1.8, 0, TAU); ctx.stroke(); }
+    }
+    // il tient un otage en joue et vous a vu : un trait rouge vers l'otage, et autour de lui l'anneau qui se remplit
+    // jusqu'au coup de feu (THREAT_TIME)
+    const gd = e.guard;
+    if (gd && gd.t > 0 && gd.h.alive) {
+      const ctx = this.ctx, h = gd.h, k = clamp(gd.t / THREAT_TIME, 0, 1), pulse = 0.6 + 0.4 * Math.sin(g.time * 12);
+      ctx.save();
+      ctx.setLineDash([3, 3]); ctx.lineWidth = 1.2; ctx.strokeStyle = `rgba(239,83,80,${0.7 * pulse})`;
+      ctx.beginPath(); ctx.moveTo(e.x, e.y); ctx.lineTo(h.x, h.y); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+      ctx.beginPath(); ctx.arc(h.x, h.y, 13, 0, TAU); ctx.stroke();
+      ctx.lineWidth = 2.2; ctx.strokeStyle = '#ef5350';
+      ctx.beginPath(); ctx.arc(h.x, h.y, 13, -Math.PI / 2, -Math.PI / 2 + k * TAU); ctx.stroke();
+      ctx.restore();
     }
   }
 
@@ -1054,7 +1122,7 @@ class Renderer {
   viewRect() {
     const z = this.zoom, W = this.fogC.width, H = this.fogC.height;
     const x0 = clamp(Math.floor(-this.tx / z) - 4, 0, W), y0 = clamp(Math.floor(-this.ty / z) - 4, 0, H);
-    const x1 = clamp(Math.ceil((this.canvas.width - this.tx) / z) + 4, x0 + 1, W), y1 = clamp(Math.ceil((this.canvas.height - this.ty) / z) + 4, y0 + 1, H);
+    const x1 = clamp(Math.ceil((this.viewW() - this.tx) / z) + 4, x0 + 1, W), y1 = clamp(Math.ceil((this.canvas.height - this.ty) / z) + 4, y0 + 1, H);
     return { x: x0, y: y0, w: Math.max(1, x1 - x0), h: Math.max(1, y1 - y0) };
   }
 
@@ -1146,6 +1214,40 @@ class Renderer {
     ctx.restore();
   }
 
+  // Coups reçus (game.hurt, voir Game.hurtFrom) : un arc rouge autour de vous, du côté d'où le coup est venu, plus épais
+  // et plus large qu'il a fait mal, une pointe vers le tireur et une lueur rouge au bord de l'écran ; un coup que le
+  // bouclier a arrêté, en ambre, sans lueur.
+  drawHurt() {
+    const g = this.game, p = g.player;
+    if (!p.alive || !g.hurt.length) return;
+    const ctx = this.ctx, d = this.dpr, W = this.canvas.width, H = this.canvas.height;
+    const px = p.x * this.zoom + this.tx, py = p.y * this.zoom + this.ty, R = 38 * this.zoom;
+    ctx.save();
+    ctx.lineCap = 'round';
+    for (const h of g.hurt) {
+      const a = Math.pow(1 - h.t / HURT_LIFE, 1.5) * (0.45 + 0.55 * h.k), col = h.blocked ? '255,190,90' : '255,59,48';
+      const half = (16 + 14 * h.k) * DEG, cs = Math.cos(h.a), sn = Math.sin(h.a);
+      if (!h.blocked) {
+        const ex = W / 2 + cs * W * 0.5, ey = H / 2 + sn * H * 0.5;
+        const gr = ctx.createRadialGradient(ex, ey, 0, ex, ey, Math.min(W, H) * 0.45);
+        gr.addColorStop(0, `rgba(200,0,0,${0.32 * a * h.k})`); gr.addColorStop(1, 'rgba(200,0,0,0)');
+        ctx.fillStyle = gr; ctx.fillRect(0, 0, W, H);
+      }
+      ctx.strokeStyle = `rgba(0,0,0,${a * 0.5})`; ctx.lineWidth = (6 + 8 * h.k) * d;
+      ctx.beginPath(); ctx.arc(px, py, R, h.a - half, h.a + half); ctx.stroke();
+      ctx.strokeStyle = `rgba(${col},${a})`; ctx.lineWidth = (3 + 6 * h.k) * d;
+      ctx.beginPath(); ctx.arc(px, py, R, h.a - half, h.a + half); ctx.stroke();
+      const r0 = R + (5 + 4 * h.k) * d, r1 = r0 + (10 + 6 * h.k) * d, w = (5 + 3 * h.k) * d;
+      ctx.fillStyle = `rgba(${col},${a})`;
+      ctx.beginPath();
+      ctx.moveTo(px + cs * r1, py + sn * r1);
+      ctx.lineTo(px + cs * r0 - sn * w, py + sn * r0 + cs * w);
+      ctx.lineTo(px + cs * r0 + sn * w, py + sn * r0 - cs * w);
+      ctx.closePath(); ctx.fill();
+    }
+    ctx.restore();
+  }
+
   drawVignette() {
     const ctx = this.ctx, W = this.canvas.width, H = this.canvas.height;
     const g = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.35, W / 2, H / 2, Math.max(W, H) * 0.7);
@@ -1222,11 +1324,13 @@ class Renderer {
         for (const mt of grp.members) if (mt.alive && mt.group === grp) { t.beginPath(); t.arc(mt.x / TILE * s, mt.y / TILE * s, 3.5, 0, TAU); t.stroke(); }
       });
     }
-    // cadre à l'écran, en haut à droite
-    const scale = clamp(this.canvas.width * 0.22 / this.miniTmpC.width, 0.4, 1.6);
+    // cadre à l'écran, en haut à droite, sous la barre du haut du HUD pour ne pas croiser le chrono ; en stratégie, dans
+    // la place que lui garde la barre latérale (miniSlot, en px CSS, posé par main.js)
+    const sl = g.strat && this.miniSlot, dp = this.dpr;
+    const scale = sl ? Math.min(sl.w * dp / this.miniTmpC.width, sl.h * dp / this.miniTmpC.height)
+      : clamp(this.canvas.width * 0.22 / this.miniTmpC.width, 0.4, 1.6);
     const w = this.miniTmpC.width * scale, h = this.miniTmpC.height * scale;
-    // sous la barre du haut du HUD, pour ne pas croiser le chrono
-    const pad = 10 * this.dpr, x0 = this.canvas.width - w - pad, y0 = 40 * this.dpr;
+    const pad = 10 * dp, x0 = sl ? (sl.x + sl.w / 2) * dp - w / 2 : this.canvas.width - w - pad, y0 = sl ? sl.y * dp : 40 * dp;
     this.miniRect = { x: x0, y: y0, w, h }; // (stratégie : un clic dessus y emmène la vue)
     ctx.save();
     ctx.globalAlpha = 0.9;

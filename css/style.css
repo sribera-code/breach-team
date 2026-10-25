@@ -58,6 +58,14 @@ button.primary:hover { background: #38945d; }
 #waveBanner.alert { border-color: rgba(239,106,90,0.7); animation: wavePulse 0.5s ease-in-out 6 alternate; }
 #waveBanner.alert .wtitle { color: #ef6a5a; }
 @keyframes wavePulse { from { box-shadow: 0 0 0 rgba(239,106,90,0); } to { box-shadow: 0 0 28px rgba(239,106,90,0.55); } }
+/* trinômes et guerre totale : le fil des morts, en haut à gauche (qui, avec quoi, qui) */
+#killfeed { position: absolute; top: 44px; left: 16px; display: flex; flex-direction: column; align-items: flex-start; gap: 3px; }
+.kf { padding: 2px 8px; font-size: 12.5px; white-space: nowrap; background: rgba(5,7,9,0.62); border: 1px solid rgba(160,175,190,0.18); border-radius: 4px; transition: opacity 0.8s; }
+.kf b { font-weight: 700; letter-spacing: 0.5px; }
+.kf .kw { display: inline-block; margin: 0 6px; padding: 0 5px; font-size: 11px; color: #c9d1da; background: rgba(255,255,255,0.08); border-radius: 3px; }
+.kf.friendly .kw { color: #ffb347; }
+.kf.mine { border-color: rgba(255,210,122,0.55); }
+.kf.old { opacity: 0; }
 #message { flex: 1; text-align: center; font-size: 20px; font-weight: 700; color: #fff; text-shadow: 0 2px 6px #000; padding: 0 20px 6px; min-height: 30px; }
 #weaponBox { text-align: right; max-width: 420px; }
 #weaponName { color: #d7dbe0; font-weight: 600; }
@@ -68,31 +76,58 @@ button.primary:hover { background: #38945d; }
 #ammo.low b { color: #ff7043; }
 #reloadHint { font-size: 11px; color: #8e99a6; }
 #reloadHint b { color: #c9d1da; }
-/* stratégie : pas d'opérateur à vous, mais vos trois trinômes (à gauche) et les commandes (à droite) */
-#stratBox, #stratHint { display: none; }
+/* stratégie : pas d'opérateur à vous, mais une barre latérale à droite, une bande à part sur toute la hauteur (le terrain
+   s'arrête à son bord, voir Renderer.viewW ; sa largeur est STRAT_PANEL) : vos trois groupes, vos ordres en boutons, la
+   minimap (dessinée par le rendu sur le canvas, dans la place que lui garde #stratMini) et l'aide. Le fond de la bande
+   est peint par le rendu (drawStratPanel), sous la minimap ; la barre elle-même est donc transparente. */
+#stratPanel { display: none; position: absolute; top: 0; right: 0; bottom: 0; width: 300px; padding: 10px; flex-direction: column; gap: 6px; pointer-events: none; }
+#hud.strategy #stratPanel { display: flex; }
 #hud.strategy #hpBox, #hud.strategy #weaponBox { display: none; }
-#hud.strategy #stratBox, #hud.strategy #stratHint { display: block; }
-#stratBox { width: 470px; }
-#stratBox .label b { color: #64b5f6; letter-spacing: 2px; }
-.srow { display: grid; grid-template-columns: 18px 64px 96px minmax(0, 1fr) auto; align-items: center; gap: 8px; margin-top: 3px; padding: 3px 6px; font-size: 12px; border: 1px solid transparent; border-radius: 4px; }
-.srow.sel { border-color: rgba(255,255,255,0.45); background: rgba(255,255,255,0.07); }
-.srow.out { opacity: 0.5; }
-.skey { display: inline-block; width: 18px; height: 18px; border-radius: 3px; color: #0b0d10; font-weight: 800; text-align: center; line-height: 18px; }
-.sname { font-weight: 700; letter-spacing: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.smen { display: flex; gap: 3px; }
+#hud.strategy #hudTop, #hud.strategy #hudBottom { right: 300px; }
+#hud.strategy #waveBanner { left: calc((100% - 300px) / 2); }
+#stratArmy, #stratCmds, #stratHelp { pointer-events: auto; padding: 6px 10px 8px; background: rgba(8,10,13,0.88); border: 1px solid rgba(160,175,190,0.22); border-radius: 8px; }
+#stratPanel .label { margin: 4px 0 5px; }
+#stratPanel .label b { color: #64b5f6; letter-spacing: 1px; }
+#stratMini { flex: 1; min-height: 110px; max-height: 210px; }
+#stratPanel.nomini #stratMini { display: none; }
+#stratHelp { margin-top: auto; font-size: 11px; line-height: 1.5; color: #8e99a6; }
+#stratHelp b { color: #c9d1da; font-weight: 600; }
+.scard { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; grid-template-areas: 'key name order' 'men men men' 'kit kit kit'; gap: 3px 8px;
+  width: 100%; margin-top: 4px; padding: 5px 7px; text-align: left; font-size: 12px; background: rgba(255,255,255,0.03); border: 1px solid transparent; border-left: 3px solid var(--c); border-radius: 4px; cursor: none; }
+.scard.sel { border-color: rgba(255,255,255,0.5); border-left-color: var(--c); background: rgba(255,255,255,0.09); }
+.scard.out { opacity: 0.5; }
+.scard:hover, .scard.hover { background: rgba(255,255,255,0.12); }
+.skey { grid-area: key; display: inline-block; width: 18px; height: 18px; border-radius: 3px; background: var(--c); color: #0b0d10; font-weight: 800; text-align: center; line-height: 18px; }
+.sname { grid-area: name; color: var(--c); font-weight: 700; letter-spacing: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; align-self: center; }
+.sorder { grid-area: order; color: #d7dbe0; white-space: nowrap; align-self: center; font-size: 11.5px; }
+.smen { grid-area: men; display: flex; gap: 3px; }
 .smen i { flex: 1; height: 6px; background: rgba(0,0,0,0.5); border: 1px solid #3a4250; border-radius: 3px; overflow: hidden; }
 .smen i b { display: block; height: 100%; }
 .smen i.down { opacity: 0.35; }
-.sorder { color: #d7dbe0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.skit { color: #8e99a6; font-size: 11px; white-space: nowrap; }
-#stratHint { max-width: 520px; text-align: right; font-size: 11px; line-height: 1.55; color: #8e99a6; }
-#stratHint b { color: #c9d1da; font-weight: 600; }
+.skit { grid-area: kit; color: #8e99a6; font-size: 11px; white-space: nowrap; }
+.sgrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; }
+.scmd { display: flex; align-items: center; gap: 5px; min-width: 0; padding: 6px 7px; font-size: 12px; text-align: left; cursor: none; }
+.scmd.wide { grid-column: span 2; }
+.scmd span { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.scmd span b { color: #ffd27a; }
+.scmd kbd { font: 600 10px "Segoe UI", system-ui, sans-serif; color: #aab3be; padding: 1px 5px; border: 1px solid #46505d; border-radius: 3px; background: rgba(255,255,255,0.05); }
+.scmd svg { width: 20px; height: 14px; flex: none; }
+.scmd:hover, .scmd.hover { background: #2a323d; border-color: #5a6574; }
+.scmd.on { background: #2b4a66; border-color: #64b5f6; color: #fff; }
+.scmd.off { color: #6f7985; background: #161a20; }
+.scmd.off kbd { color: #5d6670; }
 /* briefing de la stratégie : votre armée, et les commandes à la place des fiches */
 .army { display: grid; gap: 8px; }
 .armyrow { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 10px; align-items: start; padding: 8px 10px; background: #11151a; border: 1px solid #2c3540; border-radius: 6px; }
-.armyrow .skey { margin-top: 1px; }
+.armyrow .skey { grid-area: auto; margin-top: 1px; } /* (pas l'aire key des cartes de la barre latérale) */
 .armyrow b { font-size: 14px; letter-spacing: 1px; }
 .armyrow small { display: block; color: #9aa4b1; font-size: 12px; line-height: 1.45; margin-top: 2px; }
+/* la sorte du groupe (effectif en chiffre) et son mode */
+.armypick { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin: 5px 0 2px; }
+.armypick i { flex: 0 0 6px; }
+.armybtn { padding: 3px 8px; font-size: 12px; }
+.armyrow .armybtn b { font-size: 11px; letter-spacing: 0; color: #8e99a6; }
+.armybtn.sel b { color: inherit; }
 .cmds { margin: 0; display: grid; grid-template-columns: auto minmax(0, 1fr); align-content: start; gap: 5px 12px; font-size: 12.5px; line-height: 1.4; overflow-y: auto; }
 .brief-specs-in .cmds { flex: 1; min-height: 0; }
 .cmds dt { color: #ffd27a; font-weight: 600; white-space: nowrap; }
@@ -143,6 +178,10 @@ button.primary:hover { background: #38945d; }
 .panel h2 { margin: 18px 0 8px; font-size: 13px; letter-spacing: 2px; text-transform: uppercase; color: #ffb347; }
 .wcat-name { font-size: 11px; letter-spacing: 1px; color: #8e99a6; margin: 5px 0 3px; }
 .wcards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+/* au briefing, le nom de chaque catégorie se tient à gauche de ses cartes : une ligne par catégorie, et tout tient sur un
+   écran */
+.loadout .wcat { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 0 8px; align-items: center; margin-top: 6px; }
+.loadout .wcat-name { margin: 0; line-height: 1.25; }
 .wcard { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 3px 6px 3px 3px; text-align: left; background: #11151a; }
 .wcard canvas { flex: none; }
 .wtxt { display: flex; flex-direction: column; min-width: 0; line-height: 1.2; }
@@ -243,6 +282,7 @@ button.primary:hover { background: #38945d; }
 @media (max-width: 720px) {
   .panel { min-width: 0; margin: 0 16px; }
   .wcards { grid-template-columns: 1fr; }
+  .loadout .wcat { grid-template-columns: minmax(0, 1fr); }
 }
 kbd { background: #2a323d; border-radius: 3px; padding: 1px 6px; font-family: Consolas, monospace; }
 

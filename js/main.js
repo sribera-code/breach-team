@@ -29,21 +29,37 @@
     unlockedAt = performance.now();
     game.setPaused(true);
   });
+  // Stratégie : la barre latérale. Souris verrouillée, ses clics arrivent au canvas : on donne l'ordre du bouton qui est
+  // sous le curseur dessiné (UI.panelHit), et le terrain n'en voit rien ; souris libre, le bouton reçoit le clic lui-même.
+  const panelCmd = (hit, e) => { if (e.button === 0 && hit && hit.cmd) game.stratCommand(hit.cmd); };
   canvas.addEventListener('mousedown', e => {
     Sound.init();
     lock();
+    if (e.button === 1) e.preventDefault();
+    if (game.strat && !renderer.overMinimap()) {
+      const hit = ui.panelHit(renderer.mouse.sx, renderer.mouse.sy);
+      if (hit) { panelCmd(hit, e); return; }
+    }
     if (e.button === 0) { inp.mouse.down = true; inp.pressed.Mouse0 = true; }
-    if (e.button === 1) { e.preventDefault(); inp.pressed.Mouse1 = true; inp.mouse.mdown = true; } // menu d'actions
+    if (e.button === 1) inp.pressed.Mouse1 = true; // recharger
     if (e.button === 2) { inp.pressed.Mouse2 = true; inp.mouse.rdown = true; }
   });
+  const panel = document.getElementById('stratPanel');
+  panel.addEventListener('mousedown', e => {
+    Sound.init();
+    e.preventDefault();
+    const b = e.target.closest('[data-cmd]');
+    panelCmd(b ? { cmd: b.dataset.cmd } : null, e);
+    lock();
+  });
+  panel.addEventListener('contextmenu', e => e.preventDefault());
   window.addEventListener('mouseup', e => {
     if (e.button === 0 && inp.mouse.down) { inp.mouse.down = false; inp.pressed.Mouse0Up = true; }
-    if (e.button === 1 && inp.mouse.mdown) { inp.mouse.mdown = false; inp.pressed.Mouse1Up = true; } // (glissé jusqu'à une ligne)
     if (e.button === 2 && inp.mouse.rdown) { inp.mouse.rdown = false; inp.pressed.Mouse2Up = true; }
   });
   canvas.addEventListener('contextmenu', e => e.preventDefault());
   canvas.addEventListener('wheel', e => { e.preventDefault(); inp.pressed[e.deltaY > 0 ? 'WheelDown' : 'WheelUp'] = true; }, { passive: false });
-  window.addEventListener('blur', () => { inp.keys = {}; inp.mouse.down = false; inp.mouse.rdown = false; inp.mouse.mdown = false; if (!game.over && !ui.isOpen()) game.setPaused(true); });
+  window.addEventListener('blur', () => { inp.keys = {}; inp.mouse.down = false; inp.mouse.rdown = false; if (!game.over && !ui.isOpen()) game.setPaused(true); });
 
   const NO_DEFAULT = ['Space', 'Tab', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'AltLeft', 'AltRight'];
   window.addEventListener('keydown', e => {
@@ -72,10 +88,18 @@
     // pixels du monde par pixel d'écran (tolérance d'un clic), et curseur sur la minimap (stratégie : la vue y va)
     inp.mouse.ppx = renderer.dpr / renderer.zoom;
     inp.mouse.mini = renderer.overMinimap();
-    inp.mouse.item = renderer.menuItemAt(); // ligne du menu d'actions sous le curseur
+    // stratégie : le curseur sur la barre latérale (le terrain ne le voit pas), sur un bouton posé sur une porte ; la
+    // place de la minimap dans la barre
+    renderer.overUi = !!(game.strat && !inp.mouse.mini && ui.panelHit(renderer.mouse.sx, renderer.mouse.sy));
+    inp.mouse.ui = renderer.overUi;
+    inp.mouse.item = renderer.menuItemAt();
+    if (game.strat) { renderer.miniSlot = ui.miniSlot(); renderer.panelW = ui.panelWidth(); }
+    // ce qu'on entend : depuis le joueur, ou en stratégie depuis le centre de la vue (voir Game.hearAt)
+    game.ear = game.strat ? { x: renderer.cam.x, y: renderer.cam.y } : null;
     game.update(dt);
     renderer.draw(dt);
     ui.update();
+    ui.hoverAt(game.strat && locked() ? renderer.mouse.sx : null, renderer.mouse.sy);
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);

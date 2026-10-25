@@ -14,8 +14,14 @@ const WINDOW_LEN = 3; // largeur d'une fenêtre, en petites cases
 const PROPS = {
   c: 'crate', B: 'barrel', T: 'table', p: 'plant', b: 'bed', k: 'desk',
   s: 'sofa', r: 'shelf', a: 'locker', R: 'server', P: 'pallet', C: 'counter',
-  t: 'tree', '~': 'pool', g: 'sandbag',
+  t: 'tree', '~': 'pool', g: 'sandbag', m: 'lowwall', V: 'car',
 };
+// Couvert bas (sacs de sable, muret, voiture) : comme tout meuble, il arrête le pas sans cacher la vue, et une grenade
+// lancée passe par-dessus ; mais il arrête les balles. Il protège qui se tient contre lui, à COVER_GUARD au plus, d'un tir
+// qui vient de plus loin que COVER_REACH de l'autre côté : on tire par-dessus celui contre lequel on s'appuie (voir
+// GameMap.coverShields). Matière de chacun : le son de l'impact (Sound.impact).
+const LOW_COVER = { sandbag: 'sand', lowwall: 'stone', car: 'metal' };
+const COVER_REACH = 1.2 * U, COVER_GUARD = 1.3 * U;
 // Guerre totale : bases des deux armées ('1' et '2'), là où chaque trinôme apparaît et réapparaît.
 const BASE_CHARS = ['1', '2'];
 // Meubles qui se posent dos au mur (et se prolongent d'une case à l'autre quand on les aligne).
@@ -209,9 +215,9 @@ class GameMap {
             // un meuble occupe un bloc 2×2 de petites cases
             const p = { x: sx, y: sy, cx: (sx + 1) * TILE, cy: (sy + 1) * TILE, type: PROPS[c], rot: 0, link: { l: false, r: false } };
             if (PROP_AGAINST_WALL.has(p.type)) this.fitProp(p, ch, x, y, wallish);
-            // bassin : la margelle ne court que là où l'eau s'arrête ; sacs de sable : le muret suit ses voisins
+            // bassin : la margelle ne court que là où l'eau s'arrête ; sacs de sable et muret suivent leurs voisins
             if (p.type === 'pool') p.edges = { n: ch(x, y - 1) !== c, s: ch(x, y + 1) !== c, w: ch(x - 1, y) !== c, e: ch(x + 1, y) !== c };
-            if (p.type === 'sandbag') p.nb = { n: ch(x, y - 1) === c, s: ch(x, y + 1) === c, w: ch(x - 1, y) === c, e: ch(x + 1, y) === c };
+            if (p.type === 'sandbag' || p.type === 'lowwall') p.nb = { n: ch(x, y - 1) === c, s: ch(x, y + 1) === c, w: ch(x - 1, y) === c, e: ch(x + 1, y) === c };
             this.props.push(p);
             for (const [dx, dy] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
               const px = sx + dx, py = sy + dy;
@@ -223,6 +229,29 @@ class GameMap {
 
     // (un portillon percé dans une haie n'est plus de la haie)
     for (const i of this.hedgeAt) if (this.tiles[i] !== 1) this.hedgeAt.delete(i);
+
+    // Voiture : un bloc de cases 'V' (deux de large, quatre de long) n'en fait qu'une. Chaque case garde le bloc (car :
+    // ses bornes en cases de carte, son centre en px), et la première (lead) la dessine tout entière.
+    const carAt = new Map(this.props.filter(p => p.type === 'car').map(p => [p.y / 2 * AW + p.x / 2, p]));
+    for (const [k, p] of carAt) {
+      if (p.car) continue;
+      const block = [], stack = [k];
+      p.car = {};
+      while (stack.length) {
+        const i = stack.pop(), q = carAt.get(i);
+        block.push(q);
+        q.car = p.car;
+        const x = i % AW, y = (i - x) / AW;
+        for (const n of [i - 1, i + 1, i - AW, i + AW]) {
+          if ((n === i - 1 && x === 0) || (n === i + 1 && x === AW - 1)) continue;
+          const o = carAt.get(n);
+          if (o && !o.car) { o.car = p.car; stack.push(n); }
+        }
+      }
+      const xs = block.map(q => q.x / 2), ys = block.map(q => q.y / 2);
+      const x0 = Math.min(...xs), y0 = Math.min(...ys), w = Math.max(...xs) - x0 + 1, h = Math.max(...ys) - y0 + 1;
+      Object.assign(p.car, { x0, y0, w, h, cx: (x0 + w / 2) * U, cy: (y0 + h / 2) * U, lead: block.find(q => q.x / 2 === x0 && q.y / 2 === y0) || p });
+    }
 
     // Cases collées à un obstacle : pénalisées par l'A* pour garder les trajets centrés.
     for (let y = 0; y < this.h; y++) for (let x = 0; x < this.w; x++) {
@@ -259,6 +288,27 @@ class GameMap {
   doorPassable(d) { return d.open || d.progress >= DOOR_PASS - 1e-6; }
   door(x, y) { return this.inBounds(x, y) ? this.doorAt.get(y * this.w + x) : undefined; }
   prop(x, y) { return this.propAt.get(y * this.w + x); }
+  // Le meuble de la petite case (x, y), s'il fait couvert bas (LOW_COVER).
+  coverAt(x, y) { const p = this.propAt.get(y * this.w + x); return p && LOW_COVER[p.type] ? p : null; }
+
+  // Couvert bas qui protège une cible en (x1, y1) d'un tir parti de (x0, y0) : le premier couvert qu'on rencontre en
+  // allant de la cible vers le tireur, à COVER_GUARD au plus d'elle, pourvu que le tireur ne s'y appuie pas (sa face côté
+  // tireur à plus de reach de lui : appuyé dessus, on tire par-dessus). { x, y, prop } : où la ligne y entre côté tireur ;
+  // null sinon. reach 0 : une explosion au pied du couvert ne passe pas par-dessus.
+  coverShields(x0, y0, x1, y1, reach = COVER_REACH) {
+    const L = dist(x0, y0, x1, y1);
+    if (!(L > reach)) return null; // (et une origine inconnue)
+    const ux = (x0 - x1) / L, uy = (y0 - y1) / L;
+    const at = s => this.coverAt(Math.floor((x1 + ux * s) / TILE), Math.floor((y1 + uy * s) / TILE));
+    let s = 0;
+    while (s <= COVER_GUARD && s < L && !at(s)) s += 4;
+    if (s > COVER_GUARD || s >= L) return null;
+    const prop = at(s);
+    if (!prop) return null;
+    while (s + 4 < L && at(s + 4)) s += 4; // jusqu'à sa face du côté du tireur
+    if (L - s <= reach) return null;
+    return { x: x1 + ux * s, y: y1 + uy * s, prop };
+  }
   blocksSight(x, y) {
     if (this.isWall(x, y)) return true;
     const d = this.door(x, y);

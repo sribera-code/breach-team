@@ -1,12 +1,19 @@
 'use strict';
-// Tests de non-régression. Ouvrir tests/index.html dans un navigateur, ou :
-//   chrome --headless --dump-dom tests/index.html   (le titre de la page vaut PASS ou FAIL n)
+// Tests de non-régression. Ouvrir tests/index.html dans un navigateur, ou sans interface : bash tests/run.sh
+// (le titre de la page vaut PASS ou FAIL n). tests/index.html?grep=porte ne lance que les tests dont le nom
+// contient « porte » (sans tenir compte de la casse ; tests/run.sh porte fait de même).
 // Les tests ne passent pas par setMode / setLoadout : rien n'est écrit dans localStorage (ceux qui cliquent
 // sur le briefing remettent les réglages du joueur en sortant).
 
-const T = { pass: 0, fail: 0, lines: [] };
+const T = { pass: 0, fail: 0, skip: 0, lines: [] };
+// Pas d'audio pendant les tests (un clic sur le briefing l'allumerait) : les sons et les voix ne jouent pas, sauf dans le
+// test de la sortie générale, qui l'allume et l'éteint lui-même (SOUND_INIT).
+const SOUND_INIT = Sound.init;
+Sound.init = () => {};
+const GREP = (new URLSearchParams(location.search).get('grep') || '').toLowerCase();
 
 function test(name, fn) {
+  if (GREP && !name.toLowerCase().includes(GREP)) { T.skip++; return; }
   try { fn(); T.pass++; T.lines.push(['ok', '✓ ' + name]); }
   catch (e) { T.fail++; T.lines.push(['ko', '✗ ' + name + '\n    ' + (e && e.message ? e.message : e)]); }
 }
@@ -184,6 +191,7 @@ test('un coéquipier tire selon son arme : jamais plus vite qu’elle, en rafale
     const game = g.game, m = game.mates[0], w = WEAPONS[key];
     m.alive = true;
     game.player.alive = false; // hors de l'axe de tir, quoi qu'il arrive (on ne fait pas avancer la partie)
+    game.canSummon = () => false; // (pas de sommation : on regarde la cadence)
     m.slot = { def: w, mag: 1000, reserve: Infinity };
     m.burstLeft = w.burst;
     const spot = freeSpotsAround(game, m, 12).find(q => dist(q.x, q.y, m.x, m.y) > 1.5 * U);
@@ -478,7 +486,7 @@ test('la porte ne bouge que le geste terminé', () => {
   const d = nearestDoorTo(g.game.map, g.game.player.x, g.game.player.y);
   setDoor(d, 0);
   faceDoor(g, d, 30);
-  g.press('KeyE');
+  pressE(g);
   ok(g.game.player.act && g.game.player.act.type === 'door', 'geste en cours');
   eq(d.progress, 0, 'porte encore immobile');
   g.step(40);
@@ -503,7 +511,7 @@ test('une porte fermée saute à la chevrotine, et ne se referme plus', () => {
   p.act = null;
   faceDoor(g, w.d, 26);
   game.message = { text: '', t: 0 };
-  g.press('KeyE');
+  pressE(g);
   ok(!p.act && /serrure/i.test(game.message.text), 'refus annoncé : "' + game.message.text + '"');
   g.step(60);
   ok(w.d.open, 'elle reste ouverte');
@@ -529,7 +537,7 @@ test('on ne tire pas pendant un geste, et la visée reste perturbée après', ()
   const d = nearestDoorTo(g.game.map, p.x, p.y);
   setDoor(d, 0); faceDoor(g, d, 30);
   const repos = g.game.spreadOf(p, 100);
-  g.press('KeyE');
+  pressE(g);
   const shots = g.game.stats.shots;
   g.game.input.mouse.down = true;
   g.step(20);
@@ -551,12 +559,12 @@ test('la fermeture n’est refusée que si l’embrasure est occupée, et elle l
   setDoor(d, 1);
   p.x = d.cx; p.y = d.cy; p.act = null;
   g.game.message = { text: '', t: 0 };
-  g.press('KeyE');
+  pressE(g);
   ok(!p.act, 'aucun geste lancé');
   ok(/embrasure/i.test(g.game.message.text), 'message d’embrasure : "' + g.game.message.text + '"');
   // écarté d'une case : la fermeture passe
   setDoor(d, 1); p.act = null; faceDoor(g, d, 24);
-  g.press('KeyE');
+  pressE(g);
   g.step(120);
   eq(d.progress, 0, 'porte refermée');
 });
@@ -613,15 +621,13 @@ test('les refus de manœuvre sont annoncés', () => {
   const d = nearestDoorTo(g.game.map, p.x, p.y);
   setDoor(d, 0); faceDoor(g, d, 30);
   g.game.message = { text: '', t: 0 };
-  g.press('WheelDown');
-  ok(/déjà fermée/i.test(g.game.message.text), 'porte déjà fermée : "' + g.game.message.text + '"');
-  p.act = null;
+  ok(!menuItem(openE(g), 'close'), 'porte déjà fermée : pas de « fermer » au menu');
   g.press('KeyE');            // geste d'ouverture
   g.step(45);                 // le battant est maintenant en train de bouger
   ok(d.opening, 'la porte bouge');
   p.act = null;
   g.game.message = { text: '', t: 0 };
-  g.press('KeyE');
+  pressE(g);
   ok(/mouvement/i.test(g.game.message.text), 'porte en mouvement : "' + g.game.message.text + '"');
 });
 
@@ -695,152 +701,243 @@ test('la fibre montre la pièce voisine et se retire au moindre pas', () => {
   ok(!p.fiber, 'fibre retirée dès qu’on bouge');
 });
 
-// ---------------------------------------------------------------- menu d'actions
-// Clic molette au point (x, y) : le menu qui s'ouvre.
-function openMenuAt(g, x, y) {
-  const inp = g.game.input;
-  inp.mouse.x = x; inp.mouse.y = y;
-  g.press('Mouse1');
-  return g.game.menu;
-}
-// Clic (gauche par défaut) sur la ligne id du menu ouvert : la ligne choisie.
-function pickMenu(g, id, button) {
-  const mn = g.game.menu, inp = g.game.input;
+// ---------------------------------------------------------------- menu contextuel (E)
+// Images à laisser passer après un clic droit relâché : son ordre attend de savoir si un second clic suit (double clic).
+const RIGHT_WAIT = Math.ceil(DOUBLE_RIGHT * 60) + 2;
+// E : le menu de ce qui est à portée de main.
+function openE(g) { g.press('KeyE'); return g.game.menu; }
+// La ligne id du menu ouvert, validée par E (la sélection posée directement : la molette a son propre test).
+function pickE(g, id) {
+  const mn = g.game.menu;
   ok(mn, 'un menu ouvert');
   const i = mn.items.findIndex(it => it.id === id);
   ok(i >= 0, 'ligne ' + id + ' au menu (' + mn.items.map(it => it.id).join(', ') + ')');
-  inp.mouse.item = i;
-  g.press(button || 'Mouse0');
-  inp.mouse.item = -1;
+  mn.sel = id;
+  g.press('KeyE');
   return mn.items[i];
 }
-const menuItem = (mn, id) => mn.items.find(it => it.id === id);
-// Un point du sol libre, en vue, à D px de from, loin de toute porte.
-function groundSpot(game, from, D) {
-  for (let k = 0; k < 72; k++) {
-    const a = k * TAU / 72, x = from.x + Math.cos(a) * D, y = from.y + Math.sin(a) * D;
-    if (game.map.circleFree(x, y, 12, true) && game.map.hasLOS(from.x, from.y, x, y) && !game.doorAtPoint(x, y)) return { x, y };
-  }
-  return null;
+// E, E : le geste par défaut (ouvrir ou fermer la porte, entrer).
+function pressE(g) { g.press('KeyE'); g.press('KeyE'); }
+function menuItem(mn, id) { return mn.items.find(it => it.id === id); }
+// Le menu de E sur le coéquipier m (ses lignes), où que vous soyez.
+function mateMenuOf(game, m) { const mn = { kind: 'mate', mate: m, sel: null, title: '', items: [] }; game.menuItems(mn); return mn; }
+// Votre équipe en colonne sur la porte w.d, en place, vous à D de la porte de votre côté.
+function readyStack(g, w, D) {
+  const game = g.game, p = game.player;
+  game.enemies = []; game.hostages = [];
+  p.x = w.d.cx - w.nx * D; p.y = w.d.cy - w.ny * D;
+  const spots = freeSpotsAround(game, { x: w.a.x, y: w.a.y }, 2);
+  game.mates.forEach((m, i) => { m.x = spots[i].x; m.y = spots[i].y; });
+  game.orderStack(w.d);
+  for (let i = 0; i < 600 && !(game.stack && game.stack.ready); i++) game.update(1 / 60);
+  ok(game.stack && game.stack.ready, 'l’équipe est en place');
+  return game.stack;
 }
 
-test('le clic molette ouvre le menu de ce que désigne le curseur : vous, une porte, le sol', () => {
+test('E ouvre le menu de ce qui est à portée : la porte, le geste le plus simple d’abord, la molette choisit', () => {
   const g = mkGame({ noEnemyAI: true });
   const game = g.game, p = game.player;
   const w = doorWithRoom(game);
   ok(w, 'une porte de test');
   p.x = w.a.x; p.y = w.a.y;
-  let mn = openMenuAt(g, p.x + 3, p.y - 2);
-  eq(mn.kind, 'self', 'sur vous');
-  for (const id of ['reload', 'walk', 'follow', 'hold', 'minimap']) ok(menuItem(mn, id), 'sur vous : ' + id);
-  eq(menuItem(mn, 'reload').off, 'chargeur plein', 'chargeur plein : recharger est grisé');
-  eq(menuItem(mn, 'follow').off, 'ils vous suivent', 'ils suivent déjà : grisé');
-  g.press('Mouse2');
-  eq(game.menu, null, 'le clic droit ferme le menu');
-  g.press('Mouse2Up');
-  ok(!game.orderDrag && game.mates.every(m => m.order === 'follow'), '… sans donner d’ordre');
-  mn = openMenuAt(g, w.d.cx, w.d.cy);
-  eq(mn.kind, 'door', 'sur une porte');
-  eq(mn.door, w.d, 'la porte désignée');
+  let mn = openE(g);
+  ok(mn && mn.kind === 'door' && mn.door === w.d, 'le menu de la porte');
   ok(/fermée/.test(mn.title), 'son état en titre : ' + mn.title);
-  for (const id of ['open', 'ajar', 'crack', 'close', 'fiber', 'charge', 'stack', 'flash']) ok(menuItem(mn, id), 'porte : ' + id);
-  eq(menuItem(mn, 'close').off, 'déjà', 'déjà fermée : grisé');
-  g.press('Mouse1');
-  eq(game.menu, null, 'un clic molette hors des lignes ferme le menu');
-  const s = groundSpot(game, p, 2.5 * U);
-  ok(s, 'un point au sol');
-  mn = openMenuAt(g, s.x, s.y);
-  eq(mn.kind, 'zone', 'au sol');
-  ok(menuItem(mn, 'move') && menuItem(mn, 'throw'), 'au sol : y envoyer l’équipe, y lancer une grenade');
-  // le rendu place les lignes : celle sous le curseur est celle que le jeu reçoit
-  g.step(1);
-  const r = g.r.menuRects[1];
-  g.r.mouse.sx = r.x + r.w / 2; g.r.mouse.sy = r.y + r.h / 2;
-  eq(g.r.menuItemAt(), 1, 'la ligne sous le curseur');
-  g.r.mouse.sx = r.x - 40;
-  eq(g.r.menuItemAt(), -1, 'à côté du menu : aucune');
+  eq(mn.items[0].id, 'cancel', 'annuler en tête');
+  eq(mn.items[1].id, 'open', 'puis ouvrir');
+  eq(mn.sel, 'open', 'choisi d’avance');
+  for (const id of ['ajar', 'crack', 'fiber', 'charge', 'stack']) ok(menuItem(mn, id), 'porte : ' + id);
+  ok(!menuItem(mn, 'close'), 'pas de « fermer » sur une porte fermée');
+  eq(w.d.progress, 0, 'E seul ne touche pas à la porte');
+  g.press('WheelDown');
+  eq(mn.sel, 'ajar', 'molette vers le bas : la ligne suivante');
+  g.press('WheelDown'); g.press('WheelUp');
+  eq(mn.sel, 'ajar', 'puis de nouveau vers le haut');
+  g.press('KeyE');
+  eq(game.menu, null, 'E valide et ferme le menu');
+  g.step(90);
+  near(w.d.progress, DOOR_STEPS[2], 0.01, 'entrouverte');
+  mn = openE(g);
+  ok(/entrouverte/.test(mn.title), 'titre : ' + mn.title);
+  ok(mn.items[1].id === 'open' && /grand/.test(mn.items[1].label) && menuItem(mn, 'close') && !menuItem(mn, 'ajar'), 'ouvrir en grand, fermer ; plus d’« entrouvrir »');
+  // on s'éloigne : le menu se ferme
+  p.x = w.d.cx - w.nx * 4 * U; p.y = w.d.cy - w.ny * 4 * U;
+  if (game.map.circleFree(p.x, p.y, 12, true)) { g.step(1); eq(game.menu, null, 'loin de la porte, le menu se ferme'); }
 });
 
-test('en siège, ni ordres ni fibre ni charge au menu', () => {
-  const g = mkGame({ mode: 'siege', noEnemyAI: true });
-  const game = g.game, p = game.player;
-  let mn = openMenuAt(g, p.x, p.y);
-  eq(mn.kind, 'self', 'sur vous');
-  ok(!menuItem(mn, 'follow') && !menuItem(mn, 'hold') && !menuItem(mn, 'shout'), 'pas d’ordre ni de sommation');
-  g.press('Mouse2');
-  const d = nearestDoorTo(game.map, p.x, p.y);
-  mn = openMenuAt(g, d.cx, d.cy);
-  eq(mn.kind, 'door', 'sur une porte');
-  ok(menuItem(mn, 'open') || menuItem(mn, 'pick'), 'la porte se manœuvre');
-  ok(!menuItem(mn, 'fiber') && !menuItem(mn, 'charge') && !menuItem(mn, 'stack'), 'ni fibre, ni charge, ni colonne');
-});
-
-test('un choix du menu agit, la visée ne suit pas le curseur et le clic ne tire pas', () => {
-  const g = mkGame({ alone: true, loadout: { primary: 'hk416', sidearm: 'glock17' } });
-  const game = g.game, p = game.player, inp = game.input;
-  ok(p.weapon.auto, 'arme automatique');
-  inp.mouse.x = p.x + 100; inp.mouse.y = p.y; g.step(1);
-  near(p.angle, 0, 1e-6, 'visée vers la droite');
-  openMenuAt(g, p.x, p.y);
-  inp.mouse.x = p.x - 100; g.step(3);
-  near(p.angle, 0, 1e-6, 'menu ouvert : la visée reste où elle était');
-  ok(!game.scoped(p), 'pas de lunette menu ouvert');
-  const walk = p.walkMode, shots = game.stats.shots;
-  inp.mouse.down = true; // le bouton reste enfoncé après le clic qui choisit
-  pickMenu(g, 'walk');
-  eq(p.walkMode, !walk, 'allure basculée');
-  eq(game.menu, null, 'le menu se ferme');
-  g.step(20);
-  eq(game.stats.shots, shots, 'le clic qui a choisi ne part pas en rafale');
-  near(Math.abs(p.angle), Math.PI, 1e-6, 'menu fermé : la visée suit à nouveau le curseur');
-  inp.mouse.down = false; g.step(1);
-  inp.mouse.down = true; g.step(10); inp.mouse.down = false;
-  ok(game.stats.shots > shots, 'relâché puis pressé : on tire');
-  // glissé : molette maintenue jusqu'à la ligne, relâchée dessus
-  p.slot.mag = 3;
-  openMenuAt(g, p.x, p.y);
-  inp.mouse.item = game.menu.items.findIndex(it => it.id === 'reload');
-  g.press('Mouse1Up');
-  inp.mouse.item = -1;
-  eq(game.menu, null, 'relâchée sur la ligne : choisie');
-  ok(p.reloadT > 0, 'rechargement lancé');
-  // une ligne grisée dit pourquoi, et le menu reste ouvert
-  g.step(400);
-  openMenuAt(g, p.x, p.y);
-  pickMenu(g, 'reload');
-  ok(game.menu && /chargeur plein/.test(game.message.text), 'grisée : « ' + game.message.text + ' », menu ouvert');
-});
-
-test('le menu d’une porte l’ouvre au cran choisi, la crochète, et grise ce qui est trop loin', () => {
+test('E, E ouvre ou ferme la porte ; une ligne grisée dit pourquoi ; verrouillée, on crochète', () => {
   const g = mkGame({ alone: true });
   const game = g.game, p = game.player;
   const w = doorWithRoom(game);
-  ok(w, 'une porte de test');
   p.x = w.a.x; p.y = w.a.y;
-  openMenuAt(g, w.d.cx, w.d.cy);
-  pickMenu(g, 'ajar');
-  g.step(90);
-  near(w.d.progress, DOOR_STEPS[2], 0.01, 'entrouverte');
-  openMenuAt(g, w.d.cx, w.d.cy);
-  ok(/entrouverte/.test(game.menu.title), 'titre : ' + game.menu.title);
-  eq(menuItem(game.menu, 'ajar').off, 'déjà', 'déjà entrouverte : grisé');
-  pickMenu(g, 'close');
-  g.step(90);
-  eq(w.d.progress, 0, 'refermée');
+  pressE(g);
+  ok(p.act && p.act.type === 'door', 'E, E : le geste d’ouverture');
+  g.step(100);
+  ok(w.d.open, 'ouverte');
+  pressE(g);
+  g.step(100);
+  eq(w.d.progress, 0, 'E, E : refermée');
   w.d.locked = true; w.d.lockKnown = true;
-  openMenuAt(g, w.d.cx, w.d.cy);
-  ok(!menuItem(game.menu, 'open') && menuItem(game.menu, 'pick'), 'verrouillée : crocheter');
-  pickMenu(g, 'pick');
+  const mn = openE(g);
+  eq(mn.items[1].id, 'pick', 'verrouillée : crocheter d’abord');
+  ok(!menuItem(mn, 'open'), 'pas d’ouverture tant qu’elle est fermée à clé');
+  g.press('KeyE');
   ok(p.act && p.act.type === 'lockpick', 'crochetage en cours');
   p.act = null; w.d.locked = false;
-  p.x = w.d.cx - w.nx * 2.2 * U; p.y = w.d.cy - w.ny * 2.2 * U;
-  const mn = game.openMenu(w.d.cx, w.d.cy);
-  for (const id of ['open', 'fiber', 'charge']) eq(menuItem(mn, id).off, 'trop loin', id + ' : trop loin');
+  // un peu trop loin pour les mains, encore assez près pour le menu
+  p.x = w.d.cx - w.nx * 2 * U; p.y = w.d.cy - w.ny * 2 * U;
+  game.menu = null;
+  game.menu = { kind: 'door', door: w.d, sel: 'open', title: '', items: [] };
+  game.menuItems(game.menu);
+  for (const id of ['open', 'fiber', 'charge']) eq(menuItem(game.menu, id).off, 'trop loin', id + ' : trop loin');
+  game.message = { text: '', t: 0 };
+  g.press('KeyE');
+  ok(game.menu && /trop loin/.test(game.message.text), 'grisée : « ' + game.message.text + ' », le menu reste ouvert');
 });
 
-test('depuis le menu, la fibre reste sans tenir F, et un clic la retire sans tirer', () => {
+test('E près d’un coéquipier : ses ordres à lui seul ; rien à portée : on le dit', () => {
+  const g = mkGame({ noEnemyAI: true });
+  const game = g.game, p = game.player, map = game.map;
+  let at = null;
+  for (let ty = 2; ty < map.h - 2 && !at; ty++) for (let tx = 2; tx < map.w - 2 && !at; tx++) {
+    const x = (tx + 0.5) * TILE, y = (ty + 0.5) * TILE;
+    if (map.circleFree(x, y, 12, true) && map.doors.every(d => dist(d.cx, d.cy, x, y) > 3.5 * U) && freeSpotsAround(game, { x, y }, 1).length) at = { x, y };
+  }
+  ok(at, 'un endroit loin des portes');
+  p.x = at.x; p.y = at.y;
+  const sp = freeSpotsAround(game, at, 1)[0];
+  game.mates[0].x = sp.x; game.mates[0].y = sp.y;
+  const mn = openE(g);
+  ok(mn && mn.kind === 'mate' && game.crew.includes(mn.mate), 'le menu du coéquipier le plus proche');
+  const m = mn.mate;
+  pickE(g, 'mhold');
+  eq(m.order, 'hold', m.name + ' tient');
+  ok(game.mates.filter(o => o !== m).every(o => o.order === 'follow'), 'les autres suivent toujours');
+  game.mates.forEach(o => { o.alive = false; o.slot = null; }); // (sans arme à ramasser sur eux)
+  game.message = { text: '', t: 0 };
+  openE(g);
+  ok(!game.menu && /Rien à portée/.test(game.message.text), 'seul et loin de tout : « ' + game.message.text + ' »');
+});
+
+test('le clic molette recharge ; la molette ne touche plus aux portes hors du menu', () => {
+  const g = mkGame({ alone: true, loadout: { primary: 'hk416', sidearm: 'glock17' } });
+  const game = g.game, p = game.player;
+  p.slot.mag = 3;
+  g.press('Mouse1');
+  ok(p.reloadT > 0, 'clic molette : rechargement');
+  g.step(400);
+  const w = doorWithRoom(game);
+  p.x = w.a.x; p.y = w.a.y;
+  g.press('WheelUp'); g.step(60);
+  ok(!p.act && w.d.progress === 0 && !game.menu, 'la molette seule ne fait rien');
+});
+
+test('menu de E ouvert, la visée suit le curseur ; « Annuler » en tête ; toute autre touche ne fait que le fermer', () => {
+  const g = mkGame({ alone: true, loadout: { primary: 'hk416', sidearm: 'glock17' } });
+  const game = g.game, p = game.player, inp = game.input;
+  game.mates.forEach(m => { m.alive = true; m.order = 'follow'; });
+  const w = doorWithRoom(game);
+  p.x = w.a.x; p.y = w.a.y;
+  openE(g);
+  ok(game.menu, 'menu ouvert');
+  inp.mouse.x = p.x - 100; inp.mouse.y = p.y; g.step(2);
+  near(Math.abs(p.angle), Math.PI, 1e-6, 'la visée suit le curseur');
+  // la molette remonte sur « Annuler » ; E : rien ne se passe
+  g.press('WheelUp');
+  eq(game.menu.sel, 'cancel', 'au-dessus du geste choisi d’avance : annuler');
+  g.press('KeyE');
+  ok(!game.menu && !p.act && w.d.progress === 0, 'annulé : la porte n’a pas bougé');
+  // un clic ferme le menu sans tirer, tant qu'on ne l'a pas relâché
+  openE(g);
+  const shots = game.stats.shots;
+  inp.mouse.down = true; inp.pressed.Mouse0 = true; g.step(10);
+  ok(!game.menu, 'un clic ferme le menu');
+  eq(game.stats.shots, shots, '… sans tirer');
+  inp.mouse.down = false; g.step(2);
+  inp.mouse.down = true; inp.pressed.Mouse0 = true; g.step(10); inp.mouse.down = false; g.step(1);
+  ok(game.stats.shots > shots, 'menu fermé, le clic suivant tire');
+  // le clic droit ferme le menu sans donner d'ordre
+  openE(g);
+  inp.mouse.x = p.x + 3 * U; inp.mouse.y = p.y;
+  inp.pressed.Mouse2 = true; inp.mouse.rdown = true; g.step(1);
+  inp.mouse.rdown = false; inp.pressed.Mouse2Up = true; g.step(1);
+  ok(!game.menu && game.mates.every(m => m.order === 'follow'), 'clic droit : le menu se ferme, aucun ordre');
+  // M aussi : le menu se ferme, la minimap ne bouge pas
+  openE(g);
+  const mini = game.minimap;
+  g.press('KeyM');
+  ok(!game.menu && game.minimap === mini, 'M : le menu se ferme, la minimap reste comme elle était');
+});
+
+test('E ramasse les armes au sol à portée, au menu d’une porte comme seul', () => {
+  const g = mkGame({ alone: true, loadout: { primary: 'hk416', sidearm: 'glock17' } });
+  const game = g.game, p = game.player, map = game.map;
+  let at = null;
+  for (let ty = 2; ty < map.h - 2 && !at; ty++) for (let tx = 2; tx < map.w - 2 && !at; tx++) {
+    const x = (tx + 0.5) * TILE, y = (ty + 0.5) * TILE;
+    if (map.circleFree(x, y, 12, true) && map.doors.every(d => dist(d.cx, d.cy, x, y) > 3.5 * U) && freeSpotsAround(game, { x, y }, 2).length === 2) at = { x, y };
+  }
+  ok(at, 'un endroit loin des portes');
+  p.x = at.x; p.y = at.y;
+  const [s1, s2] = freeSpotsAround(game, at, 2);
+  game.mates.forEach(m => { m.slot = null; }); // (seules nos deux armes au sol)
+  const dead = (q, key) => { const e = new Enemy(q.x, q.y, 0, key); e.alive = false; return e; };
+  game.enemies = [dead(s1, 'ak'), dead(s2, 'pistol')];
+  const mn = openE(g);
+  ok(mn && mn.kind === 'drop', 'seul près des corps : le menu des armes au sol');
+  const lines = mn.items.filter(it => /^pick/.test(it.id));
+  eq(lines.length, 2, 'une ligne par arme');
+  ok(lines.some(it => /AKM/.test(it.label)) && lines.some(it => /Makarov/.test(it.label)), 'chacune nommée : ' + lines.map(it => it.label).join(' / '));
+  const akLine = lines.find(it => /AKM/.test(it.label));
+  pickE(g, akLine.id);
+  g.step(45);
+  eq(p.weapon.name, 'AKM', 'l’AKM en main');
+  ok(game.enemies.some(e => e.slot && e.slot.def.name === 'HK416 A5'), 'le HK416 laissé au sol à sa place');
+  // près d'une porte, les armes au sol ont leur section dans le menu de la porte
+  const w = doorWithRoom(game);
+  p.x = w.a.x; p.y = w.a.y;
+  game.enemies = [dead(freeSpotsAround(game, w.a, 1)[0], 'ak')];
+  const md = openE(g);
+  ok(md.kind === 'door' && md.items.some(it => it.sep) && md.items.some(it => /^pick/.test(it.id)), 'menu de la porte, puis « Armes au sol »');
+});
+
+test('colonne en place : E la commande même de loin, la fibre devant sa porte, et un second clic droit entre porte ouverte', () => {
   const g = mkGame({ noEnemyAI: true });
   const game = g.game, p = game.player, inp = game.input;
+  const w = doorWithRoom(game);
+  const s = readyStack(g, w, 2.5 * U);
+  // loin de la porte (et de toute autre) : le menu de la colonne quand même
+  let far = null;
+  for (let ty = 2; ty < game.map.h - 2 && !far; ty++) for (let tx = 2; tx < game.map.w - 2 && !far; tx++) {
+    const x = (tx + 0.5) * TILE, y = (ty + 0.5) * TILE;
+    if (dist(x, y, w.d.cx, w.d.cy) > 6 * U && game.map.circleFree(x, y, 12, true)) far = { x, y };
+  }
+  const back = { x: p.x, y: p.y };
+  p.x = far.x; p.y = far.y;
+  let mn = openE(g);
+  ok(mn && mn.kind === 'stack' && mn.sel === 'plain', 'loin de la colonne, E la commande');
+  game.closeMenu();
+  // devant la porte même : la fibre, en plus des ordres de la colonne
+  p.x = w.d.cx - w.nx * 26; p.y = w.d.cy - w.ny * 26;
+  mn = openE(g);
+  ok(mn && mn.kind === 'stack' && menuItem(mn, 'fiber'), 'devant sa porte : la fibre aussi');
+  pickE(g, 'fiber');
+  g.step(50);
+  ok(p.fiber && p.fiber.door === w.d && game.stack === s && !s.go, 'la fibre passée, la colonne attend toujours');
+  game.endFiber(p);
+  p.x = back.x; p.y = back.y;
+  // second clic droit sur la porte : on entre, porte ouverte (pas à la flash)
+  inp.mouse.x = w.d.cx; inp.mouse.y = w.d.cy;
+  inp.pressed.Mouse2 = true; inp.mouse.rdown = true; g.step(1);
+  inp.mouse.rdown = false; inp.pressed.Mouse2Up = true; g.step(RIGHT_WAIT);
+  ok(s.go && !s.flash, 'entrée simple');
+  for (let i = 0; i < 900 && game.stack; i++) game.update(1 / 60);
+  ok(!game.stack && !game.grenades.some(gr => gr.kind === 'flash') && game.mates.every(m => m.order === 'move'), 'ils ouvrent et entrent, sans flash');
+});
+
+test('depuis le menu de E, la fibre reste sans tenir F, et un clic la retire sans tirer', () => {
+  const g = mkGame({ noEnemyAI: true });
+  const game = g.game, p = game.player;
   game.mates.forEach(m => { m.alive = false; });
   const w = doorWithRoom(game);
   ok(w, 'une porte de test');
@@ -849,8 +946,8 @@ test('depuis le menu, la fibre reste sans tenir F, et un clic la retire sans tir
   p.x = w.d.cx - w.nx * 26; p.y = w.d.cy - w.ny * 26;
   g.step(3);
   eq(foe.visible, false, 'invisible porte fermée');
-  openMenuAt(g, w.d.cx, w.d.cy);
-  pickMenu(g, 'fiber');
+  openE(g);
+  pickE(g, 'fiber');
   g.step(50);
   ok(p.fiber && p.fiber.sticky, 'fibre posée sans tenir F');
   eq(foe.visible, true, 'suspect révélé par la fibre');
@@ -861,39 +958,95 @@ test('depuis le menu, la fibre reste sans tenir F, et un clic la retire sans tir
   eq(game.stats.shots, shots, '… sans tirer');
 });
 
-test('depuis le menu, la grenade part vers le point désigné, pas vers le curseur', () => {
-  const g = mkGame({ alone: true });
-  const game = g.game, p = game.player, inp = game.input;
-  const s = groundSpot(game, p, 3 * U);
-  ok(s, 'un point au sol');
-  const n = p.flashbangs;
-  openMenuAt(g, s.x, s.y);
-  pickMenu(g, 'throw');
-  inp.mouse.x = 2 * p.x - s.x; inp.mouse.y = 2 * p.y - s.y; // le curseur part à l'opposé
-  for (let i = 0; i < 60 && !game.grenades.length; i++) g.step(1);
-  const gr = game.grenades[0];
-  ok(gr, 'la grenade part sans tenir Espace');
-  eq(p.flashbangs, n - 1, 'une de moins');
-  near(angleDiff(Math.atan2(gr.vy, gr.vx), Math.atan2(s.y - p.y, s.x - p.x)), 0, 0.05, 'vers le point du menu');
-});
-
-test('l’entrée à la flash depuis le menu d’une porte : colonne, flash, entrée', () => {
+test('la colonne en place : E propose entrer, poser une charge, entrer à la flash, à la grenade ; E, E : on ouvre et on entre', () => {
   const g = mkGame({ noEnemyAI: true });
-  const game = g.game, p = game.player;
-  game.enemies = []; game.hostages = [];
+  const game = g.game;
   const w = doorWithRoom(game);
   ok(w, 'une porte de test');
-  p.x = w.d.cx + w.nx * 1.5 * U; p.y = w.d.cy + w.ny * 1.5 * U;
-  const spots = freeSpotsAround(game, p, 2);
-  game.mates.forEach((m, i) => { m.x = spots[i].x; m.y = spots[i].y; });
-  openMenuAt(g, w.d.cx, w.d.cy);
-  pickMenu(g, 'flash');
-  ok(game.stack && game.stack.door === w.d && game.mates.every(m => m.order === 'stack'), 'l’équipe se met en colonne');
-  ok(game.stack.flash, 'entrée à la flash prévue');
-  let thrown = false;
-  for (let i = 0; i < 1200 && game.stack; i++) { game.update(1 / 60); thrown = thrown || game.grenades.some(gr => gr.kind === 'flash'); }
-  ok(thrown, 'une flash est partie');
+  const s = readyStack(g, w, 2.5 * U);
+  ok(game.mates.every(m => m.nades.flash === MATE_FLASHES && m.nades.frag === MATE_FRAGS), 'chacun a ses flashs et une grenade');
+  const mn = openE(g);
+  ok(mn && mn.kind === 'stack' && mn.st === s, 'le menu de la colonne');
+  eq(mn.items.map(it => it.id).slice(0, 5).join(','), 'cancel,plain,charge,flash,frag', 'annuler, puis entrer, charge, flash, grenade');
+  eq(mn.sel, 'plain', 'entrer, d’abord');
+  ok(mn.items.every(it => !it.off || it.id === 'cancel'), 'tout est possible');
+  g.press('KeyE');
+  ok(s.go, 'on entre');
+  for (let i = 0; i < 900 && game.stack; i++) game.update(1 / 60);
+  ok(w.d.open || game.map.doorPassable(w.d), 'un coéquipier a ouvert');
   ok(!game.stack && game.mates.every(m => m.order === 'move'), 'puis ils entrent');
+});
+
+test('la colonne en place : entrée à la grenade, une grenade à fragmentation glissée dans la pièce', () => {
+  const g = mkGame({ noEnemyAI: true });
+  const game = g.game;
+  const w = doorWithRoom(game);
+  readyStack(g, w, 2.5 * U);
+  openE(g);
+  pickE(g, 'frag');
+  ok(game.stack.flash && game.stack.flash.kind === 'frag', 'l’entrée à la grenade est lancée');
+  let frag = null;
+  for (let i = 0; i < 1200 && game.stack; i++) { game.update(1 / 60); frag = frag || game.grenades.find(gr => gr.kind === 'frag'); }
+  ok(frag, 'une grenade à fragmentation est partie');
+  ok(Math.sign((w.d.horizontal ? frag.y - w.d.cy : frag.x - w.d.cx)) === 1, 'dans la pièce');
+  eq(game.mates.reduce((n, m) => n + m.nades.frag, 0), MATE_FRAGS * game.mates.length - 1, 'une grenade de moins');
+  ok(!game.stack && game.mates.every(m => m.order === 'move' && m.alive), 'puis ils entrent, indemnes');
+});
+
+test('la colonne en place : la charge posée, E redonne entrer, flash, grenade ; c’est elle qui ouvre', () => {
+  const g = mkGame({ noEnemyAI: true });
+  const game = g.game, p = game.player;
+  const w = doorWithRoom(game);
+  const s = readyStack(g, w, 3 * U);
+  const before = p.charges;
+  openE(g);
+  pickE(g, 'charge');
+  ok(s.charge, 'un coéquipier va poser la charge');
+  for (let i = 0; i < 600 && !game.stackWaits(s); i++) game.update(1 / 60);
+  ok(s.charge && s.charge.obj && game.charges.includes(s.charge.obj), 'la charge est posée');
+  eq(p.charges, before - 1, 'prise sur vos charges de brèche');
+  ok(simUntil(game, () => game.mates.every(m => dist(m.x, m.y, w.d.cx, w.d.cy) > CHARGE_NEAR), 4), 'l’équipe s’écarte du souffle');
+  ok(!w.d.broken, 'la charge attend vos ordres');
+  const mn = openE(g);
+  ok(mn && mn.kind === 'stack' && /charge posée/.test(mn.title), 'le menu de la colonne, charge posée');
+  eq(mn.items.map(it => it.id).join(','), 'cancel,plain,flash,frag', 'annuler ; mise à feu, puis entrer, à la flash, à la grenade');
+  // trop près de la porte : on vous attend
+  const at = { x: p.x, y: p.y };
+  p.x = w.d.cx - w.nx * 0.9 * U; p.y = w.d.cy - w.ny * 0.9 * U;
+  pickE(g, 'flash');
+  for (let i = 0; i < 60; i++) game.update(1 / 60);
+  ok(!w.d.broken && /Écartez-vous/.test(game.message.text), 'vous êtes trop près : elle ne saute pas, et on vous le dit');
+  p.x = at.x; p.y = at.y;
+  let flash = false;
+  for (let i = 0; i < 1200 && game.stack; i++) { game.update(1 / 60); flash = flash || (w.d.broken && game.grenades.some(gr => gr.kind === 'flash')); }
+  ok(w.d.broken, 'la charge a soufflé la porte');
+  ok(flash, 'puis une flash est partie par la brèche');
+  ok(!game.stack && game.mates.every(m => m.order === 'move'), 'et ils entrent');
+});
+
+test('E fait sauter votre charge posée, d’aussi loin qu’on soit ; près d’une porte, ses gestes viennent en dessous', () => {
+  const g = mkGame({ alone: true });
+  const game = g.game, p = game.player, map = game.map;
+  const w = doorWithRoom(game);
+  p.x = w.a.x; p.y = w.a.y;
+  g.press('KeyB'); g.step(Math.ceil(CHARGE_PLACE * 60) + 2);
+  eq(game.charges.length, 1, 'charge posée');
+  // sur place : la mise à feu d'abord (E, E), la porte en dessous, sans seconde mise à feu
+  let mn = openE(g);
+  ok(mn && mn.kind === 'charge' && mn.door === w.d, 'le menu de la charge');
+  eq(mn.sel, 'blast', 'mise à feu choisie d’avance');
+  ok(menuItem(mn, 'door:open') && !menuItem(mn, 'door:blast'), 'les gestes de la porte, sans doublon');
+  game.menu = null;
+  // loin de toute porte : E, E la fait sauter quand même
+  let far = null;
+  for (let ty = 2; ty < map.h - 2 && !far; ty++) for (let tx = 2; tx < map.w - 2 && !far; tx++) {
+    const x = (tx + 0.5) * TILE, y = (ty + 0.5) * TILE;
+    if (map.circleFree(x, y, 12, true) && dist(x, y, w.d.cx, w.d.cy) > 6 * U && map.doors.every(d => dist(d.cx, d.cy, x, y) > 3 * U)) far = { x, y };
+  }
+  ok(far, 'un endroit loin des portes');
+  p.x = far.x; p.y = far.y;
+  pressE(g);
+  ok(w.d.broken && !game.charges.length, 'E, E : la charge a sauté, à ' + (dist(p.x, p.y, w.d.cx, w.d.cy) / U).toFixed(1) + ' cases');
 });
 
 // ---------------------------------------------------------------- équipe
@@ -924,6 +1077,7 @@ test('un coéquipier gêné par un otage se décale au lieu de se figer', () => 
   const bravo = game.mates[0];
   game.mates.slice(1).forEach(m => { m.alive = false; });
   bravo.x = 112; bravo.y = AY; bravo.order = 'hold'; bravo.holdAngle = 0;
+  game.canSummon = () => false; // (sans quoi il somme d'abord le suspect, qui se rend parfois : plus de cible)
   p.x = 112; p.y = 48; p.angle = -Math.PI / 2;
   // le blocage est passager : il se décale dès qu'il l'a constaté, donc on l'échantillonne dès le départ
   let vise = false, vu = false;
@@ -2188,11 +2342,11 @@ function nadeKitTest() {
   ok(si.nade === 'frag' && si.nades.frag === 2 && !si.nades.flash, 'siège : deux grenades à fragmentation, quel que soit le lot');
   // relais : le coéquipier qui reprend la main garde ses flashs, au même compteur
   const rg = mkGame({ loadout: kit('frag') }).game;
-  rg.mates.forEach(m => { m.flashbangs = 1; });
+  rg.mates.forEach(m => { m.nades.flash = 1; });
   rg.player.alive = false;
   rg.takeOver();
   const m = rg.player;
-  ok(m instanceof Player && m.nade === 'flash' && m.flashbangs === 1 && m.nades.flash === 1 && !m.nades.frag, 'relais : il garde la flash qui lui reste');
+  ok(m instanceof Player && m.nade === 'flash' && m.flashbangs === 1 && m.nades.flash === 1 && m.nades.frag === MATE_FRAGS, 'relais : il garde la flash qui lui reste, et sa grenade');
   m.flashbangs--;
   eq(m.nades.flash, 0, 'le compteur suit');
   // au briefing : trois lots côte à côte, celui retenu en surbrillance ; le choix arme le joueur et se retrouve
@@ -2286,6 +2440,46 @@ test('une vague n’apparaît jamais empilée, et deux agents superposés se sé
   b.x = a.x; b.y = a.y;
   game.separate();
   ok(dist(a.x, a.y, b.x, b.y) > 1, 'deux opérateurs superposés sont écartés');
+});
+
+test('l’intervention varie ses armes ; de temps en temps, celui qui mène porte un bouclier, et il arrête les balles', () => {
+  const g = mkGame({ mode: 'siege' });
+  const game = g.game;
+  // le tirage : sans bouclier, chacun son arme du lot ; avec, le premier au Glock, la charge au suivant
+  const plain = withRandom(0.99, () => game.squadKit('police', 3));
+  ok(plain.every(k => !k.shield && OPERATOR_POOL.includes(k.weapon)), 'sans bouclier, les armes du lot');
+  const drawn = new Set();
+  for (let i = 0; i < 40; i++) game.squadKit('police', 3).forEach(k => drawn.add(k.weapon));
+  ok(['hk416op', 'scarhop', 'mp5op', 'mp7op', 'm870op'].every(k => drawn.has(k)), 'fusils, pistolets mitrailleurs et fusil à pompe sortent tour à tour (' + [...drawn].join(', ') + ')');
+  ok(game.squadKit('armed', 3).every(k => !k.shield), 'le groupe armé, jamais');
+  game.enemies = [];
+  withRandom(0.01, () => game.spawnAssault(3));
+  const [lead, second] = game.enemies;
+  ok(OPERATOR_SHIELDS.includes(Object.keys(SHIELDS).find(k => SHIELDS[k] === lead.shield)), 'le premier de la vague au bouclier');
+  ok(lead.weapon.kind === 'pistol' && lead.weapon.pickup === 'glock17', 'avec un Glock');
+  ok(lead.speed < second.speed && lead.fov <= lead.shield.fov, 'plus lent, la vue par la lucarne');
+  ok(lead.charges === 0 && second.charges === 1, 'la charge de brèche au suivant');
+  ok(g.r.enemyStyle(lead).shield, 'dessiné au bras');
+  // une balle d'arme de poing s'arrête de face, pas de dos
+  const spot = reachableSpot(game, lead, 2.5 * U, 3.5 * U, true);
+  ok(spot, 'un tireur en vue');
+  const toward = Math.atan2(spot.y - lead.y, spot.x - lead.x);
+  const hurt = turn => {
+    lead.hp = lead.maxHp; lead.angle = toward + turn; lead.alive = true;
+    const foe = new Enemy(spot.x, spot.y, toward + Math.PI, 'pistol');
+    foe.team = 'ops';
+    game.enemies = [lead]; game.bullets = [];
+    for (let k = 0; k < 4; k++) { foe.bloom = 0; game.fireWeapon(foe); }
+    for (let i = 0; i < 40 && game.bullets.length; i++) game.updateBullets(1 / 60);
+    return lead.maxHp - lead.hp;
+  };
+  eq(hurt(0), 0, 'de face, le bouclier arrête tout');
+  ok(hurt(Math.PI) > 15, 'de dos, il encaisse');
+  // la vague joue sans accroc
+  game.enemies = [];
+  withRandom(0.01, () => game.spawnAssault(3));
+  g.step(240);
+  ok(game.enemies.every(e => Number.isFinite(e.x) && Number.isFinite(e.y)), 'la vague au bouclier progresse');
 });
 
 // ---------------------------------------------------------------- écrans
@@ -2943,7 +3137,7 @@ test('une porte verrouillée se crochète lentement ; les suspects ont la clé, 
   ok(w, 'une porte de test');
   w.d.locked = true;
   p.x = w.a.x; p.y = w.a.y;
-  g.press('KeyE');
+  pressE(g);
   ok(p.act && p.act.type === 'lockpick' && p.act.dur === LOCKPICK_TIME, 'E sur une porte verrouillée : crochetage');
   ok(w.d.lockKnown, 'on sait désormais qu’elle est fermée à clé');
   g.step(Math.ceil(LOCKPICK_TIME * 60) + 2);
@@ -3040,7 +3234,7 @@ test('clic droit sur une porte fermée : l’équipe se met en colonne, puis ent
   game.mates.forEach((m, i) => { m.x = spots[i].x; m.y = spots[i].y; });
   inp.mouse.x = w.d.cx; inp.mouse.y = w.d.cy;
   inp.pressed.Mouse2 = true; inp.mouse.rdown = true; g.step(1);
-  inp.mouse.rdown = false; inp.pressed.Mouse2Up = true; g.step(1);
+  inp.mouse.rdown = false; inp.pressed.Mouse2Up = true; g.step(RIGHT_WAIT);
   ok(game.stack && game.mates.every(m => m.order === 'stack'), 'ordre de colonne');
   const across = m => (w.d.horizontal ? m.y - w.d.cy : m.x - w.d.cx);
   const mine = Math.sign(w.d.horizontal ? p.y - w.d.cy : p.x - w.d.cx);
@@ -3061,7 +3255,7 @@ test('clic droit sur une porte fermée : l’équipe se met en colonne, puis ent
   ok(game.mates.every(m => m.coverAngle !== null), 'chacun couvre le fond de la pièce');
 });
 
-// Colonne sur la porte d depuis le côté side (signe de la coordonnée perpendiculaire), puis second clic droit :
+// Colonne sur la porte d depuis le côté side (signe de la coordonnée perpendiculaire), puis entrée à la flash :
 // ce qui s'est passé (qui a lancé, à quel cran était la porte au lancer, où et quand la flash a éclaté).
 // before(game) s'exécute une fois la colonne en place, avant le second clic. null si la place manque.
 function flashEntry(g, d, side, before) {
@@ -3076,7 +3270,8 @@ function flashEntry(g, d, side, before) {
   const click = () => {
     inp.mouse.x = d.cx; inp.mouse.y = d.cy;
     inp.pressed.Mouse2 = true; inp.mouse.rdown = true; tick();
-    inp.mouse.rdown = false; inp.pressed.Mouse2Up = true; tick();
+    inp.mouse.rdown = false; inp.pressed.Mouse2Up = true;
+    for (let i = 0; i < RIGHT_WAIT; i++) tick();
   };
   click();
   if (!game.stack) return null;
@@ -3090,7 +3285,7 @@ function flashEntry(g, d, side, before) {
     det(x, y, gr);
     out.boom = { x, y, progress: d.progress, across: Math.sign(d.horizontal ? y - d.cy : x - d.cx), stunned: game.enemies.filter(e => e.stun > 0) };
   };
-  click();
+  game.orderFlashEntry(); // (l'entrée à la flash du menu de E ; le second clic droit, lui, entre porte ouverte)
   out.ordered = !!(game.stack && game.stack.flash);
   for (let i = 0; i < 900 && game.stack; i++) tick();
   out.entered = !game.stack && game.mates.every(m => !m.alive || m.order === 'move');
@@ -3098,7 +3293,7 @@ function flashEntry(g, d, side, before) {
   return out;
 }
 
-test('second clic droit sur la porte de la colonne : flash par l’entrebâillement, puis porte grande ouverte et entrée', () => {
+test('entrée à la flash : par l’entrebâillement, puis porte grande ouverte et entrée', () => {
   const g = mkGame({ noEnemyAI: true });
   const game = g.game;
   game.hostages = [];
@@ -3108,6 +3303,8 @@ test('second clic droit sur la porte de la colonne : flash par l’entrebâillem
   const foe = new Enemy(w.a.x - w.nx * U, w.a.y - w.ny * U, 0, 'ak');
   foe.hp = foe.maxHp = 1e6; // vu par l'entrebâillement, l'équipe lui tire dessus : qu'il tienne jusqu'à l'éclair
   game.enemies = [foe];
+  // (pas de fusil à pompe tiré au sort : sa chevrotine, par l'entrebâillement, ferait sauter la serrure avant l'éclair)
+  game.mates.forEach(m => { m.slot = makeSlot('hk416'); });
   let empty = null, post = null, posts = 0;
   const r = flashEntry(g, w.d, 1, gm => {
     // celui qui tient le poste d'où la flash passe n'en a plus : l'autre, qui en a, prend sa place
@@ -3177,7 +3374,7 @@ test('un clic droit sur une porte ouverte reste un ordre de déplacement', () =>
   p.x = w.a.x; p.y = w.a.y;
   inp.mouse.x = w.d.cx; inp.mouse.y = w.d.cy;
   inp.pressed.Mouse2 = true; inp.mouse.rdown = true; g.step(1);
-  inp.mouse.rdown = false; inp.pressed.Mouse2Up = true; g.step(1);
+  inp.mouse.rdown = false; inp.pressed.Mouse2Up = true; g.step(RIGHT_WAIT);
   ok(!game.stack && game.mates.every(m => m.order === 'move'), 'déplacement ordinaire');
 });
 
@@ -3740,7 +3937,8 @@ test('trinômes : arrivé sur un contact vide, le trinôme fouille les alentours
   const auto = game.mates.filter(m => m.hunter), grp = auto[0].group;
   const spot = freeSpotsAround(game, auto[0], 24).filter(q => dist(q.x, q.y, auto[0].x, auto[0].y) > 2 * U).pop();
   ok(spot, 'un point à quelques pas');
-  grp.contact = { x: spot.x, y: spot.y, t: game.time, seen: false, foe: null };
+  // (decided : pas d'embuscade sur ce bruit, voir groupTactics ; on regarde la fouille)
+  grp.contact = { x: spot.x, y: spot.y, t: game.time, seen: false, foe: null, decided: true };
   for (let i = 0; i < 60 * 8 && !grp.search; i++) game.update(1 / 60);
   ok(grp.search, 'arrivé sur place sans rien voir, il fouille');
   eq(grp.contact, null, 'le contact est levé');
@@ -3758,7 +3956,7 @@ test('trinômes : arrivé sur un contact vide, le trinôme fouille les alentours
 });
 
 test('trinômes : un trinôme autonome avance en file derrière son chef, au pas, sans bruit, les flancs couverts', () => {
-  const g = mkGame({ mode: 'squadsArmed' }); // (le groupe armé ne se met pas en colonne : il marche davantage)
+  const g = mkGame({ mode: 'squadsArmed' }); // (le groupe armé se met rarement en colonne : il marche davantage)
   const game = g.game;
   game.enemies = [];
   const auto = game.mates.filter(m => m.hunter), grp = auto[0].group, [lead, f1, f2] = auto;
@@ -3805,7 +4003,7 @@ test('trinômes : un trinôme autonome avance en file derrière son chef, au pas
 });
 
 test('trinômes : le chef marque un temps avant de franchir une porte, attend les siens, et tombé, le suivant prend la tête', () => {
-  const g = mkGame({ mode: 'squadsArmed' }); // (le groupe armé ne se met pas en colonne : on regarde la marche seule)
+  const g = mkGame({ mode: 'squadsArmed' }); // (le groupe armé se met rarement en colonne : on regarde la marche seule)
   const game = g.game, map = game.map, foe = game.enemies[0];
   game.enemies = [];
   const auto = game.mates.filter(m => m.hunter), grp = auto[0].group, [lead, f1, f2] = auto;
@@ -3817,7 +4015,7 @@ test('trinômes : le chef marque un temps avant de franchir une porte, attend le
   setDoor(d, 1);
   [[lead, -1.6], [f1, -2.4], [f2, -3.2]].forEach(([a, k]) => { Object.assign(a, across(d, k)); a.path = []; a.angle = a.moveDir = Math.atan2(d.cy - a.y, d.cx - a.x); });
   const to = across(d, 2.6);
-  grp.contact = { x: to.x, y: to.y, t: game.time, seen: false, foe: null };
+  grp.contact = { x: to.x, y: to.y, t: game.time, seen: false, foe: null, decided: true }; // (sans embuscade)
   grp.sweepTo = null; grp.search = null;
   const side = a => Math.sign(d.horizontal ? a.y - d.cy : a.x - d.cx);
   let held = 0, heldFar = 0, crossed = false;
@@ -3936,7 +4134,7 @@ test('trinômes : à votre mort, la main passe à votre trinôme puis à l’aut
   const p = game.player;
   ok(auto.includes(p) && !p.hunter && !p.group, 'votre trinôme tombé, un homme de l’autre prend la main (' + who(p) + ')');
   ok(!grp.members.includes(p), 'il quitte la manœuvre autonome');
-  ok(p.weapon.name === 'HK416 A5' || p.weapon.name === 'HK MP5A3', 'avec son arme');
+  ok([...OPERATOR_POOL, 'glockop'].some(k => WEAPONS[k].name === p.weapon.name), 'avec son arme (' + p.weapon.name + ')');
   ok(Number.isFinite(p.slot.mag), 'chargeur fini, comme une arme ramassée');
   ok(!game.over, 'la partie continue');
   game.enemies.forEach(e => kill(e, p));
@@ -3952,11 +4150,11 @@ test('trinômes : à votre mort, la main passe à votre trinôme puis à l’aut
   ok(g2.game.score.lines.some(l => /Engagement/.test(l.label)) && g2.game.score.total <= 49, 'note de fin du mode');
 });
 
-test('trinômes : le groupe armé ne se met pas en colonne, et sa grenade ne part jamais près des siens', () => {
+test('trinômes : le groupe armé n’est pas entraîné comme l’intervention, et sa grenade ne part jamais près des siens', () => {
   const g = mkGame({ mode: 'squads' });
   const game = g.game, map = game.map;
   const [mil, bud] = game.enemies;
-  ok(mil.hunter && !mil.drilled && mil.flashbangs === 2, 'un homme du groupe armé : autonome, pas entraîné à la colonne, deux grenades');
+  ok(mil.hunter && !mil.drilled && mil.flashbangs === 2, 'un homme du groupe armé : autonome, moins entraîné, deux grenades');
   ok(game.ops.filter(o => o.hunter).every(o => o.drilled), 'l’intervention, si');
   // un lancer dégagé de cinq cases
   let s = null;
@@ -3991,14 +4189,21 @@ test('trinômes : le groupe armé vient équipé — silencieux, laser, poignée
   ok(pbs.suppressed && pbs.noise <= WEAPONS.akP.noise / 4 && pbs.damage < WEAPONS.akP.damage, 'PBS-1 : munition subsonique, presque muette, un peu moins forte');
   ok(pbs.laser && pbs.grip && pbs.bloom < WEAPONS.akP.bloom && pbs.weight > WEAPONS.akP.weight + 0.8, 'garde-main à rails : laser et poignée, qui pèsent');
   eq(fittedDef('skorpionP', { sup: true }).damage, WEAPONS.skorpionP.damage, 'le 7,65 Browning est subsonique d’origine : rien de perdu');
-  // les hommes du groupe armé que mène l'IA en portent, dans un camp comme dans l'autre ; l'intervention, non
+  // les hommes que mène l'IA en portent, dans un camp comme dans l'autre, selon leur rang dans la file (ROLE_KITS) : le chef
+  // de file au silencieux, le deuxième au laser, le dernier au chargeur long (quand son arme les accepte)
   for (const mode of ['squads', 'squadsArmed']) {
     const game = mkGame({ mode }).game;
     const armed = mode === 'squads' ? game.enemies : game.mates.filter(m => m.hunter);
     const police = mode === 'squads' ? game.mates.filter(m => m.hunter) : game.enemies;
     ok(armed.every(a => a.weapon.acc && Object.values(a.weapon.acc).some(Boolean)), mode + ' : chacun au moins un accessoire');
     ok(armed.every(a => a.weapon.mag === Infinity && a.slot.mag === Infinity && a.burstLeft === a.weapon.burst), mode + ' : chargeur sans fin, rafale prête');
-    ok(police.every(a => !a.weapon.acc), mode + ' : les opérateurs n’en ont pas de plus');
+    // (chacun la poignée de son rang, si son arme en prend une : ni le fusil à pompe, ni le MP7, ni le Glock)
+    ok(police.every(a => !GRIPS[a.weapon.pickup] || a.weapon.acc && a.weapon.acc.grip), mode + ' : les opérateurs aussi');
+    for (const grp of new Set([...armed, ...police].map(a => a.group))) {
+      const [lead, second] = grp.members;
+      ok(!!(lead.weapon.acc || {}).sup === !!SUPPRESSORS[lead.weapon.pickup], mode + ' : le chef de file au silencieux (' + lead.weapon.name + ')');
+      ok(!!(second.weapon.acc || {}).laser === !!LASERS[second.weapon.pickup], mode + ' : le deuxième au laser (' + second.weapon.name + ')');
+    }
   }
   // ramassée sur un corps, l'arme garde ce qu'elle porte, avec un vrai chargeur
   const got = mkGame({ alone: true }).game.pickupSlot({ def: fittedDef('akH', { sup: true, mag: true }), mag: Infinity, reserve: 0 });
@@ -4110,12 +4315,6 @@ test('escorte : chaque carte a son point A, sa zone B, un chemin de l’un à l�
     // et il traverse des pièces tenues : plusieurs portes à passer
     const doors = new Set(route.map(q => map.door(Math.floor(q.x / TILE), Math.floor(q.y / TILE))).filter(Boolean));
     ok(doors.size >= 3, l.name + ' : ' + doors.size + ' portes sur le plus court chemin');
-    // le VIP suit en file : chaque porte intérieure se franchit tout droit, sans meuble à frôler sur une case de part et d'autre
-    for (const d of map.doors) {
-      if (map.breaches.some(b => b.door === d)) continue;
-      const nx = d.horizontal ? 0 : 1, ny = d.horizontal ? 1 : 0;
-      for (let t = -U; t <= U; t += 2) ok(map.circleFree(d.cx + nx * t, d.cy + ny * t, 10, false), l.name + ' : porte ' + d.x / 2 + ',' + d.y / 2 + ' dégagée');
-    }
   }
   for (const l of ALL_LEVELS.filter(l => !ESCORT_LEVELS.includes(l))) { const map = new GameMap(l); ok(!map.vipStart && !map.goal, l.name + ' : ni A ni B hors escorte'); }
 });
@@ -4381,7 +4580,7 @@ test('passer en escorte charge ses propres cartes ; revenir retrouve la mission 
 // Les hommes d'une armée : ceux de ses trinômes du moment.
 const armyOf = (game, team) => game.war.slots[team].flatMap(s => (s ? s.members : []));
 
-test('guerre totale : chaque champ de bataille a ses deux bases, reliées, et des portes dégagées', () => {
+test('guerre totale : chaque champ de bataille a ses deux bases, reliées', () => {
   ok(WAR_LEVELS.length >= 3, 'trois champs de bataille au moins');
   const indoor = Math.max(...LEVELS.filter(l => !l.outdoor).map(l => l.map[0].length * l.map.length));
   for (const l of WAR_LEVELS) {
@@ -4399,7 +4598,16 @@ test('guerre totale : chaque champ de bataille a ses deux bases, reliées, et de
     ok(route && route.length, l.name + ' : un chemin d’une base à l’autre');
     ok(Math.abs(angleDiff(a.angle, Math.atan2(b.cy - a.cy, b.cx - a.cx))) < 1e-6, l.name + ' : chaque base regarde l’autre');
     ok(new Set(map.bases.map(x => map.baseLabel(x))).size === 2, l.name + ' : deux noms distincts (' + map.bases.map(x => map.baseLabel(x)).join(', ') + ')');
+  }
+});
+
+// Un VIP ou un otage qui suit en file, une file de trinôme, un coéquipier qui entre : chaque porte intérieure de chaque
+// carte se franchit tout droit, sans meuble à frôler sur une case de part et d'autre (un angle de meuble y accroche).
+test('chaque carte : chaque porte intérieure est dégagée d’une case de part et d’autre', () => {
+  for (const l of ALL_LEVELS) {
+    const map = new GameMap(l);
     for (const d of map.doors) {
+      if (map.breaches.some(b => b.door === d)) continue;
       const nx = d.horizontal ? 0 : 1, ny = d.horizontal ? 1 : 0;
       for (let t = -U; t <= U; t += 2) ok(map.circleFree(d.cx + nx * t, d.cy + ny * t, 10, false), l.name + ' : porte ' + d.x / 2 + ',' + d.y / 2 + ' dégagée');
     }
@@ -4601,6 +4809,8 @@ test('chaque champ de bataille se joue sans exception, des deux côtés', () => 
       inp.mouse.down = i % 90 < 8;
       inp.keys.KeyD = i % 120 < 30;
       if (i % 150 === 40) inp.pressed.KeyE = true;
+      if (i % 150 === 45) inp.pressed.WheelDown = true;
+      if (i % 150 === 50) inp.pressed.Mouse1 = true;
       if (i % 150 === 90) inp.pressed.Space = true;
       if (i % 150 === 60) inp.pressed.KeyC = true;
       if (i % 210 === 100) inp.pressed.KeyB = true;
@@ -4624,6 +4834,7 @@ function clickAt(g, x, y, button = 0, shift = false) {
   inp.keys.ShiftLeft = shift;
   Object.assign(inp.pressed, button ? { Mouse2: true, Mouse2Up: true } : { Mouse0: true, Mouse0Up: true });
   g.step(1);
+  if (button) g.step(RIGHT_WAIT); // (l'ordre du clic droit attend de savoir s'il est double)
   inp.keys.ShiftLeft = false;
 }
 const stratKey = (g, code, shift = false) => { g.game.input.keys.ShiftLeft = shift; g.press(code); g.game.input.keys.ShiftLeft = false; };
@@ -4656,11 +4867,147 @@ test('stratégie : trois trinômes à vos ordres de chaque côté, vous hors du 
     eq(new Set(armyOf(game, 'ops').map(m => m.name)).size, 9, tag + ' : chacun son nom');
     ok(g.r.zoom < g.r.zoomMax && g.r.canvas.height / g.r.zoom >= 25 * U, tag + ' : la vue montre le champ de bataille de haut');
     ok(document.getElementById('hud').classList.contains('strategy'), tag + ' : le HUD de l’armée');
-    eq(document.querySelectorAll('#stratBox .srow').length, 3, tag + ' : une ligne par trinôme');
+    eq(document.querySelectorAll('#stratArmy .scard').length, 3, tag + ' : une carte par trinôme, dans la barre latérale');
     const at = armyOf(game, 'ops').map(m => ({ x: m.x, y: m.y }));
     game.enemies = []; game.updateWar = () => {};
     g.step(120);
     ok(armyOf(game, 'ops').every((m, i) => dist(m.x, m.y, at[i].x, at[i].y) < 2 * U), tag + ' : sans ordre, ils restent à la base');
+  }
+});
+
+test('stratégie : chaque groupe de la sorte choisie : assaut à quatre derrière un bouclier, standard à trois, précision à deux', () => {
+  const army = [{ type: 'assault', sup: true }, { type: 'normal', sup: false }, { type: 'precision', sup: true }];
+  for (const mode of ['strategy', 'strategyArmed']) {
+    const g = mkStrat({ mode, calm: true, loadout: { ...MODES[mode].loadout, army } });
+    const game = g.game, W = game.war, police = mode === 'strategy', [A, N, P] = W.slots.ops, tag = mode;
+    eq(A.members.length, 4, tag + ' : quatre à l’assaut');
+    eq(N.members.length, 3, tag + ' : trois en standard');
+    eq(P.members.length, 2, tag + ' : deux en précision');
+    eq(game.armySize(), 9, tag + ' : l’effectif de l’armée');
+    eq(new Set(armyOf(game, 'ops').map(m => m.name)).size, 9, tag + ' : chacun son nom');
+    ok(W.slots.enemy.every(s => s.members.length === 3), tag + ' : en face, trois trinômes');
+    ok(A.members.every(m => m.weapon.range <= 11 * U && m.weapon.kind !== 'rifle' && m.weapon.kind !== 'ak'), tag + ' : des armes courtes à l’assaut');
+    ok(N.members.every(m => m.weapon.kind === 'rifle' || m.weapon.kind === 'ak'), tag + ' : des fusils d’assaut en standard');
+    if (police) {
+      ok(A.members[0].shield === SHIELDS[GROUP_TYPES.assault.shield] && A.members[0].weapon.kind === 'pistol', tag + ' : le chef de file au bouclier lourd, l’arme de poing en main');
+      ok(A.members[0].charges === 0 && A.members[1].charges === 1, tag + ' : la charge au suivant');
+    } else ok(A.members.every(m => !m.shield), tag + ' : le groupe armé n’a pas de bouclier');
+    ok(A.members.every(m => !!m.weapon.suppressed === !!SUPPRESSORS[m.weapon.pickup]), tag + ' : mode silencieux, sauf le fusil à pompe');
+    ok(N.members.every(m => !m.weapon.suppressed), tag + ' : mode normal, sans silencieux');
+    ok(P.members.every(m => !!m.weapon.suppressed === !!SUPPRESSORS[m.weapon.pickup]), tag + ' : précision silencieuse (le SVD n’en prend pas)');
+    const [marks, rifle] = P.members; // (le tireur d'élite mène : il tient la direction donnée)
+    ok(marks.weapon.scope && !rifle.weapon.scope, tag + ' : un seul porte la lunette');
+    eq(game.fireRange(marks), AI_SNIPER_RANGE, tag + ' : il tire de plus loin (fusil de précision)');
+    eq(game.fireRange(rifle), AI_FIRE_RANGE, tag + ' : pas son équipier');
+    g.step(1);
+    ok(/Assaut silencieux/.test(document.getElementById('stratArmy').textContent), tag + ' : la sorte sur sa carte');
+    // anéanti, il revient de la même sorte
+    W.slots.ops[0].members.forEach(m => { m.alive = false; });
+    delete game.updateWar;
+    game.updateWar();
+    game.time += WAR_RESPAWN + 1;
+    game.updateWar();
+    ok(W.slots.ops[0] !== A && W.slots.ops[0].members.length === 4 && W.slots.ops[0].members.every(m => m.alive), tag + ' : de retour à quatre');
+  }
+});
+
+test('un agent autonome vise ceux que couvre un bouclier qui arrête ses balles, et le groupe armé lui lance une grenade', () => {
+  const g = mkStrat({ mode: 'strategyArmed', calm: true });
+  const game = g.game, e = game.war.slots.ops[0].members[0];
+  game.war.slots.ops.forEach(s => s.members.forEach(m => { if (m !== e) m.alive = false; }));
+  // deux opérateurs devant lui, en vue : le plus proche derrière un bouclier lourd tourné vers lui
+  let spot = null;
+  for (let k = 0; k < 48 && !spot; k++) {
+    const a = k * TAU / 48, x = e.x + Math.cos(a) * 7 * U, y = e.y + Math.sin(a) * 7 * U;
+    if (game.map.hasLOS(e.x, e.y, x, y) && game.map.circleFree(x, y, 11, false)) spot = { x, y, a };
+  }
+  ok(spot, 'un adversaire en vue à sept cases');
+  const back = Math.atan2(e.y - spot.y, e.x - spot.x);
+  const sh = new Operator(e.x + Math.cos(spot.a) * 5 * U, e.y + Math.sin(spot.a) * 5 * U, back, 'glockop');
+  game.armShield(sh, 'shieldH');
+  const bare = new Operator(spot.x, spot.y, back, 'hk416op');
+  game.enemies = [sh, bare];
+  e.angle = spot.a;
+  ok(game.shieldStops(sh, e), 'le bouclier lourd arrête son AK');
+  eq(game.acquireFor(e, game.enemies), bare, 'il vise l’homme à découvert, plus loin');
+  sh.angle = back + Math.PI;
+  ok(!game.shieldStops(sh, e), 'le bouclier tourné ailleurs ne le protège plus');
+  eq(game.acquireFor(e, game.enemies), sh, 'il vise alors le plus proche');
+  // seul face au bouclier, à portée de grenade : elle part
+  sh.angle = back;
+  game.enemies = [sh];
+  Object.assign(e, { target: sh, reactT: 0, flashCd: 0, act: null, path: [] });
+  e.group.order = null;
+  e.nades.frag = 1; e.nade = 'frag';
+  game.updateAssault(e, 1 / 60);
+  ok(e.act && e.act.type === 'grenade', 'une grenade à fragmentation vers le bouclier');
+});
+
+test('stratégie : le tireur à lunette, arrêté, voit et tire plus loin que les autres', () => {
+  for (const mode of ['strategy', 'strategyArmed']) {
+    const g = mkStrat({ mode, calm: true, loadout: { ...MODES[mode].loadout, army: [{ type: 'precision', sup: false }, { type: 'normal', sup: false }, { type: 'normal', sup: false }] } });
+    const game = g.game, [marks, rifle] = game.war.slots.ops[0].members;
+    // une cible à 15 cases, en vue (au-delà de la vue sans lunette, en deçà de AI_SCOPE_RANGE)
+    let spot = null;
+    for (let k = 0; k < 48 && !spot; k++) {
+      const a = k * TAU / 48, x = marks.x + Math.cos(a) * 15 * U, y = marks.y + Math.sin(a) * 15 * U;
+      if (game.map.hasLOS(marks.x, marks.y, x, y) && game.map.circleFree(x, y, 11, false)) spot = { x, y, a };
+    }
+    ok(spot, mode + ' : une cible à 15 cases en vue');
+    const shots = (who, still) => {
+      const foe = new Enemy(spot.x, spot.y, 0, 'ak');
+      game.enemies = [foe]; game.bullets = [];
+      // (personne d'autre dans l'axe : la discipline de tir le retiendrait)
+      const others = game.mates.filter(m => m !== who && m.alive);
+      others.forEach(m => { m.alive = false; });
+      Object.assign(who, { x: marks.x, y: marks.y, angle: spot.a, target: null, moving: false, stillT: still ? 1 : 0, reactT: 0, fireT: 0, pauseT: 0, act: null });
+      let n = 0;
+      for (let i = 0; i < 120; i++) { game.enemyCombat(who, 1 / 60); n += game.bullets.length; game.bullets = []; }
+      others.forEach(m => { m.alive = true; });
+      return n;
+    };
+    ok(15 * U > marks.viewRange && 15 * U > AI_FIRE_RANGE, mode + ' : hors de vue et de portée sans lunette');
+    ok(shots(marks, true) > 0, mode + ' : l’œil posé, il le voit et tire');
+    eq(shots(marks, false), 0, mode + ' : en marche, la lunette ne sert à rien');
+    eq(shots(rifle, true), 0, mode + ' : son équipier ne le voit pas');
+  }
+});
+
+test('stratégie : un groupe d’assaut marche en file à quatre et tient en ligne, chacun sa place', () => {
+  const g = mkStrat({ calm: true, loadout: { ...MODES.strategy.loadout, army: [{ type: 'assault', sup: false }, { type: 'normal', sup: false }, { type: 'normal', sup: false }] } });
+  const game = g.game, [a] = game.war.slots.ops;
+  stratKey(g, 'Digit1');
+  const p = fieldPoint(game, 10);
+  clickAt(g, p.x, p.y, 2);
+  ok(simUntil(game, () => a.order.type === 'hold', 50), 'il arrive');
+  g.step(150);
+  const lead = game.leaderOf(a), fol = upOf(a).filter(m => m !== lead);
+  ok(lead.shield, 'le bouclier mène');
+  ok(a.order.line && a.order.line.length === 3, 'trois à ranger en ligne');
+  ok(upOf(a).every((m, i) => upOf(a).every((o, j) => j <= i || dist(m.x, m.y, o.x, o.y) > 14)), 'personne l’un sur l’autre');
+  ok(fol.every(m => dist(m.x, m.y, lead.x, lead.y) < 3.5 * U), 'les siens près du chef');
+});
+
+test('stratégie : au briefing, la sorte et le mode de chaque groupe se choisissent, et le groupe se reforme', () => {
+  const key = 'breach.loadout.strategy', saved = localStorage.getItem(key);
+  try {
+    const g = mkStrat({ loadout: { ...MODES.strategy.loadout } });
+    const game = g.game, ui = g.ui;
+    ui.showBriefing();
+    const btn = sel => ui.panel.querySelector('.armybtn' + sel);
+    ok(btn('[data-k="2"][data-type="normal"]').classList.contains('sel'), 'standard par défaut');
+    eq(ui.panel.querySelectorAll('.armybtn').length, 15, 'trois sortes et deux modes par groupe');
+    btn('[data-k="2"][data-type="precision"]').click();
+    eq(game.loadout.army[2].type, 'precision', 'la sorte est retenue');
+    eq(game.war.slots.ops[2].members.length, 2, 'le groupe se reforme à deux');
+    ok(btn('[data-k="2"][data-type="precision"]').classList.contains('sel'), 'son bouton est coché');
+    btn('[data-k="2"][data-sup="1"]').click();
+    ok(game.loadout.army[2].sup && game.war.slots.ops[2].members.every(m => m.weapon.suppressed), 'mode silencieux');
+    ok(/Lunette|lunette/.test(ui.panel.textContent), 'la lunette dans la liste');
+    ui.hideOverlay();
+    game.paused = false;
+  } finally {
+    if (saved === null) localStorage.removeItem(key); else localStorage.setItem(key, saved);
   }
 });
 
@@ -4793,32 +5140,73 @@ function homeDoor(game) {
 }
 const across = (d, o) => (d.horizontal ? o.y - d.cy : o.x - d.cx);
 
-test('stratégie : sur une porte fermée, l’intervention se met en colonne et entre ; le groupe armé la passe', () => {
-  for (const [mode, key] of [['strategy', null], ['strategy', 'KeyB'], ['strategy', 'KeyG'], ['strategyArmed', null]]) {
+// Clic sur le bouton id posé sur la porte d (une colonne de votre armée y attend vos ordres) : le bouton.
+function doorButton(g, d, id) {
+  const game = g.game, mn = (game.strat.menus || []).find(q => q.door === d);
+  ok(mn, 'les boutons de la porte');
+  const it = mn.items.find(q => q.id === id);
+  ok(it, 'bouton ' + id + ' (' + mn.items.map(q => q.id).join(', ') + ')');
+  game.input.mouse.item = { door: d, id };
+  g.press('Mouse0');
+  game.input.mouse.item = null;
+  return it;
+}
+const doorMenu = (game, d) => (game.strat.menus || []).find(q => q.door === d);
+
+test('stratégie : sur une porte fermée, le trinôme se met en colonne, puis ses boutons : entrer, charge, flash, grenade', () => {
+  // [mode, ce qu'on fait sur la porte, le bouton une fois la charge posée]
+  const cases = [['strategy', 'plain'], ['strategy', 'frag'], ['strategy', 'charge', 'flash'], ['strategy', 'KeyG'], ['strategy', 'KeyB', 'plain'], ['strategyArmed', 'frag']];
+  for (const [mode, how, then] of cases) {
     const g = mkGame({ mode, level: 0 });
-    const game = g.game, [a] = game.war.slots.ops, tag = mode + (key ? ' / ' + key : '');
+    const game = g.game, [a] = game.war.slots.ops, tag = mode + ' / ' + how + (then ? ' puis ' + then : '');
     game.enemies = []; game.updateWar = () => {};
     const { d, side } = homeDoor(game);
     ok(d && !game.map.doorPassable(d), tag + ' : une porte fermée près de la base');
     nearDoor(game, 0, d, side);
     stratKey(g, 'Digit1');
-    if (key) { game.input.mouse.x = d.cx; game.input.mouse.y = d.cy; g.step(1); g.press(key); }
+    const key = /^Key/.test(how);
+    if (key) { game.input.mouse.x = d.cx; game.input.mouse.y = d.cy; g.step(1); g.press(how); }
     else clickAt(g, d.cx, d.cy, 2);
-    if (mode === 'strategyArmed') ok(a.order.type === 'move' && Math.sign(across(d, a.order)) === -side, tag + ' : on passe de l’autre côté');
-    else ok(a.order.type === 'stack' && a.order.door === d && a.order.tactic === (key === 'KeyB' ? 'charge' : key === 'KeyG' ? 'flash' : 'auto'), tag + ' : ordre de colonne (' + a.order.type + ')');
-    let stacked = false, flashed = false;
+    ok(a.order.type === 'stack' && a.order.door === d && a.order.tactic === ({ KeyG: 'flash', KeyB: 'charge' }[how] || 'choose'), tag + ' : ordre de colonne (' + a.order.type + ' ' + a.order.tactic + ')');
+    if (!key) {
+      ok(simUntil(game, () => doorMenu(game, d), 25), tag + ' : en place, les boutons apparaissent sur la porte');
+      // (le groupe lâché, ses boutons disparaissent ; repris, ils reviennent)
+      game.strat.sel.clear(); g.step(1);
+      ok(!doorMenu(game, d), tag + ' : pas de boutons pour un groupe qu’on n’a pas choisi');
+      stratKey(g, 'Digit1'); g.step(1);
+      const mn = doorMenu(game, d);
+      ok(mn, tag + ' : choisi de nouveau, ses boutons reviennent');
+      ok(mn.title.startsWith(a.label), tag + ' : au nom du trinôme (' + mn.title + ')');
+      eq(mn.items.map(q => q.id).slice(0, 4).join(','), 'plain,charge,flash,frag', tag + ' : entrer, charge, flash, grenade');
+      if (mode === 'strategyArmed') ok(menuItem(mn, 'charge').off && menuItem(mn, 'flash').off && !menuItem(mn, 'frag').off, tag + ' : le groupe armé n’a que la grenade');
+      g.step(30);
+      ok(!d.broken && !game.map.doorPassable(d) && doorMenu(game, d), tag + ' : il attend vos ordres');
+      doorButton(g, d, how);
+    }
+    if (then) {
+      ok(simUntil(game, () => doorMenu(game, d), 25), tag + ' : la charge posée, les boutons reviennent');
+      const mn = doorMenu(game, d);
+      ok(/charge posée/.test(mn.title) && mn.items.map(q => q.id).join(',') === 'plain,flash,frag', tag + ' : mise à feu, puis entrer, flash, grenade');
+      ok(!d.broken, tag + ' : la charge attend');
+      doorButton(g, d, then);
+    }
+    let stacked = false;
+    const kinds = new Set();
     const inside = () => upOf(a).some(m => Math.sign(across(d, m)) === -side && Math.abs(across(d, m)) > U);
     for (let i = 0; i < 60 * 35 && !(inside() && a.order.type === 'hold'); i++) {
       game.update(1 / 60);
       if (upOf(a).some(m => m.entry)) stacked = true;
-      if (game.grenades.length) flashed = true;
+      for (const gr of game.grenades) kinds.add(gr.kind);
     }
-    if (mode === 'strategy') ok(stacked, tag + ' : ils se sont mis en colonne');
-    if (key === 'KeyB') ok(d.broken, tag + ' : la charge a soufflé la porte');
-    if (key === 'KeyG') ok(flashed, tag + ' : une flash est partie dans la pièce');
+    const want = then || how;
+    ok(stacked, tag + ' : ils se sont mis en colonne');
+    if (how === 'charge' || how === 'KeyB') ok(d.broken, tag + ' : la charge a soufflé la porte');
+    if (want === 'flash' || how === 'KeyG') ok(kinds.has('flash'), tag + ' : une flash est partie dans la pièce');
+    if (want === 'frag') ok(kinds.has('frag'), tag + ' : une grenade est partie dans la pièce');
+    if (want === 'plain') ok(!kinds.size, tag + ' : sans grenade');
     ok(d.broken || game.map.doorPassable(d), tag + ' : la porte est ouverte');
     ok(inside(), tag + ' : ils sont entrés');
-    ok(a.order.type === 'hold', tag + ' : ils tiennent la pièce (' + (a.order && a.order.type) + ')');
+    ok(a.order.type === 'hold' && upOf(a).length === 3, tag + ' : ils tiennent la pièce, indemnes (' + (a.order && a.order.type) + ')');
   }
 });
 
@@ -4827,7 +5215,7 @@ test('stratégie : G lance une grenade au curseur ; Espace arrête le temps, pas
   const game = g.game, S = game.strat, [a] = game.war.slots.ops;
   const before = upOf(a).reduce((n, m) => n + m.flashbangs, 0);
   g.press('KeyG');
-  ok(/Aucun trinôme/.test(game.message.text), 'G sans trinôme choisi : on le dit');
+  ok(/Aucun groupe/.test(game.message.text), 'G sans groupe choisi : on le dit');
   stratKey(g, 'Digit1');
   const lead = game.leaderOf(a), q = game.freeSpotNear(lead.x + Math.cos(a.order.angle) * 4 * U, lead.y + Math.sin(a.order.angle) * 4 * U);
   game.input.mouse.x = q.x; game.input.mouse.y = q.y;
@@ -4875,100 +5263,233 @@ test('stratégie : sous vos ordres, un trinôme ne lance pas de grenade de lui-m
   ok(upOf(a).some(m => m.lastKnown), 'il a entendu l’adversaire');
   eq(n, 0, 'aucune grenade lancée sur un bruit');
   eq(upOf(a).reduce((t, m) => t + m.flashbangs, 0), before, 'il les garde toutes');
-  // laissé à ratisser seul, il reprend l'initiative
+  // laissé à ratisser seul : toujours rien sur un bruit (chacun lançait la sienne sur le dernier entendu)
   g.press('KeyR');
   run(20);
-  ok(upOf(a).reduce((t, m) => t + m.flashbangs, 0) < before, 'sans ordre, il en lance comme en guerre totale');
-});
-
-test('stratégie : le menu d’un trinôme vaut pour lui seul, celui du sol pour les trinômes choisis', () => {
-  const g = mkStrat({ calm: true });
-  const game = g.game, S = game.strat, [a, b] = game.war.slots.ops;
-  let mn = openMenuAt(g, b.members[0].x, b.members[0].y);
-  eq(mn.kind, 'unit', 'sur l’un de vos hommes');
-  eq(mn.group, b, 'son trinôme');
-  ok(mn.title.startsWith(b.label), 'nommé en titre : ' + mn.title);
-  for (const id of ['select', 'hold', 'sweep', 'rush', 'focus']) ok(menuItem(mn, id), 'trinôme : ' + id);
-  pickMenu(g, 'select');
-  eq([...S.sel].join(), '1', 'le choisir');
-  openMenuAt(g, b.members[0].x, b.members[0].y);
-  pickMenu(g, 'sweep');
-  eq(b.order, null, 'il ratisse seul');
-  ok(a.order && a.order.type === 'hold', 'les autres gardent leur ordre');
-  openMenuAt(g, b.members[0].x, b.members[0].y);
-  eq(menuItem(game.menu, 'sweep').off, 'il ratisse déjà', 'déjà en train de ratisser : grisé');
-  pickMenu(g, 'rush');
-  ok(b.rush && !a.rush, 'au pas de course, lui seul');
-  // le sol : les trinômes choisis
-  stratKey(g, 'Digit1');
-  const p = fieldPoint(game, 10);
-  mn = openMenuAt(g, p.x, p.y);
-  eq(mn.kind, 'zone', 'au sol');
-  ok(mn.title.includes(a.label) && !mn.title.includes(b.label), 'les trinômes choisis en titre : ' + mn.title);
-  pickMenu(g, 'move');
-  ok(a.order.type === 'move' && dist(a.order.x, a.order.y, p.x, p.y) < U, 'il y va');
-  S.sel = new Set();
-  mn = openMenuAt(g, p.x, p.y);
-  eq(menuItem(mn, 'move').off, 'aucun trinôme choisi', 'sans trinôme choisi : grisé');
-  pickMenu(g, 'pause');
-  ok(S.frozen, 'pause tactique depuis le menu');
-  mn = openMenuAt(g, p.x, p.y);
-  ok(mn, 'le menu s’ouvre en pause tactique');
-  pickMenu(g, 'all');
-  eq(S.sel.size, 3, 'toute l’armée');
-  // la ligne sous le curseur, vue de haut aussi
-  openMenuAt(g, p.x, p.y);
-  g.step(1);
-  const r = g.r.menuRects[0];
-  g.r.mouse.sx = r.x + 5; g.r.mouse.sy = r.y + r.h / 2;
-  eq(g.r.menuItemAt(), 0, 'la ligne sous le curseur');
-  g.press('Mouse2');
-  eq(game.menu, null, 'le clic droit ferme le menu');
-  ok(!S.aim, '… sans donner d’ordre');
-  // le trinôme visé tombe : son menu se ferme
-  openMenuAt(g, b.members[0].x, b.members[0].y);
-  b.members.forEach(m => { m.alive = false; });
-  g.step(1);
-  eq(game.menu, null, 'trinôme anéanti : menu fermé');
-});
-
-test('stratégie : le menu d’une porte fermée (colonne, flash, charge ; le groupe armé la franchit) et d’un adversaire', () => {
-  for (const mode of ['strategy', 'strategyArmed']) {
-    const g = mkGame({ mode, level: 0 });
-    const game = g.game, [a] = game.war.slots.ops;
-    game.enemies = []; game.updateWar = () => {};
-    const { d, side } = homeDoor(game);
-    nearDoor(game, 0, d, side);
-    stratKey(g, 'Digit1');
-    const mn = openMenuAt(g, d.cx, d.cy);
-    eq(mn.kind, 'door', mode + ' : sur une porte fermée');
-    if (mode === 'strategy') {
-      for (const id of ['stack', 'flash', 'charge']) ok(menuItem(mn, id) && !menuItem(mn, id).off, mode + ' : ' + id);
-      pickMenu(g, 'charge');
-      ok(a.order.type === 'stack' && a.order.door === d && a.order.tactic === 'charge', mode + ' : en colonne, entrée à la charge');
-    } else {
-      ok(menuItem(mn, 'cross') && !menuItem(mn, 'stack') && !menuItem(mn, 'charge'), mode + ' : pas de colonne, on la franchit');
-      pickMenu(g, 'cross');
-      ok(a.order.type === 'move' && Math.sign(across(d, a.order)) === -side, mode + ' : on passe de l’autre côté');
-    }
+  eq(a.order, null, 'il ratisse');
+  eq(n, 0, 'ratisser : aucune grenade sur un bruit');
+  // sur un adversaire vu à l'instant, un seul des siens lance
+  const [m1, m2] = upOf(a).filter(m => !m.act && m.flashbangs > 0);
+  let aim = null;
+  for (let k = 0; k < 32 && !aim; k++) {
+    const t = k * TAU / 32, x = m1.x + Math.cos(t) * 4 * U, y = m1.y + Math.sin(t) * 4 * U;
+    if (game.clearThrow(m1.x, m1.y, x, y) && game.clearThrow(m2.x, m2.y, x, y) && upOf(a).every(o => dist(o.x, o.y, x, y) > 2.5 * U)) aim = { x, y };
   }
-  const g = mkStrat({ noEnemyAI: true });
-  const game = g.game, W = game.war, [a] = W.slots.ops;
-  game.updateWar = () => {};
-  const foe = W.slots.enemy[0].members[0];
-  game.enemies = [foe];
-  foe.hunter = false;
-  const q = fieldPoint(game, 9);
-  Object.assign(foe, { x: q.x, y: q.y, hp: 300, maxHp: 300 });
-  for (const m of upOf(a)) m.angle = Math.atan2(q.y - m.y, q.x - m.x);
-  g.step(2);
-  ok(foe.visible, 'l’adversaire est en vue');
+  ok(aim, 'un point où lancer');
+  for (const m of [m1, m2]) Object.assign(m, { lastKnown: { ...aim }, flashCd: 0 });
+  a.contact = { x: aim.x, y: aim.y, t: game.time - 5, seen: false, foe: null };
+  ok(!game.maybeFlash(m1, 1 / 60), 'un contact entendu : pas de grenade');
+  a.contact = { x: aim.x, y: aim.y, t: game.time, seen: true, foe };
+  ok(game.maybeFlash(m1, 1 / 60) && m1.act && m1.act.type === 'grenade', 'un adversaire vu à l’instant : il lance');
+  ok(!game.maybeFlash(m2, 1 / 60), 'mais un seul du groupe à la fois');
+});
+
+test('stratégie : la barre latérale : vos trinômes, vos ordres en boutons, une grenade explosive au clic', () => {
+  const g = mkStrat({ calm: true });
+  const game = g.game, S = game.strat, [a, b, c] = game.war.slots.ops;
+  g.step(1);
+  eq(document.querySelectorAll('#stratArmy .scard').length, 3, 'une carte par trinôme');
+  const btn = id => document.querySelector(`#stratCmds [data-cmd="${id}"]`);
+  for (const id of ['all', 'pause', 'minimap']) ok(btn(id), 'bouton ' + id);
+  ok(['hold', 'sweep', 'rush', 'focus', 'flash', 'frag'].every(id => !btn(id)), 'sans groupe choisi : pas d’ordres de groupe');
+  game.stratCommand('hold');
+  ok(/aucun groupe choisi/.test(game.message.text), 'un ordre sans groupe dit pourquoi');
+  game.stratCommand('sel1');
+  eq([...S.sel].join(), '1', 'la carte choisit le trinôme');
+  g.step(1);
+  for (const id of ['hold', 'sweep', 'rush', 'focus', 'flash', 'frag']) ok(btn(id), 'bouton ' + id);
+  ok(document.querySelector('#stratArmy [data-cmd="sel1"]').classList.contains('sel') && !btn('hold').classList.contains('off'), 'encadré, et ses ordres apparaissent');
+  S.sel.clear(); g.step(1);
+  ok(!btn('hold'), 'le groupe lâché, ses ordres disparaissent');
+  game.stratCommand('sel1'); g.step(1);
+  ok(btn('hold'), 'et reviennent quand on le reprend');
+  ok(/Delta|Marko|Sacha/.test(document.querySelector('#stratCmds .label').textContent), 'les ordres disent à qui ils vont');
+  game.stratCommand('sweep');
+  ok(b.order === null && a.order.type === 'hold', 'ratisser : lui seul');
+  game.stratCommand('rush');
+  ok(b.rush && !a.rush, 'au pas de course, lui seul');
+  g.step(1);
+  ok(btn('rush').classList.contains('on'), 'le bouton reste allumé');
+  // une grenade explosive : le bouton, puis un clic sur le terrain
+  eq(upOf(b).reduce((n, m) => n + m.nades.frag, 0), 3 * STRAT_FRAGS, 'une grenade explosive par homme');
+  game.stratHold([b]);
+  for (const o of [...upOf(a), ...upOf(c)]) o.alive = false; // (personne des vôtres sous la grenade)
+  game.stratCommand('frag');
+  eq(S.nadeAim, 'frag', 'le bouton attend un clic sur le terrain');
+  g.press('Mouse2');
+  ok(S.nadeAim === null && !S.aim, 'clic droit : on renonce, sans donner d’ordre');
+  game.stratCommand('frag');
+  const lead = game.leaderOf(b), ang = W => W.bases.ops.angle;
+  const q = game.freeSpotNear(lead.x + Math.cos(ang(game.war)) * 5.5 * U, lead.y + Math.sin(ang(game.war)) * 5.5 * U);
+  clickAt(g, q.x, q.y);
+  eq(S.nadeAim, null, 'le clic l’a lancée');
+  eq(upOf(b).reduce((n, m) => n + m.nades.frag, 0), 3 * STRAT_FRAGS - 1, 'une de moins');
+  ok(simUntil(game, () => game.grenades.length > 0, 2) && game.grenades[0].kind === 'frag', 'une grenade à fragmentation part');
+  // souris verrouillée : le bouton sous le curseur dessiné (la scène des tests ramenée à l'écran le temps de viser)
+  const pn = document.getElementById('stratPanel'), css = pn.style.cssText;
+  pn.style.cssText = 'position: fixed; left: 0; top: 0; z-index: 99; background: #000';
+  try {
+    const r = btn('pause').getBoundingClientRect(), hit = g.ui.panelHit(r.left + r.width / 2, r.top + r.height / 2);
+    ok(hit && hit.cmd === 'pause', 'le bouton sous le curseur (' + JSON.stringify(hit && hit.cmd) + ')');
+    const band = g.ui.panelWidth(), hit2 = g.ui.panelHit(window.innerWidth - 3, window.innerHeight - 3);
+    ok(hit2 && hit2.cmd === null, 'au bord droit, dans la bande, entre les blocs : la barre, pas le terrain');
+    eq(g.ui.panelHit(window.innerWidth - band - 10, window.innerHeight - 3), null, 'à gauche de la bande : le terrain');
+  } finally { pn.style.cssText = css; }
+});
+
+test('stratégie : double clic droit, le menu de la zone (molette, E ou clic) ; un clic simple garde son ordre', () => {
+  const g = mkStrat({ calm: true });
+  const game = g.game, S = game.strat, inp = game.input, [a] = game.war.slots.ops;
+  const lead = game.leaderOf(a), ang = game.war.bases.ops.angle;
+  const q = game.freeSpotNear(lead.x + Math.cos(ang) * 5 * U, lead.y + Math.sin(ang) * 5 * U);
+  const press = () => { Object.assign(inp.mouse, { x: q.x, y: q.y, rdown: false }); Object.assign(inp.pressed, { Mouse2: true, Mouse2Up: true }); g.step(1); };
+  press(); g.step(RIGHT_WAIT);
+  ok(!S.zone && /aucun groupe|Aucun groupe/i.test(game.message.text), 'sans groupe choisi : rien, et on le dit');
   stratKey(g, 'Digit1');
-  const mn = openMenuAt(g, foe.x, foe.y);
-  eq(mn.kind, 'foe', 'sur un adversaire en vue');
-  ok(menuItem(mn, 'grenade'), 'une grenade sur lui');
-  pickMenu(g, 'attack');
-  ok(a.order.type === 'attack' && a.order.foe === foe, 'ordre d’attaque');
+  const before = a.order;
+  press(); press();
+  ok(S.zone && S.zone.kind === 'zone', 'deux clics : le menu de la zone');
+  g.step(RIGHT_WAIT);
+  eq(a.order, before, 'le premier clic n’a pas donné d’ordre');
+  for (const id of ['cancel', 'gflash', 'gfrag', 'move', 'rush']) ok(S.zone.items.some(it => it.id === id), 'ligne ' + id);
+  // la molette choisit (sans zoomer), E valide
+  const zoom = S.zoom;
+  S.zone.sel = 'gfrag';
+  g.press('WheelDown');
+  eq(S.zone.sel, 'move', 'molette : la ligne suivante');
+  eq(S.zoom, zoom, 'sans zoomer');
+  g.press('KeyE');
+  ok(!S.zone && a.order.type === 'move' && dist(a.order.x, a.order.y, q.x, q.y) < U, 'E : ils y vont');
+  // une flash par le menu
+  game.stratHold([a]); g.step(1);
+  press(); press();
+  const n = upOf(a).reduce((t, m) => t + m.nades.flash, 0);
+  const it = S.zone.items.find(o => o.id === 'gflash');
+  if (it.off) ok(/trajectoire|flash/.test(it.off), 'flash grisée, avec la raison : ' + it.off);
+  else {
+    S.zone.sel = 'gflash'; g.press('KeyE');
+    eq(upOf(a).reduce((t, m) => t + m.nades.flash, 0), n - 1, 'E : une flash part');
+  }
+  // un clic ailleurs ferme le menu sans rien faire
+  press(); press();
+  ok(S.zone, 'rouvert');
+  inp.pressed.Mouse0 = true; g.step(1);
+  ok(!S.zone, 'un clic ailleurs le ferme');
+});
+
+test('stratégie : la barre latérale est une bande à part, le terrain s’arrête à son bord', () => {
+  const g = mkStrat({ calm: true });
+  const game = g.game, r = g.r, m = game.map;
+  g.step(1);
+  const band = (r.panelW || STRAT_PANEL) * r.dpr;
+  near(r.viewW(), r.canvas.width - band, 1, 'le terrain : l’écran moins la bande');
+  // toute la carte à l'écran (zoom le plus faible) : elle est centrée sur la part du terrain, pas sur l'écran
+  r.zoom = r.zoomMin; r.cam.x = 0; r.clampCam(); r.stratCamera(0);
+  if (m.w * TILE + 4 * U <= r.viewW() / r.zoom) near(m.w * TILE / 2 * r.zoom + r.tx, r.viewW() / 2, 2, 'centrée sur le terrain');
+  // au bord droit, la carte s'arrête au bord de la bande
+  r.zoom = r.zoomMax; r.cam.x = 1e9; r.clampCam();
+  r.stratCamera(0);
+  near((m.w * TILE + 2 * U) * r.zoom + r.tx, r.viewW(), 2, 'le bord de la carte (et ses deux cases de marge) touche la bande');
+  const v = r.viewRect();
+  ok(v.x + v.w <= Math.ceil((r.viewW() - r.tx) / r.zoom) + 5, 'le brouillard ne se recompose que sur le terrain');
+});
+
+test('fusils de précision : TRG 22 et SVD, une lunette bien plus forte que la lunette d’appoint', () => {
+  ok(PRIMARY_WEAPONS.includes('trg22') && MODES.squadsArmed.primaries.includes('svdP'), 'au briefing de chaque camp');
+  for (const key of ['trg22', 'svdP']) {
+    const w = WEAPONS[key];
+    ok(w.scope && w.optic && scopeOf(w) !== SCOPE, key + ' : sa lunette montée d’origine');
+    eq(w.pen, 3, key + ' : une balle de fusil');
+    const g = mkGame({ alone: true, mode: key === 'svdP' ? 'squadsArmed' : 'assault', loadout: { ...MODES[key === 'svdP' ? 'squadsArmed' : 'assault'].loadout, primary: key } });
+    const game = g.game, p = game.player;
+    eq(p.slot.def, w, key + ' en main');
+    Object.assign(p, { moving: false, stillT: 2 });
+    ok(game.scoped(p), key + ' : à l’arrêt, l’œil posé');
+    const sniper = game.spreadOf(p, 20 * U), sight = game.viewOf(p, p.angle);
+    // le même tireur, un HK416 à lunette d'appoint en main
+    const g2 = mkGame({ alone: true, loadout: { primary: 'hk416', sidearm: 'glock17', acc: { hk416: { scope: true } } } });
+    const p2 = g2.game.player;
+    Object.assign(p2, { moving: false, stillT: 2, angle: p.angle });
+    ok(g2.game.scoped(p2), 'le HK416 aussi, à l’arrêt');
+    ok(sniper < g2.game.spreadOf(p2, 20 * U) / 2, key + ' : à vingt cases, deux fois plus précis au moins');
+    ok(sight > g2.game.viewOf(p2, p2.angle), key + ' : il voit plus loin dans l’axe');
+    // la vue recule, lunette à l'œil
+    const z = g.r.footZoom;
+    g.step(90);
+    ok(g.r.zoom < z * 0.95, key + ' : la vue recule (' + (g.r.zoom / z).toFixed(2) + ')');
+    p.moving = true; p.stillT = 0;
+    ok(!game.scoped(p) && game.spreadOf(p, 20 * U) > sniper * 5, key + ' : en marche, plus de lunette, et il disperse');
+    // il tire, se vide et se recharge
+    p.moving = false;
+    const mag = p.slot.mag;
+    p.fireT = 0; game.fireWeapon(p);
+    eq(p.slot.mag, mag - 1, key + ' : un coup part');
+  }
+  // l'IA : le tireur d'élite d'un groupe de précision tire de plus loin que la lunette d'appoint
+  const g = mkStrat({ calm: true, loadout: { ...MODES.strategy.loadout, army: [{ type: 'precision', sup: false }, { type: 'normal', sup: false }, { type: 'normal', sup: false }] } });
+  const marks = g.game.war.slots.ops[0].members[0];
+  eq(g.game.leaderOf(g.game.war.slots.ops[0]), marks, 'il mène son binôme');
+  eq(marks.weapon.pickup, 'trg22', 'le tireur du groupe de précision porte un TRG 22');
+  eq(g.game.fireRange(marks), AI_SNIPER_RANGE, 'il ouvre le feu jusqu’à AI_SNIPER_RANGE');
+  eq(g.game.pickupSlot(marks.slot).def.name, 'Sako TRG 22', 'ramassé, c’est le fusil du joueur');
+});
+
+test('double clic droit : le menu de la zone, une grenade lancée là ; un clic simple garde son ordre', () => {
+  const g = mkGame({ noEnemyAI: true });
+  const game = g.game, p = game.player, inp = game.input, map = game.map;
+  game.enemies = []; game.hostages = [];
+  // un point libre à quatre cases, en vue et à portée de lancer
+  let at = null;
+  for (let k = 0; k < 32 && !at; k++) {
+    const t = k * TAU / 32, x = p.x + Math.cos(t) * 4 * U, y = p.y + Math.sin(t) * 4 * U;
+    if (map.circleFree(x, y, 12, true) && game.clearThrow(p.x, p.y, x, y) && !game.doorAtPoint(x, y)) at = { x, y };
+  }
+  ok(at, 'un point où lancer');
+  const right = () => {
+    inp.mouse.x = at.x; inp.mouse.y = at.y;
+    inp.pressed.Mouse2 = true; inp.mouse.rdown = true; g.step(1);
+    inp.mouse.rdown = false; inp.pressed.Mouse2Up = true; g.step(1);
+  };
+  // un clic simple : l'ordre part, une fois passé le délai du double clic
+  right();
+  ok(game.mates.every(m => m.order === 'follow'), 'pas tout de suite');
+  g.step(RIGHT_WAIT);
+  ok(game.mates.every(m => m.order === 'move'), 'puis ils y vont');
+  game.orderFollow();
+  g.step(RIGHT_WAIT);
+  // deux clics : le menu de la zone, et aucun ordre
+  right(); right();
+  const mn = game.menu;
+  ok(mn && mn.kind === 'zone', 'le menu de la zone');
+  g.step(RIGHT_WAIT);
+  ok(game.mates.every(m => m.order === 'follow'), 'le premier clic n’a pas donné d’ordre');
+  eq(mn.sel, 'pflash', 'lancer une flash, choisi d’avance');
+  for (const id of ['cancel', 'pflash', 'pfrag', 'mflash', 'mfrag', 'move']) ok(menuItem(mn, id), 'ligne ' + id);
+  // E : vous la lancez là
+  const n = p.nades.flash;
+  g.press('KeyE');
+  ok(!game.menu && p.act && p.act.type === 'grenade', 'E : le geste du lancer');
+  ok(simUntil(game, () => game.grenades.length > 0, 2), 'la grenade part');
+  eq(p.nades.flash, n - 1, 'une flash de moins');
+  const gr = game.grenades[0];
+  for (let i = 0; i < 120 && game.grenades.includes(gr); i++) game.update(1 / 60);
+  ok(dist(gr.x, gr.y, at.x, at.y) < 1.2 * U, 'elle tombe là (' + (dist(gr.x, gr.y, at.x, at.y) / U).toFixed(1) + ' case)');
+  // par un coéquipier : celui qui a une trajectoire libre
+  game.grenades = []; g.step(RIGHT_WAIT);
+  right(); right();
+  const m2 = game.menu, line = menuItem(m2, 'mflash');
+  const who = game.zoneThrower('flash', at);
+  if (who) {
+    const k = who.nades.flash;
+    game.menuPick(line);
+    ok(who.act && who.act.type === 'grenade' && who.nades.flash === k - 1, who.name + ' lance une flash');
+  } else ok(line.off, 'sans trajectoire libre, la ligne est grisée');
+  // une grenade à fragmentation : jamais sur les vôtres
+  p.nades.frag = 1;
+  game.mates[0].x = at.x; game.mates[0].y = at.y;
+  game.menu = { kind: 'zone', at, sel: null, title: '', items: [] };
+  game.menuItems(game.menu);
+  eq(menuItem(game.menu, 'pfrag').off, 'trop près des vôtres', 'frag sur un coéquipier : grisée');
 });
 
 test('stratégie : un trinôme anéanti revient sous son numéro, toujours choisi, et attend à la base', () => {
@@ -4980,8 +5501,8 @@ test('stratégie : un trinôme anéanti revient sous son numéro, toujours chois
   old.members.forEach(m => game.damage(m, 1e9, foe, 0));
   g.step(2);
   eq(W.lost, 1, 'un trinôme perdu');
-  ok(/trinôme Delta est anéanti/.test(game.message.text), 'annoncé par son nom (' + game.message.text + ')');
-  ok(/Anéanti — retour dans/.test(document.querySelectorAll('#stratBox .srow')[1].textContent), 'le HUD décompte son retour');
+  ok(/groupe Delta est anéanti/.test(game.message.text), 'annoncé par son nom (' + game.message.text + ')');
+  ok(/Anéanti — retour dans/.test(document.querySelectorAll('#stratArmy .scard')[1].textContent), 'le HUD décompte son retour');
   stratKey(g, 'Digit2');
   ok(/anéanti/.test(game.message.text), '2 : il n’y a personne à choisir');
   game.time += WAR_RESPAWN; g.step(2);
@@ -5019,7 +5540,7 @@ test('stratégie : la vue se déplace, zoome vers le curseur et va où l’on cl
   inp.pressed.Mouse0 = true; g.step(1);
   inp.mouse.down = false; inp.pressed.Mouse0Up = true; g.step(1);
   inp.mouse.mini = false;
-  const hw = r.canvas.width / 2 / r.zoom;
+  const hw = r.viewW() / 2 / r.zoom; // (le terrain s'arrête à la barre latérale)
   near(r.cam.x, clamp(w.x, hw - 2 * U, game.map.w * TILE - hw + 2 * U), 2, 'la vue y va');
   ok(game.strat.sel.size === 0 && !game.strat.box, 'sans rien choisir');
   ok(c0.x !== undefined, '(vue de départ notée)');
@@ -5034,7 +5555,7 @@ test('stratégie : briefing (armée, commandes, camp), pause et fin de bataille'
     ui.showBriefing();
     ok(!ui.panel.querySelector('.wcard') && !ui.panel.querySelector('#waccs'), 'pas d’équipement à choisir');
     eq(ui.panel.querySelectorAll('.armyrow').length, 3, 'vos trois trinômes');
-    ok(W.slots.ops.every(s => ui.panel.textContent.includes('Trinôme ' + s.label) && s.members.every(m => ui.panel.textContent.includes(m.name + ' : ' + m.weapon.name))), 'nommés, chacun avec son arme');
+    ok(W.slots.ops.every(s => ui.panel.textContent.includes('Groupe ' + s.label) && s.members.every(m => ui.panel.textContent.includes(m.name + ' : ' + m.weapon.name))), 'nommés, chacun avec son arme');
     ok(ui.panel.querySelector('.cmds') && /pause tactique/.test(ui.panel.querySelector('.cmds').textContent), 'les commandes');
     ok(/3\. Armée/.test(ui.panel.querySelector('.steps b').textContent), 'l’étape s’appelle « Armée »');
     ok(/Au combat/.test(ui.panel.querySelector('#ovGo').textContent) && /Votre base/.test(ui.panel.textContent), 'la base, et « Au combat »');
@@ -5043,7 +5564,7 @@ test('stratégie : briefing (armée, commandes, camp), pause et fin de bataille'
     camps.find(b => b.dataset.mode === 'strategyArmed').click();
     eq(game.mode, 'strategyArmed', 'le groupe armé');
     ok(armyOf(game, 'enemy').every(e => e instanceof Operator) && armyOf(game, 'ops').every(m => m.nade === 'frag'), 'l’intervention en face, des grenades chez vous');
-    ok(!/en colonne/.test(ui.panel.querySelector('.cmds').textContent), 'pas de colonne de ce côté');
+    ok(!/poser une charge|flash au curseur/.test(ui.panel.querySelector('.cmds').textContent) && /grenade/.test(ui.panel.querySelector('.cmds').textContent), 'ni charge ni flash de ce côté, des grenades');
     ui.panel.querySelector('#ovGo').click();
     ok(!game.paused && !ui.isOpen(), 'c’est parti');
     game.setPaused(true);
@@ -5055,7 +5576,7 @@ test('stratégie : briefing (armée, commandes, camp), pause et fin de bataille'
     game.time = WAR_TIME; g.step(1);
     eq(game.over, 'win', 'gagnée au décompte');
     const sc = game.score;
-    ok(['Bataille', 'Score des armées', 'Trinômes anéantis', 'Hommes perdus'].every(n => sc.lines.some(l => l.label === n)), 'la note de l’armée');
+    ok(['Bataille', 'Score des armées', 'Groupes anéantis', 'Hommes perdus'].every(n => sc.lines.some(l => l.label === n)), 'la note de l’armée');
     ok(!sc.lines.some(l => /Vos éliminations/.test(l.label)), 'pas de note de tireur');
     ui.showEnd('win');
     ok(/remportée/.test(ui.panel.querySelector('h1').textContent) && ui.panel.querySelector('#endKills').textContent === '14', 'l’écran de fin');
@@ -5121,7 +5642,7 @@ test('stratégie : assaut : sans renforts, perdu quand vos trois trinômes sont 
   for (const o of g2.game.mates) g2.game.damage(o, 999, null, 0);
   g2.step(2);
   eq(g2.game.over, 'lose', 'perdu');
-  ok(/trois trinômes/.test(g2.game.loseReason), 'pourquoi');
+  ok(/trois groupes/.test(g2.game.loseReason), 'pourquoi');
   ok(g2.game.score.total <= 49 && g2.game.score.grade === 'D', 'noté comme un échec');
 });
 
@@ -5286,6 +5807,8 @@ test('chaque carte d’escorte se joue sans exception', () => {
       inp.mouse.down = i % 90 < 8;
       inp.keys.KeyD = i % 120 < 30;
       if (i % 150 === 40) inp.pressed.KeyE = true;
+      if (i % 150 === 45) inp.pressed.WheelDown = true;
+      if (i % 150 === 50) inp.pressed.Mouse1 = true;
       if (i % 150 === 90) inp.pressed.Space = true;
       if (i % 150 === 120) inp.pressed.KeyH = true;
       if (i % 210 === 100) inp.pressed.KeyB = true;
@@ -5295,11 +5818,500 @@ test('chaque carte d’escorte se joue sans exception', () => {
   }
 });
 
+// ---------------------------------------------------------------- couvert bas
+// Une salle d'essai : un muret au milieu (rangée 6), un tireur au nord, des cibles au sud.
+const COVER_ROOM = { name: 'Essai du couvert', map: [
+  '##########################',
+  '#........................#',
+  '#........................#',
+  '#........................#',
+  '#........................#',
+  '#........................#',
+  '#........mmmmmm..........#',
+  '#........................#',
+  '#........................#',
+  '#........................#',
+  '#........................#',
+  '#........................#',
+  '##########################',
+] };
+const cellC = (x, y) => ({ x: x * U + U / 2, y: y * U + U / 2 }); // centre d'une case de carte
+
+test('couvert bas : un muret protège qui s’y tient collé d’un tir venu de loin, pas qui tire par-dessus', () => {
+  const m = new GameMap(COVER_ROOM);
+  const wall = m.props.filter(p => p.type === 'lowwall');
+  eq(wall.length, 6, 'six cases de muret');
+  ok(wall.every(p => m.coverAt(p.x, p.y) === p) && !m.blocksSight(wall[0].x, wall[0].y), 'couvert bas : il arrête le pas, pas le regard');
+  const far = cellC(12, 1), behind = cellC(12, 7), away = cellC(12, 11), close = cellC(12, 5);
+  ok(m.hasLOS(far.x, far.y, behind.x, behind.y), 'on voit par-dessus');
+  ok(m.coverShields(far.x, far.y, behind.x, behind.y), 'tapi derrière, il est à l’abri d’un tir venu de loin');
+  ok(!m.coverShields(far.x, far.y, away.x, away.y), 'loin derrière le muret, plus d’abri');
+  ok(!m.coverShields(close.x, close.y, behind.x, behind.y), 'qui s’appuie au muret tire par-dessus');
+  ok(!m.coverShields(behind.x, behind.y, far.x, far.y), 'et celui qu’il abrite tire par-dessus lui aussi');
+  // la voiture : un bloc de cases n'en fait qu'une, dessinée par sa première case
+  const car = new GameMap({ name: 'Essai voiture', map: ['########', '#......#', '#.VV...#', '#.VV...#', '#.VV...#', '#.VV...#', '#......#', '########'] });
+  const cars = car.props.filter(p => p.type === 'car');
+  ok(cars.length === 8 && cars.every(p => p.car === cars[0].car) && cars[0].car.w === 2 && cars[0].car.h === 4, 'une voiture de deux cases sur quatre');
+  ok(cars.filter(p => p.car.lead === p).length === 1, 'dessinée une fois');
+  const c = document.createElement('canvas').getContext('2d');
+  for (const p of [...wall, ...cars]) Sprites.paintProp(c, p);
+});
+
+test('couvert bas : la plupart des balles s’arrêtent dans le muret, les éclats d’une grenade aussi', () => {
+  const g = mkGame({ alone: true });
+  const game = g.game, p = game.player;
+  game.map = new GameMap(COVER_ROOM);
+  Object.assign(p, cellC(12, 1));
+  p.spreadMul = 0; p.hp = p.maxHp = 1e9;
+  const shots = (t, n) => {
+    const hp0 = t.hp;
+    let hits = 0;
+    for (let i = 0; i < n; i++) {
+      p.angle = Math.atan2(t.y - p.y, t.x - p.x); p.bloom = 0; p.slot.mag = 30; p.fireT = 0;
+      const before = t.hp;
+      game.fireWeapon(p);
+      for (let k = 0; k < 10 && game.bullets.length; k++) game.updateBullets(1 / 60);
+      if (t.hp < before) hits++;
+    }
+    t.hp = hp0;
+    return hits;
+  };
+  const hidden = new Enemy(cellC(12, 7).x, cellC(12, 7).y, 0, 'ak'), open = new Enemy(cellC(20, 7).x, cellC(20, 7).y, 0, 'ak');
+  for (const e of [hidden, open]) Object.assign(e, { hp: 1e9, maxHp: 1e9, viewRange: 0 });
+  game.enemies = [hidden, open];
+  const hHits = shots(hidden, 60), oHits = shots(open, 20);
+  ok(oHits >= 19, 'à découvert, il est touché (' + oHits + ' / 20)');
+  ok(hHits <= 60 * 0.35 && hHits >= 1, 'à l’abri, le muret prend l’essentiel (' + hHits + ' / 60 au but)');
+  // la grenade : même distance, l'un derrière le muret, l'autre à découvert
+  const a = new Enemy(cellC(10, 7).x, cellC(10, 7).y, 0, 'ak'), b = new Enemy(cellC(10, 3).x, cellC(10, 3).y, 0, 'ak');
+  for (const e of [a, b]) Object.assign(e, { hp: 1e4, maxHp: 1e4 });
+  game.enemies = [a, b];
+  const at = { x: a.x, y: a.y - 2 * U };
+  near(dist(at.x, at.y, b.x, b.y), dist(at.x, at.y, a.x, a.y), U, 'les deux à même distance de l’explosion');
+  game.detonateFrag({ x: at.x, y: at.y, thrower: p, team: 'ops', kind: 'frag' });
+  ok(1e4 - a.hp < (1e4 - b.hp) * 0.5, 'les éclats s’arrêtent dans le muret (' + Math.round(1e4 - a.hp) + ' contre ' + Math.round(1e4 - b.hp) + ')');
+});
+
+test('couvert bas : un tireur entraîné dont la cible reste à l’abri cherche à la déborder', () => {
+  const g = mkGame();
+  const game = g.game, mate = game.mates[0];
+  game.map = new GameMap(COVER_ROOM);
+  Object.assign(game.player, cellC(1, 11), { hp: 1e9, maxHp: 1e9, angle: 0 });
+  game.mates.slice(1).forEach(o => { o.alive = false; });
+  Object.assign(mate, cellC(12, 1), { order: 'hold', holdAngle: Math.PI / 2, angle: Math.PI / 2, path: [] });
+  const e = new Enemy(cellC(12, 7).x, cellC(12, 7).y, -Math.PI / 2, 'ak');
+  Object.assign(e, { hp: 1e9, maxHp: 1e9, viewRange: 0 });
+  game.enemies = [e];
+  game.canSummon = () => false; // (une sommation réussie, au hasard, mettrait fin au test)
+  let blocked = false;
+  for (let i = 0; i < 60 * 8; i++) { game.update(1 / 60); blocked = blocked || (mate.coverT > COVER_FLANK && mate.blockedLine); }
+  ok(blocked, 'la cible à l’abri, il ne reste pas planté');
+  ok(!game.map.coverShields(mate.x, mate.y, e.x, e.y) && game.map.hasLOS(mate.x, mate.y, e.x, e.y), 'il va là d’où le muret ne la couvre plus');
+});
+
+// ---------------------------------------------------------------- ce que vous entendez
+test('vous entendez : un son faiblit avec la distance, plus encore derrière un mur, et se place de son côté', () => {
+  const g = mkGame({ alone: true });
+  const game = g.game, p = game.player, start = openLine(game, 9 * U);
+  ok(start, 'une ligne dégagée de neuf cases');
+  Object.assign(p, start);
+  game._ear = null;
+  const R = 12 * U, a = game.hearAt(p.x + 2 * U, p.y, R), b = game.hearAt(p.x + 8 * U, p.y, R);
+  ok(a && b && a.gain > b.gain && b.gain > 0, 'plus fort de près (' + a.gain.toFixed(2) + ' contre ' + b.gain.toFixed(2) + ')');
+  ok(a.pan > 0 && game.hearAt(p.x - 2 * U, p.y, R) === null || game.hearAt(p.x - 2 * U, p.y, R).pan <= 0, 'à droite, à droite ; à gauche, à gauche');
+  eq(game.hearAt(p.x + 8 * U, p.y, 6 * U), null, 'au-delà de sa portée, rien');
+  ok(a.muffle > 0.8, 'en champ libre, pas étouffé');
+  // à travers un mur : même distance, bien plus faible, et étouffé
+  const w = wallSpot(game.map);
+  ok(w, 'un mur avec de la place des deux côtés');
+  Object.assign(p, { x: w.tx * TILE - 20, y: w.y });
+  game._ear = null;
+  const thru = game.hearAt((w.tx + 1) * TILE + 20, w.y, R);
+  const free = openLine(game, 2 * U);
+  ok(!thru || thru.muffle < 0.6, 'derrière le mur, les aigus tombent');
+  ok(!thru || thru.gain < (1 - (dist(p.x, p.y, (w.tx + 1) * TILE + 20, w.y) / R)) ** 2, 'et il porte moins qu’en champ libre');
+  ok(free, 'une place');
+});
+
+test('vous entendez : sans audio (avant le premier clic, ou ici), aucun son n’est joué, et rien ne casse', () => {
+  eq(Sound.ctx, null, 'pas d’audio dans les tests');
+  const g = mkGame({ alone: true });
+  const game = g.game, p = game.player;
+  let played = 0;
+  const shot = Sound.shot;
+  Sound.shot = () => { played++; };
+  try { p.slot.mag = 30; p.fireT = 0; game.fireWeapon(p); game.voice(p, 'shout'); } finally { Sound.shot = shot; }
+  eq(played, 0, 'pas de son sans contexte audio');
+});
+
+test('sortie générale : un compresseur derrière tous les sons, et des sons placés sans erreur', () => {
+  const was = Sound.ctx, out = Sound.out, voices = Sound.voices;
+  let saved;
+  try { saved = localStorage.getItem('breach.voices'); } catch (e) { saved = null; }
+  try {
+    Sound.ctx = null;
+    SOUND_INIT.call(Sound);
+    if (!Sound.ctx) return; // (pas d'audio dans ce navigateur)
+    ok(Sound.out && Sound.out.gain, 'une sortie générale');
+    const o = { gain: 0.5, pan: -0.4, muffle: 0.3 };
+    Sound.shot(WEAPONS.hk416, o); Sound.shot(fittedDef('hk416', { sup: true }), o);
+    for (const cue of ['out', 'in', 'bolt', 'slide', 'shell']) Sound.reload(cue, WEAPONS.akP, o);
+    for (let f = 0; f < STEP_SOUNDS.length; f++) Sound.step(f, o);
+    for (const mat of ['wall', 'flesh', 'sand', 'stone', 'metal']) Sound.impact(mat, o);
+    Sound.body(o); Sound.cuffs(o); Sound.pump(o); Sound.draw(o); Sound.frag(o); Sound.flash(o); Sound.alarm(o);
+    ok(Object.keys(Sound.bufs).length > 5, 'les bruits sont gardés en mémoire (' + Object.keys(Sound.bufs).length + ' formes)');
+    const n = Object.keys(Sound.bufs).length;
+    Sound.shot(WEAPONS.hk416, o);
+    eq(Object.keys(Sound.bufs).length, n, 'un même coup ne recalcule rien');
+    Sound.setVoices(false);
+    eq(Sound.voices, false, 'on peut couper les voix');
+  } finally {
+    if (Sound.ctx && Sound.ctx !== was && Sound.ctx.close) Sound.ctx.close();
+    Sound.ctx = was; Sound.out = out; Sound.bufs = {}; Sound.voices = voices;
+    try { if (saved === null) localStorage.removeItem('breach.voices'); else localStorage.setItem('breach.voices', saved); } catch (e) { /* stockage indisponible */ }
+  }
+});
+
+test('voix : seules les voix d’homme naturelles en français parlent, sans quoi elles se taisent', () => {
+  const S = window.speechSynthesis;
+  if (!S) { ok(true, 'pas de synthèse vocale dans ce navigateur'); return; }
+  const orig = Object.getOwnPropertyDescriptor(S, 'getVoices'), male = Sound._male;
+  const fake = ['Microsoft Henri Online (Natural) - French (France)|fr-FR', 'Microsoft Denise Online (Natural) - French (France)|fr-FR',
+    'Microsoft Paul - French (France)|fr-FR', 'Google français|fr-FR', 'Microsoft Antoine Online (Natural) - French (Canada)|fr-CA',
+    'Microsoft Guy Online (Natural) - English (United States)|en-US', 'Thomas (Enhanced)|fr-FR'].map(t => ({ name: t.split('|')[0], lang: t.split('|')[1] }));
+  try {
+    S.getVoices = () => fake; Sound._male = null;
+    eq(Sound.maleVoices().map(v => v.name.split(' ')[v.name.startsWith('Microsoft') ? 1 : 0]).join(','), 'Henri,Thomas,Antoine',
+      'de France d’abord, puis du Canada ; ni voix de femme, ni voix ancienne, ni autre langue');
+    S.getVoices = () => fake.filter(v => !/Natural|Enhanced/.test(v.name)); Sound._male = null;
+    eq(Sound.maleVoices().length, 0, 'sans voix naturelle : aucune');
+    ok(/indisponibles/.test(mkGame().ui.voiceButton()), 'la pause le dit');
+  } finally {
+    if (orig) Object.defineProperty(S, 'getVoices', orig); else delete S.getVoices;
+    Sound._male = male;
+  }
+});
+
+// ---------------------------------------------------------------- coups reçus, fil des morts
+test('coups reçus : un arc montre d’où vient le tir, en ambre quand le bouclier l’arrête', () => {
+  const g = mkGame({ alone: true });
+  const game = g.game, p = game.player;
+  p.hp = p.maxHp = 1e6;
+  const spot = spotAt(game, p, 4 * U);
+  const e = new Enemy(spot.x, spot.y, 0, 'ak');
+  game.enemies = [e];
+  e.angle = Math.atan2(p.y - e.y, p.x - e.x);
+  e.spreadMul = 0;
+  const hp0 = p.hp;
+  for (let i = 0; i < 10 && p.hp === hp0; i++) { e.slot.mag = Infinity; e.fireT = 0; game.fireWeapon(e); for (let k = 0; k < 5; k++) game.updateBullets(1 / 60); }
+  ok(p.hp < hp0, 'touché');
+  ok(game.hurt.length && Math.abs(angleDiff(game.hurt[0].a, Math.atan2(e.y - p.y, e.x - p.x))) < 5 * DEG, 'l’arc pointe vers le tireur');
+  game.enemies = [];
+  g.step(Math.ceil(HURT_LIFE * 60) + 2);
+  eq(game.hurt.length, 0, 'il s’efface');
+  game.hurtFrom(1, 0, true);
+  ok(game.hurt[0].blocked, 'un coup arrêté par le bouclier se signale aussi');
+});
+
+test('fil des morts (trinômes, guerre totale) : qui a abattu qui, et avec quoi', () => {
+  const g = mkGame({ mode: 'war' });
+  const game = g.game, mate = game.mates.find(m => m.hunter), foe = game.enemies[0];
+  ok(foe.name && FOE_NAMES[game.war.camps.enemy].includes(foe.name), 'en face aussi, chacun son nom (' + foe.name + ')');
+  game.damage(foe, 1e6, mate, 0, mate.weapon.name);
+  const f = game.feed[game.feed.length - 1];
+  ok(f && f.killer === mate.name && f.victim === foe.name && f.by === mate.weapon.name && !f.friendly, 'la ligne : ' + JSON.stringify(f));
+  game.damage(game.mates.find(m => m.hunter && m.alive), 1e6, game.player, 0, 'grenade');
+  const ff = game.feed[game.feed.length - 1];
+  ok(ff.killer === 'Vous' && ff.friendly && ff.mine, 'un tir dans son camp, par vous');
+  g.step(1);
+  const rows = [...document.querySelectorAll('#killfeed .kf')];
+  ok(rows.length >= 2 && rows.some(r => r.textContent.includes(foe.name)), 'affichée en haut à gauche');
+  game.time += FEED_LIFE + 1; g.step(1);
+  eq(document.querySelectorAll('#killfeed .kf').length, 0, 'puis effacée');
+  const a = mkGame({ alone: true });
+  a.game.damage(Object.assign(new Enemy(a.game.player.x + U, a.game.player.y, 0, 'ak'), { hp: 1 }), 10, a.game.player, 0);
+  eq(a.game.feed.length, 0, 'pas de fil des morts en assaut');
+});
+
+// ---------------------------------------------------------------- suspects
+test('rondes : un suspect en ronde referme derrière lui la porte qu’il a dû ouvrir', () => {
+  const g = mkGame({ alone: true });
+  const game = g.game, map = game.map;
+  let dr = null;
+  for (const d of map.doors) {
+    if (map.breaches.some(o => o.door === d)) continue;
+    const nx = d.horizontal ? 0 : 1, ny = d.horizontal ? 1 : 0, at = k => ({ x: d.cx + nx * k * U, y: d.cy + ny * k * U });
+    if ([-1.5, 1.5, 3].every(k => map.circleFree(at(k).x, at(k).y, 12, true)) && map.segmentFree(at(1.5).x, at(1.5).y, at(3).x, at(3).y, 12)) { dr = { d, a: at(-1.5), b: at(1.5), far: at(3), nx, ny }; break; }
+  }
+  ok(dr, 'une porte avec de la place des deux côtés');
+  const { d, a, b, far } = dr;
+  setDoor(d, 0); d.locked = false;
+  const e = new Enemy(a.x, a.y, Math.atan2(d.cy - a.y, d.cx - a.x), 'ak');
+  Object.assign(e, { viewRange: 0, home: { x: a.x, y: a.y }, patrol: { pts: [{ x: a.x, y: a.y }, { x: far.x, y: far.y }], i: 0, wait: 0, going: false } });
+  game.enemies = [e];
+  game.player.x = game.player.y = -1e4; // (personne pour le déranger)
+  let opened = false;
+  for (let i = 0; i < 60 * 12; i++) { game.update(1 / 60); opened = opened || d.progress > 0; if (opened && dist(e.x, e.y, far.x, far.y) < U && d.progress <= 0 && !d.opening) break; }
+  ok(opened, 'il a ouvert la porte');
+  ok(d.progress <= 0 && !d.opening, 'et l’a refermée derrière lui');
+  ok(Math.sign(d.horizontal ? e.y - d.cy : e.x - d.cx) === Math.sign(d.horizontal ? b.y - d.cy : b.x - d.cx), 'de l’autre côté');
+});
+
+test('suspects : blessé, un suspect se replie hors de vue, puis tient sa nouvelle place', () => {
+  const sc = surrenderScene(2, 3, true);
+  ok(sc, 'un suspect face à vous');
+  const { game, p, e } = sc;
+  p.hp = p.maxHp = 1e9;
+  e.hp = e.maxHp * 0.4;
+  e.target = null; e.reactT = 9;
+  withRandom(0, () => game.update(1 / 60));
+  eq(e.state, 'retreat', 'il décroche');
+  ok(e.path.length, 'un chemin vers sa place');
+  const from = { x: p.x, y: p.y }, home0 = { x: e.home.x, y: e.home.y };
+  for (let i = 0; i < 60 * 10 && e.state === 'retreat'; i++) game.update(1 / 60);
+  ok(e.state !== 'retreat', 'arrivé');
+  ok(!game.map.hasLOS(from.x, from.y, e.x, e.y), 'hors de vue de là où vous étiez');
+  ok(dist(e.home.x, e.home.y, home0.x, home0.y) > U, 'un nouveau poste (' + JSON.stringify([e.home, home0]) + ')');
+  ok(Math.abs(angleDiff(e.homeAngle, Math.atan2(from.y - e.y, from.x - e.x))) < 0.2, 'tourné vers vous (' + e.homeAngle.toFixed(2) + ' / ' + Math.atan2(from.y - e.y, from.x - e.x).toFixed(2) + ')');
+  eq(e.retreated, 1, 'un repli de compté');
+});
+
+test('alerte générale : le plus proche d’un otage le tient en joue, et l’abat si l’on se montre trop longtemps', () => {
+  const g = mkGame({ alone: true, alarm: true });
+  const game = g.game, p = game.player, h = game.hostages[0];
+  game.hostages = [h];
+  const near = freeSpotsAround(game, h, 12).find(q => dist(q.x, q.y, h.x, h.y) > 1.5 * U && dist(q.x, q.y, h.x, h.y) < 3 * U);
+  ok(near, 'une place près de l’otage');
+  const e = new Enemy(near.x, near.y, 0, 'ak'), raiser = new Enemy(-1e4, -1e4, 0, 'ak');
+  Object.assign(e, { hp: 1e9, maxHp: 1e9 });
+  raiser.alive = false; // (celui qui crie ne compte plus)
+  game.enemies = [e, raiser];
+  Object.assign(p, { x: -1e4, y: -1e4, hp: 1e9, maxHp: 1e9 });
+  game.raiseAlarm(raiser);
+  ok(e.guard && e.guard.h === h, 'il va tenir l’otage en joue');
+  for (let i = 0; i < 60 * 4; i++) game.update(1 / 60);
+  ok(dist(e.x, e.y, h.x, h.y) < 2 * U, 'contre lui');
+  // vous vous montrez
+  const view = spotAt(game, e, 4 * U);
+  ok(view, 'une place en vue');
+  Object.assign(p, view);
+  e.angle = Math.atan2(p.y - e.y, p.x - e.x);
+  for (let i = 0; i < 60 * (THREAT_TIME - 0.5); i++) game.update(1 / 60);
+  ok(e.guard && e.guard.t > 0 && h.alive && !h.wounded && p.hp === 1e9, 'il menace d’abord, sans tirer');
+  // une flash : tout est à refaire
+  e.stun = 1.5;
+  for (let i = 0; i < 60 * 1.6; i++) game.update(1 / 60);
+  ok(h.alive && e.guard && e.guard.t < 0.5, 'sonné, la menace repart de zéro');
+  e.angle = Math.atan2(p.y - e.y, p.x - e.x);
+  for (let i = 0; i < 60 * (THREAT_TIME + 3) && h.alive && !h.wounded; i++) game.update(1 / 60);
+  ok(!h.alive || h.wounded, 'au bout du compte, il tire sur l’otage');
+});
+
+test('alerte générale : un suspect se barricade — portes de sa pièce fermées et verrouillées, puis il guette l’entrée', () => {
+  const g = mkGame({ alone: true });
+  const game = g.game, map = game.map;
+  let pick = null;
+  for (const q of game.buildPosts(null, 60)) {
+    const room = map.roomOf(q.x, q.y), doors = game.roomDoors(room);
+    if (doors.length >= 1 && doors.length <= 3 && doors.every(d => !map.breaches.some(b => b.door === d))) { pick = { q, doors }; break; }
+  }
+  ok(pick, 'une pièce à une, deux ou trois portes');
+  pick.doors.forEach(d => { setDoor(d, 1); d.locked = false; });
+  const e = new Enemy(pick.q.x, pick.q.y, 0, 'ak');
+  e.viewRange = 0;
+  game.enemies = [e];
+  game.player.x = game.player.y = -1e4;
+  ok(game.planBarricade(e), 'il se barricade');
+  for (let i = 0; i < 60 * 25 && e.barricade; i++) game.update(1 / 60);
+  ok(!e.barricade, 'fini');
+  ok(pick.doors.every(d => d.progress <= 0 && d.locked && !d.lockKnown), 'portes fermées et verrouillées');
+  for (let i = 0; i < 60 * 5; i++) game.update(1 / 60);
+  const room = map.roomOf(pick.q.x, pick.q.y), front = d => [1, -1].map(k => ({ x: d.cx + (d.horizontal ? 0 : k * 1.1 * U), y: d.cy + (d.horizontal ? k * 1.1 * U : 0) }))
+    .find(f => room.has(Math.floor(f.y / TILE) * map.w + Math.floor(f.x / TILE)));
+  ok(room.has(Math.floor(e.y / TILE) * map.w + Math.floor(e.x / TILE)), 'il reste dans sa pièce');
+  ok(pick.doors.some(d => front(d) && map.hasLOS(e.x, e.y, front(d).x, front(d).y)), 'il voit une entrée de là où il guette');
+  // déclenché par l'alerte générale, pour ceux qui ne vont pas voir
+  const sc = alarmScene();
+  sc.others.forEach(o => { o.x = o.home.x; o.y = o.home.y; });
+  withRandom(0, () => sc.game.raiseAlarm(sc.e));
+  const sent = sc.others.filter(o => o.state === 'investigate').length, shut = sc.others.filter(o => o.barricade || o.guard).length;
+  ok(sent <= RESPONDERS && sent + shut <= sc.others.length, 'les uns vont voir, les autres tiennent');
+});
+
+// ---------------------------------------------------------------- coéquipiers
+test('coéquipiers : un suspect rendu, l’un d’eux va le menotter ; un suspect sonné, ils le somment avant de tirer', () => {
+  const g = mkGame();
+  const game = g.game, p = game.player, [b] = game.crew;
+  p.hp = p.maxHp = 1e9;
+  const spot = freeSpotsAround(game, b, 30).find(q => dist(q.x, q.y, b.x, b.y) > 2 * U && dist(q.x, q.y, p.x, p.y) > 1.5 * U);
+  ok(spot, 'une place en vue');
+  const e = new Enemy(spot.x, spot.y, 0, 'ak');
+  game.enemies = [e];
+  game.surrenderTo(e);
+  for (let i = 0; i < 60 * 8 && !e.cuffed; i++) game.update(1 / 60);
+  ok(e.cuffed && game.stats.arrests === 1, 'menotté par l’équipe');
+  ok(game.crew.every(m => !m.cuffing), 'et chacun reprend sa place');
+  // sommation : un suspect sonné, en vue d'un coéquipier
+  const e2 = new Enemy(spot.x, spot.y, 0, 'ak');
+  e2.stun = 4;
+  game.enemies = [e2];
+  game.shoutT = -9;
+  for (const m of game.crew) m.angle = Math.atan2(e2.y - m.y, e2.x - m.x);
+  const hp0 = e2.hp;
+  withRandom(0, () => { for (let i = 0; i < 20 && !e2.surrender; i++) game.update(1 / 60); });
+  ok(e2.surrender && e2.hp === hp0, 'il se rend à la sommation, sans un coup de feu');
+});
+
+test('escorte : votre dernier coéquipier couvre le VIP — derrière lui en marche, entre lui et la menace', () => {
+  const g = mkGame({ mode: 'escort' });
+  const game = g.game, v = game.vip;
+  game.enemies = [];
+  const guard = game.vipGuard();
+  ok(guard && guard === game.crew[game.crew.length - 1], 'le dernier de l’équipe');
+  for (let i = 0; i < 60 * 3; i++) game.update(1 / 60);
+  ok(dist(guard.x, guard.y, v.x, v.y) < 2 * U, 'auprès du VIP (' + (dist(guard.x, guard.y, v.x, v.y) / U).toFixed(1) + ' cases)');
+  g.step(1);
+  ok([...document.querySelectorAll('#squad .morder')].some(el => el.textContent === 'Couvre le VIP'), 'le HUD le dit');
+  // un terroriste en vue : il se met entre lui et le VIP
+  let spot = null;
+  for (let r = 5 * U; r >= 2.5 * U && !spot; r -= 0.5 * U) spot = spotAt(game, v, r);
+  ok(spot, 'une place en vue du VIP');
+  const e = new Enemy(spot.x, spot.y, 0, 'ak');
+  Object.assign(e, { viewRange: 0, hp: 1e9, maxHp: 1e9 });
+  game.enemies = [e];
+  game.mates.forEach(m => { m.reaction = 1e9; }); // (ils ne tirent pas : on regarde où ils se placent)
+  game.canSummon = () => false;                   // (ni ne le somment : il resterait à genoux, plus une menace)
+  for (let i = 0; i < 60 * 3; i++) { game.update(1 / 60); e.visible = true; }
+  const toFoe = Math.atan2(e.y - v.y, e.x - v.x), toGuard = Math.atan2(guard.y - v.y, guard.x - v.x);
+  ok(Math.abs(angleDiff(toFoe, toGuard)) < 70 * DEG && dist(guard.x, guard.y, v.x, v.y) < 2 * U, 'entre lui et la menace ('
+    + Math.round(Math.abs(angleDiff(toFoe, toGuard)) / DEG) + '°, ' + (dist(guard.x, guard.y, v.x, v.y) / U).toFixed(1) + ' cases, pos ' + JSON.stringify(guard.vipPos) + ')');
+  // le joueur en charge un autre
+  const other = game.crew[0];
+  game.menuPick(menuItem(mateMenuOf(game, other), 'vip'));
+  eq(game.vipGuard(), other, 'c’est lui qui couvre le VIP');
+});
+
+test('un ordre à un seul coéquipier : le menu de E près de lui ; Tab ne change plus à qui vont vos ordres', () => {
+  const g = mkGame();
+  const game = g.game, [b, c] = game.crew;
+  game.enemies = [];
+  g.press('Tab');
+  eq(game.orderTo, null, 'Tab : vos ordres vont toujours à toute l’équipe');
+  game.toggleHold();
+  ok(game.crew.every(m => m.order === 'hold'), 'T : toute l’équipe tient');
+  const mn = mateMenuOf(game, c);
+  ok(!menuItem(mn, 'only'), 'plus de ligne « ordres à lui seul »');
+  game.menuPick(menuItem(mn, 'mfollow'));
+  ok(c.order === 'follow' && b.order === 'hold' && game.orderTo === null, 'lui seul vous suit, les autres tiennent');
+});
+
+// ---------------------------------------------------------------- trinômes
+test('trinômes : le groupe armé se met lui aussi en colonne, et entre à la grenade à fragmentation, loin dans la pièce', () => {
+  const g = mkGame({ mode: 'squads' });
+  const game = g.game, map = game.map;
+  const grp = game.enemies[0].group, team = grp.members;
+  ok(game.stackOdds(false, team[0]) < game.stackOdds(false, game.mates.find(m => m.hunter)), 'moins souvent que l’intervention');
+  // une porte fermée d'où une grenade glissée par l'entrebâillement peut tomber loin dans la pièce
+  let d = null, side = 0, spots = null;
+  for (const o of map.doors) {
+    if (map.breaches.some(q => q.door === o)) continue;
+    setDoor(o, 0);
+    for (const k of [1, -1]) {
+      const posts = game.stackPosts(o, k, 3, 0);
+      if (posts.length === 3 && posts.some(q => game.flashAimFrom(q.x, q.y, o, k, FLASH_CRACK, FRAG_DEPTH) || game.flashAimFrom(q.x, q.y, o, k, 1, FRAG_DEPTH))) { d = o; side = k; spots = posts; break; }
+    }
+    if (d) break;
+  }
+  ok(d, 'une porte qui s’y prête');
+  d.locked = false;
+  game.mates.forEach(m => { m.alive = false; });
+  game.player.x = game.player.y = -1e4;
+  game.enemies = team;
+  team.forEach((o, i) => Object.assign(o, spots[i], { path: [], act: null, target: null, viewRange: 0, flashCd: 1e9, hp: 1e9, maxHp: 1e9, flashbangs: 2 }));
+  ok(game.formStack(d, side, team, 'flash'), 'en colonne');
+  const st = team[0].entry;
+  let frag = null;
+  for (let i = 0; i < 60 * 20 && !frag; i++) { game.update(1 / 60); frag = frag || game.grenades.find(gr => gr.kind === 'frag'); }
+  ok(frag && team.includes(frag.thrower), 'une grenade à fragmentation par l’entrebâillement (' + st.tactic + ', ' + (st.flash ? st.flash.phase : 'pas de lancer') + ', essayé ' + st.flashTried + ')');
+  const hp = team.map(o => o.hp);
+  for (let i = 0; i < 60 * 3; i++) game.update(1 / 60);
+  ok(team.every((o, i) => o.hp === hp[i]), 'son éclat n’a touché personne de la colonne');
+});
+
+test('trinômes : en infériorité, un trinôme décroche hors de vue, puis tient l’angle', () => {
+  const g = mkGame({ mode: 'squads' });
+  const game = g.game;
+  const grp = game.mates.find(m => m.hunter).group, [lead, f1, f2] = grp.members;
+  f2.alive = false;
+  const foes = game.enemies.slice(0, 3);
+  const spot = freeSpotsAround(game, lead, 30).find(q => dist(q.x, q.y, lead.x, lead.y) > 2.5 * U);
+  ok(spot, 'une place en vue');
+  foes.forEach(f => Object.assign(f, spot));
+  game.enemies = [];
+  grp.seen = new Map(foes.map(f => [f, game.time]));
+  grp.contact = { x: spot.x, y: spot.y, t: game.time, seen: true, foe: foes[0] };
+  game.groupTactics(grp, lead);
+  ok(grp.retreat, 'il décroche');
+  ok(!game.map.hasLOS(spot.x, spot.y, grp.retreat.x, grp.retreat.y), 'vers une place hors de vue');
+  for (let i = 0; i < 60 * 12 && grp.retreat; i++) game.update(1 / 60);
+  ok(!grp.retreat && grp.ambush, 'arrivé, il tient l’angle');
+  ok(Math.abs(angleDiff(grp.ambush.angle, Math.atan2(spot.y - grp.ambush.y, spot.x - grp.ambush.x))) < 0.5, 'face à d’où venait la menace');
+});
+
+test('trinômes : un adversaire entendu tout près, le trinôme peut l’attendre en embuscade, en ligne face au passage', () => {
+  const g = mkGame({ mode: 'squadsArmed' });
+  const game = g.game;
+  game.enemies = [];
+  const grp = game.mates.find(m => m.hunter).group, lead = game.leaderOf(grp);
+  const far = reachableSpot(game, lead, 5 * U, 9 * U);
+  ok(far, 'un point à quelques cases');
+  const k = { x: far.x, y: far.y, t: game.time, seen: false, foe: null, decided: true }; // (une seule embuscade)
+  grp.contact = k;
+  ok(game.setAmbush(grp, lead, k), 'une place pour l’attendre');
+  const A = grp.ambush;
+  for (let i = 0; i < 60 * 4; i++) { game.update(1 / 60); if (grp.contact) grp.contact.t = game.time; }
+  ok(dist(lead.x, lead.y, A.x, A.y) < 0.6 * U && !lead.moving, 'le chef tient sa place');
+  ok(grp.members.filter(m => m.alive).every(m => !m.moving), 'le trinôme ne bouge plus');
+  ok(game.map.hasLOS(A.x, A.y, A.x + Math.cos(A.angle) * 2.5 * U, A.y + Math.sin(A.angle) * 2.5 * U), 'face au passage, la vue dégagée');
+  for (let i = 0; i < 60 * (AMBUSH_TIME + 1); i++) game.update(1 / 60);
+  ok(grp.ambush === null, 'au bout du temps, il reprend');
+});
+
+test('trinômes : un trinôme apprend des siens — et de vous — l’adversaire qu’ils voient ; le laser ne s’allume qu’au contact', () => {
+  const g = mkGame({ mode: 'squads' });
+  const game = g.game, p = game.player;
+  const ally = game.mates.find(m => m.hunter).group;
+  const spot = spotAt(game, p, 4 * U);
+  const foe = game.enemies[0];
+  Object.assign(foe, spot, { viewRange: 0 });
+  p.angle = Math.atan2(foe.y - p.y, foe.x - p.x);
+  game.enemies = [foe];
+  ally.contact = null;
+  game.radioT = 0;
+  game.radioStep();
+  ok(ally.contact && dist(ally.contact.x, ally.contact.y, foe.x, foe.y) < U && !ally.contact.seen, 'ce que vous voyez, votre second trinôme l’apprend (comme un bruit)');
+  // entre les deux trinômes d'en face
+  const g2 = mkGame({ mode: 'squads' });
+  const [A, B] = [...new Set(g2.game.enemies.map(e => e.group))];
+  A.contact = { x: 100, y: 100, t: g2.game.time, seen: true, foe: g2.game.player };
+  B.contact = null;
+  g2.game.radioT = 0;
+  g2.game.radioStep();
+  ok(B.contact && B.contact.x === 100, 'les deux trinômes d’en face se transmettent leur contact');
+  // laser : éteint en ratissant
+  const h = [...g2.game.enemies, ...g2.game.mates].find(o => o.hunter && o.weapon.laser);
+  ok(h, 'un homme au laser');
+  h.group.contact = null;
+  g2.game.updateAssault(h, 1 / 60);
+  ok(!h.laserOn, 'éteint hors contact');
+});
+
 // ---- Rapport ----
 (function report() {
   const out = document.getElementById('out'), sum = document.getElementById('summary');
   out.innerHTML = T.lines.map(l => '<div class="' + l[0] + '">' + l[1].replace(/</g, '&lt;') + '</div>').join('');
-  sum.textContent = T.fail ? (T.fail + ' échec(s) sur ' + (T.pass + T.fail)) : ('Tout passe — ' + T.pass + ' tests');
+  const skipped = T.skip ? ` (${T.skip} écartés par le filtre « ${GREP} »)` : '';
+  sum.textContent = (T.fail ? (T.fail + ' échec(s) sur ' + (T.pass + T.fail)) : ('Tout passe — ' + T.pass + ' tests')) + skipped;
   sum.className = T.fail ? 'ko' : 'ok';
   document.title = T.fail ? 'FAIL ' + T.fail : 'PASS';
 })();

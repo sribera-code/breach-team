@@ -383,6 +383,49 @@ const Sprites = {
         ctx.fillStyle = 'rgba(255,245,220,0.12)'; ctx.fillRect(x0 + 1, -9.5, x1 - x0 - 2, 2);
         break;
       }
+      // Muret de béton (couvert bas : il arrête les balles, pas le regard) : un bandeau chaperonné, qui se raccorde à ses
+      // voisins (nb) ; les joints d'un bloc à l'autre.
+      case 'lowwall': {
+        const nb = p.nb || {}, vert = (nb.n || nb.s) && !(nb.w || nb.e);
+        ctx.translate(cx, cy);
+        if (vert) ctx.rotate(Math.PI / 2);
+        const x0 = (vert ? nb.n : nb.w) ? -16 : -14, x1 = (vert ? nb.s : nb.e) ? 16 : 14;
+        ctx.fillStyle = 'rgba(0,0,0,0.32)'; ctx.fillRect(x0 + 3, -6, x1 - x0, 17);
+        ctx.fillStyle = '#7c7a73'; ctx.fillRect(x0, -9, x1 - x0, 18);
+        ctx.fillStyle = '#9a978e'; ctx.fillRect(x0, -9, x1 - x0, 5);           // le chaperon, au soleil
+        ctx.fillStyle = 'rgba(255,255,255,0.12)'; ctx.fillRect(x0, -9, x1 - x0, 1.2);
+        ctx.fillStyle = 'rgba(40,38,34,0.45)';
+        for (let jx = Math.ceil((x0 + 2) / 11) * 11; jx < x1 - 2; jx += 11) ctx.fillRect(jx, -4, 0.8, 13);
+        ctx.fillRect(x0, 8.2, x1 - x0, 0.8);
+        if (this.hash(cx, cy) < 0.3) { ctx.fillStyle = 'rgba(60,90,40,0.45)'; ctx.fillRect(x0 + 2 + this.hash(cy, cx) * 10, 4, 8, 4); } // de la mousse
+        break;
+      }
+      // Voiture garée, vue de dessus (couvert bas, la tôle sonne) : dessinée d'un bloc par sa première case (car.lead),
+      // dans la longueur du bloc : carrosserie, pare-brise et lunette, toit, rétroviseurs, phares et feux.
+      case 'car': {
+        const c = p.car;
+        if (!c || c.lead !== p) break;
+        const horiz = c.w >= c.h, L = (horiz ? c.w : c.h) * U - 6, Wd = (horiz ? c.h : c.w) * U - 10;
+        const paint = ['#9b2f2b', '#2f5b8a', '#d9d6cf', '#3b3f45', '#5d6b45', '#b78d2e'][Math.floor(this.hash(c.cx, c.cy) * 6)];
+        ctx.translate(c.cx, c.cy);
+        if (!horiz) ctx.rotate(Math.PI / 2);
+        if (this.hash(c.cy, c.cx) < 0.5) ctx.rotate(Math.PI); // garée dans un sens ou dans l'autre
+        ctx.fillStyle = 'rgba(0,0,0,0.35)'; roundRect(ctx, -L / 2 + 4, -Wd / 2 + 5, L, Wd, 9); ctx.fill();
+        ctx.fillStyle = '#16181b'; // les roues dépassent un peu
+        for (const [wx, wy] of [[-L * 0.3, -1], [L * 0.3, -1], [-L * 0.3, 1], [L * 0.3, 1]]) ctx.fillRect(wx - 6, wy * (Wd / 2) - (wy > 0 ? 1.5 : 2.5), 12, 4);
+        ctx.fillStyle = paint; roundRect(ctx, -L / 2, -Wd / 2, L, Wd, 9); ctx.fill();
+        ctx.strokeStyle = 'rgba(0,0,0,0.35)'; ctx.lineWidth = 1; ctx.stroke();
+        ctx.fillStyle = 'rgba(255,255,255,0.1)'; roundRect(ctx, -L / 2 + 3, -Wd / 2 + 2, L - 6, 3, 1.5); ctx.fill();
+        ctx.fillStyle = '#20262d'; // pare-brise (vers l'avant, +x) et lunette arrière
+        ctx.beginPath(); ctx.moveTo(L * 0.12, -Wd / 2 + 4); ctx.lineTo(L * 0.26, -Wd / 2 + 6); ctx.lineTo(L * 0.26, Wd / 2 - 6); ctx.lineTo(L * 0.12, Wd / 2 - 4); ctx.closePath(); ctx.fill();
+        ctx.beginPath(); ctx.moveTo(-L * 0.26, -Wd / 2 + 5); ctx.lineTo(-L * 0.36, -Wd / 2 + 7); ctx.lineTo(-L * 0.36, Wd / 2 - 7); ctx.lineTo(-L * 0.26, Wd / 2 - 5); ctx.closePath(); ctx.fill();
+        ctx.fillStyle = 'rgba(255,255,255,0.12)'; ctx.fillRect(L * 0.15, -Wd / 2 + 6, 2, Wd - 12);
+        ctx.fillStyle = 'rgba(0,0,0,0.12)'; roundRect(ctx, -L * 0.25, -Wd / 2 + 4, L * 0.36, Wd - 8, 4); ctx.fill(); // le toit
+        ctx.fillStyle = paint; ctx.fillRect(L * 0.08, -Wd / 2 - 3, 4, 3); ctx.fillRect(L * 0.08, Wd / 2, 4, 3); // rétroviseurs
+        ctx.fillStyle = '#f2ecd0'; ctx.fillRect(L / 2 - 3, -Wd / 2 + 3, 2.5, 6); ctx.fillRect(L / 2 - 3, Wd / 2 - 9, 2.5, 6);
+        ctx.fillStyle = '#b3261e'; ctx.fillRect(-L / 2 + 0.5, -Wd / 2 + 3, 2.5, 5); ctx.fillRect(-L / 2 + 0.5, Wd / 2 - 8, 2.5, 5);
+        break;
+      }
       case 'crate': {
         this.shadow(ctx, cx, cy, 14, 14);
         ctx.translate(cx, cy); ctx.rotate(rand(-0.08, 0.08));
@@ -793,6 +836,53 @@ const Sprites = {
         break;
       }
 
+      case 'sniper': { // fusil de précision : Sako TRG 22 (à verrou), ou SVD Dragunov (t.svd)
+        if (t.svd) {
+          part(-6.6, -5.7, 2.7, '#26282b', 0, 0.3);            // plaque de couche
+          // crosse squelette en bois : le poing passe dans le vide, sous l'appui-joue
+          poly([[-5.7, -1.4], [-1, -1.5], [4.8, -1.15], [4.8, 1.15], [-1, 1.5], [-5.7, 1.4]], '#7a4a24');
+          dark(-4.2, -0.5, 3.6, 1, 0.55);                      // le vide de la crosse
+          grain(-5.4, 4.6, [-0.95, 0.95]);
+          part(4.6, 14.4, 2.9, '#2c2e32', 0, 0.35);            // boîtier
+          ribs(6, 13.8, 1.15, 0, 1.3, 0.25);
+          dark(9.8, 0.85, 2.6, 0.65, 0.55);                    // fenêtre d'éjection
+          shine(5.2, 14.2, -1.35);
+          mag([[9, 1.4], [11.2, 1.4], [11.5, 3.7], [9.2, 3.7]], '#2a2c30'); // chargeur de dix, droit et court
+          part(8.4, 11.6, 1.4, '#1c1e22', -1.6, 0.2);          // rail latéral
+          scope(5.4, 14.2, -2.7);                              // PSO-1 sur le flanc
+          part(14.4, 21.4, 2.5, '#7a4a24', 0, 0.8);            // garde-main bois, ajouré
+          for (let x = 15.2; x < 20.8; x += 1.4) dark(x, -0.35, 0.7, 0.7, 0.45);
+          part(14.4, 23.2, 1.3, '#1e2024', 0, 0.4);            // tube à gaz
+          part(21.4, M - 3, 1.1, BARREL, 0, 0.3);              // canon fin
+          part(23.2, 24.4, 1.8, '#1c1e22', 0, 0.25);           // bloc de gaz
+          part(M - 3, M, 1.6, '#131518', 0, 0.35);             // cache-flamme à fentes
+          dark(M - 2.6, -0.8, 1.8, 0.3, 0.7); dark(M - 2.6, 0.5, 1.8, 0.3, 0.7);
+          break;
+        }
+        const furn = '#30362e';                                // crosse et garde-main vert sombre
+        part(-6.8, -5.8, 2.9, '#131418', 0, 0.35);             // talon réglable
+        poly([[-5.8, -1.45], [-1.2, -1.55], [4.8, -1.2], [4.8, 1.2], [-1.2, 1.55], [-5.8, 1.45]], furn); // crosse
+        part(-4.8, -0.6, 1.2, '#22271f', -0.1, 0.4);           // appui-joue réglable
+        dark(-4.6, 0.7, 3.6, 0.35, 0.35);
+        part(4.6, 13.8, 2.8, '#2a2d32', 0, 0.35);              // boîtier
+        dark(9.4, 0.8, 2.6, 0.6, 0.55);                        // fenêtre d'éjection
+        shine(5.2, 13.6, -1.3);
+        part(5.4, 6.6, 1.2, '#8d949c', 2.1, 0.3);              // levier de culasse, sur la droite
+        ctx.fillStyle = '#1b1d20'; circle(ctx, 6, A + 3, 0.75); ctx.fill();
+        ctx.lineWidth = 0.4; ctx.strokeStyle = OUT; ctx.stroke();
+        part(9.6, 11.8, 0.7, '#1b1d20', 1.6, 0.2);             // chargeur de dix, à peine visible
+        part(13.6, 22.4, 2.6, furn, 0, 0.6);                   // garde-main
+        ribs(14.4, 21.8, 1.2, 0, 1, 0.25);
+        part(20.4, 26.6, 0.55, '#1b1d20', -1.5, 0.2);          // bipied replié le long du canon
+        part(20.4, 26.6, 0.55, '#1b1d20', 1.5, 0.2);
+        part(22.4, M - 2.8, 1.45, BARREL, 0, 0.35);            // canon lourd, cannelé
+        for (let x = 23.2; x < M - 3.6; x += 2.2) shine(x, x + 1.4, -0.35, 0.1);
+        scope(3.8, 15.4, 0);                                   // lunette 3-12×50
+        part(M - 2.8, M, 2, '#131518', 0, 0.35);               // frein de bouche
+        dark(M - 2.3, -1, 0.4, 2, 0.65); dark(M - 1.3, -1, 0.4, 2, 0.65);
+        break;
+      }
+
       default: { // fusil d'assaut moderne : HK416, ou SCAR-H (variante sable, chargeur droit)
         const body = t.body || '#3a3f47', furn = t.dark || '#2e333a', magc = t.mag || '#31363d';
         part(-6.3, -5.3, 2.4, '#131418', 0, 0.3);              // talon caoutchouc
@@ -928,6 +1018,7 @@ const Sprites = {
     if (kind === 'shotgun') return [[16.5 + S, -0.4], [8.5 + S, 3.8]];
     if (kind === 'smg') return [[16 + S, -0.5], [8.5 + S, 3.6]];
     if (kind === 'pdw') return [[14.5 + S, -0.8], [9 + S, 3.4]];
+    if (kind === 'sniper') return [[18 + S, -0.6], [8.5 + S, 3.8]];
     return [[17 + S, -0.6], [9 + S, 3.8]];
   },
   // Arme lâchée au sol (repère local, centrée)

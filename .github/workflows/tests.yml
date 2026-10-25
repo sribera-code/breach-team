@@ -1,0 +1,16 @@
+# Suite de non-régression à chaque push et à chaque pull request : tests/run.sh ouvre tests/index.html dans le
+# Chrome sans interface du runner (préinstallé sur ubuntu-latest) et échoue si un test échoue.
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Suite de non-régression (Chrome sans interface)
+        run: bash tests/run.sh

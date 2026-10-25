@@ -1,6 +1,6 @@
 # Reste à faire
 
-État des chantiers ouverts au 18 octobre 2026. Les points sont classés par ordre d'intérêt au sein
+État des chantiers ouverts au 25 octobre 2026. Les points sont classés par ordre d'intérêt au sein
 de chaque section.
 
 ## Mode siège
@@ -12,9 +12,16 @@ de chaque section.
 
 - **Équilibrage à faire.** Tout est en dur dans `SIEGE_WAVES` et `Game.startSiege` (10 s de préparation,
   3 vagues de 3 opérateurs contre 9 défenseurs, 6 s de répit après une vague éliminée, 30 s au plus entre deux
-  vagues) et dans les armes `hk416op` / `mp5op`. Aucune de ces valeurs
+  vagues) et dans les armes de l'intervention (`OPERATOR_POOL`). Aucune de ces valeurs
   n'a été jouée par un humain : elles sortent de parties simulées.
-- **Colonnes de l'intervention réglées à l'estime** (`AI_STACK_*`, `WAVE_CHARGES` en tête de `js/game.js`) : une porte
+- **L'intervention est plus variée depuis le 25 octobre, réglée à l'estime** : ses armes se tirent dans `OPERATOR_POOL`
+  (HK416 deux fois, SCAR-H, MP5, MP7, fusil à pompe : `scarhop`, `mp7op`, `m870op` n'ont jamais été joués à la main), et une
+  vague ou un trinôme sur trois (`OPERATOR_SHIELD_CHANCE`) est mené par un bouclier, léger ou lourd, avec un Glock
+  (`glockop`). Le siège en devient un peu plus dur : sur 18 parties simulées (`scenario=siege`), l'intervention perd en
+  moyenne 2,9 hommes au lieu de 4,2, les défenseurs perdent toujours (comme avant, laissés à eux-mêmes). Le bouclier lourd
+  arrête les AK des défenseurs : seuls le flanc et la grenade en viennent à bout. Les coéquipiers de l'assaut, eux, ne
+  portent jamais de bouclier.
+- **Colonnes de l'intervention réglées à l'estime** (`AI_STACK_*`, `WAVE_CHARGES` en tête de `js/game-hunters.js`) : une porte
   fermée sur deux (85 % quand la menace est derrière), au plus une colonne toutes les 8 s, flash à partir de trois,
   une charge par vague. En parties simulées de deux minutes : une à trois colonnes par partie. Limites : la charge
   demande à chacun un poste à plus de 1,4 case de la porte, sinon on entre porte ouverte (une porte sur dix environ) ;
@@ -34,7 +41,7 @@ de chaque section.
 ## Mode trinômes
 
 - **Les trinômes autonomes marchent en file derrière un chef depuis le 18 octobre, réglés à l'estime** (`SQUAD_FILE`,
-  `SQUAD_LINE`, `SQUAD_PACE`, `SQUAD_DOOR_PAUSE`, `SQUAD_SPREAD`, `SQUAD_WAIT`, `SQUAD_CATCH` en tête de `js/game.js`) :
+  `SQUAD_LINE`, `SQUAD_PACE`, `SQUAD_DOOR_PAUSE`, `SQUAD_SPREAD`, `SQUAD_WAIT`, `SQUAD_CATCH` en tête de `js/game-hunters.js`) :
   le chef au pas (70 % de sa vitesse, sans bruit de pas), 0,6 s sur le seuil de chaque porte, quatre secondes au plus à
   attendre un retardataire. En parties simulées (le joueur immobile et hors jeu), ils ratissent moitié moins vite à la
   minute, et les trinômes se rencontrent vers la dixième ou la trentième seconde au lieu de la dixième au plus. En duel
@@ -53,20 +60,12 @@ de chaque section.
   portent des accessoires (`MILITANT_KITS` : silencieux, laser, poignée) et l'intervention tire en rafales de trois au
   lieu de quatre, à la cadence réelle du HK416. Rien de cela n'a été remesuré. Leviers : `SQUAD_MILITANT` (santé,
   réaction, champ de vision, grenades), les armes `akH` / `ak74H`, `MILITANT_KITS`, `WAVE_CHARGES`, `AI_STACK_*`.
-- **Les lots d'accessoires de l'IA sont tirés au hasard, pas choisis** : un homme ne monte pas un silencieux parce
-  qu'il veut surprendre, ni ne coupe son laser pour se cacher. Les lasers de l'IA restent allumés en permanence.
 - **Ratissage et contacts réglés à l'estime** (`SWEEP_SEEN`, `SWEEP_AHEAD`, `CONTACT_HOLD`, `SQUAD_SEARCH` en tête de
-  `js/game.js`). En parties simulées de deux minutes (le joueur immobile et hors jeu), un chef de trinôme autonome fait
+  `js/game-hunters.js`). En parties simulées de deux minutes (le joueur immobile et hors jeu), un chef de trinôme autonome fait
   3 à 8 demi-tours par minute (18 avant la refonte du ratissage) ; ses équipiers en font un peu plus, le temps que la
   file se reforme derrière lui après un virage. Les demi-tours du chef viennent presque tous du ratissage : on entre
   dans une pièce sans issue, on en ressort. Rien n'a été joué à la main.
-- **Les deux trinômes d'en face se partagent le ratissage, pas leurs contacts** : l'un ne vient au secours de l'autre
-  que s'il entend ses coups de feu de près (`HEAR_GO`). Le second trinôme de votre camp vous laisse votre part du
-  bâtiment, mais ne sait pas ce que vous avez vu, et ne vous suit pas.
-- **Le groupe armé ne se met jamais en colonne** et n'entre pas à la grenade : il franchit les portes comme il vient.
 - **Pas de réapparition ni de manches** : une seule manche, à l'élimination.
-- **Les trinômes ne se replient pas** : blessé ou en infériorité, un trinôme continue d'avancer ; personne ne tient un
-  angle en attendant l'adversaire. Les arrières ne sont couverts qu'à l'arrêt, et par coups d'œil en marche.
 
 ## Guerre totale
 
@@ -78,8 +77,8 @@ de chaque section.
   pleine de portes, est la moins meurtrière. Ni joué à la main, ni comparé d'une carte à l'autre. Leviers : `WAR_RESPAWN`, `WAR_STEP`, `SQUAD_MILITANT`, les armes de l'IA.
 - **Pas de protection à la réapparition.** Un trinôme revient dans sa base même si l'adversaire y est : rien n'empêche
   de camper la base d'en face. Ni zone interdite, ni invulnérabilité de quelques secondes, ni base de repli.
-- **Les trinômes autonomes ne se coordonnent pas entre couloirs.** Chacun tient sa bande et ne partage un contact
-  qu'avec les siens ; un flanc enfoncé n'appelle pas les autres. Pas d'objectif à tenir ou à prendre (drapeau, zone) :
+- **Les trinômes autonomes ne se coordonnent qu'à courte portée.** Chacun tient sa bande ; un contact vu n'est transmis
+  qu'aux trinômes de son armée qui en sont à `RADIO_RANGE` (14 cases) : un flanc enfoncé appelle son voisin, pas l'armée. Pas d'objectif à tenir ou à prendre (drapeau, zone) :
   seul le décompte des morts compte.
 - **Les ordres ne vont qu'à votre trinôme**, et l'on ne peut pas reprendre la main dans un autre trinôme de son armée
   (on attend les renforts). Pas de choix d'équipement entre deux réapparitions : on revient avec celui du briefing.
@@ -91,8 +90,19 @@ de chaque section.
 
 ## Stratégie
 
+- **Les sortes de groupe (25 octobre) sont réglées à l'estime, et deux dominent en parties simulées** (`GROUP_TYPES`,
+  `AI_SCOPE_RANGE`, `SHIELD_SHUN` ; `bash tests/run.sh --sim 'scenario=war&n=6&army=assault'`). Six parties de cinq minutes
+  par sorte, vos trois groupes de la même sorte ratissant seuls, abattus par votre armée contre pertes : côté intervention,
+  standard 107 – 90, assaut 90 – 51, précision 105 – 53 ; côté groupe armé (sans bouclier), standard 81 – 88, assaut
+  66 – 116, précision 78 – 61. Le bouclier lourd fait tout le groupe d'assaut de l'intervention (sans lui : 83 – 103), même
+  depuis que les agents autonomes visent plutôt ceux qu'il couvre et que le groupe armé lui lance ses grenades. Le binôme
+  de précision gagne avec six hommes contre neuf : son tireur à lunette tire de seize cases, l'adversaire de neuf (à
+  quatorze ou dix-huit cases, le résultat ne bouge guère). Leviers : le bouclier du groupe d'assaut (le léger n'arrête pas
+  les AK), `AI_SCOPE_RANGE`, l'effectif, les armes de chaque rang. Rien n'a été joué à la main ; l'armée d'en face ne
+  choisit pas de sorte (trois trinômes standard).
+
 - **Tout est réglé à l'estime et rien n'a été joué à la main** (`STRAT_SPACING`, `STRAT_ARRIVE`, `STRAT_LEASH`, `STRAT_VIEW`,
-  `STRAT_PAN` en tête de `js/game.js` et `js/render.js`). Les tests mènent les ordres un à un (déplacement, étapes, tenue,
+  `STRAT_PAN` en tête de `js/game-strategy.js` et `js/render.js`). Les tests mènent les ordres un à un (déplacement, étapes, tenue,
   attaque, colonne à la porte, grenade, pause tactique, retour de la base) et font tourner chaque champ de bataille avec des
   ordres au hasard ; en partie simulée, trois trinômes envoyés à 16 cases arrivent en 5 à 13 s selon qu'ils se battent en route.
 - **Les règles sont celles de la guerre totale** : le décompte des morts au bout de cinq minutes. Pas de point à tenir ni
@@ -108,7 +118,7 @@ de chaque section.
 ## Stratégie : assaut
 
 - **Équilibre réglé en parties simulées, jamais joué à la main** (`DEFENSE_RATIO`, `DEFENSE_CLEAR`, `DEFENSE_OUTSIDE`,
-  `DEFENSE_PATROLS`, `DEFENSE_STATS`, `DEFENSE_WEAPONS` en tête de `js/game.js`). Vos trois trinômes laissés à eux-mêmes (`R`,
+  `DEFENSE_PATROLS`, `DEFENSE_STATS`, `DEFENSE_WEAPONS` en tête de `js/game-squads.js`). Vos trois trinômes laissés à eux-mêmes (`R`,
   aucun ordre) contre 27 hommes : avec les suspects de l'assaut tels quels, ils gagnent en 40 à 100 s en gardant quatre à six
   hommes ; avec les hommes des trinômes (`SQUAD_MILITANT`, AKM et AK-74 de précision), ils sont anéantis en moins de 40 s
   après en avoir abattu un tiers ; avec les réglages retenus (armes des suspects, 100 points de vie, 0,4 s de réaction), ils
@@ -133,22 +143,18 @@ de chaque section.
   terroristes par carte, barème de la note. Les trois cartes (Ambassade, Palais de justice, Hôpital) n'ont été
   jouées que par les tests, qui y mènent le VIP de A à B sans adversaire : leur difficulté reste à éprouver à la main.
 - **Le VIP ne fait que suivre ou attendre.** Il ne cherche pas de lui-même un abri sous le feu (il s'accroupit,
-  c'est tout), et les coéquipiers ne se placent pas pour le couvrir : ils restent en formation autour du joueur.
-  Un coéquipier peut s'arrêter sur le VIP accroupi, comme sur un otage à genoux.
+  c'est tout). Votre dernier coéquipier le couvre (`vipGuard`), l'autre reste en formation autour de vous ; la place du
+  premier n'est réglée qu'à l'estime (une case de lui, du côté de la menace en vue). Un coéquipier peut s'arrêter sur le
+  VIP accroupi, comme sur un otage à genoux.
 - **Le commando ne change pas de tactique** : mêmes postes, rondes et alerte qu'en assaut, avec la seule priorité
   de tir. Pas de chasse organisée au VIP, pas d'embuscade au point B, pas de renforts.
 - **Pas de limite de temps**, et la note ne tient pas compte de la durée.
 
 ## Portes, fenêtres et visibilité
 
-- **Meubles collés aux portes sur les anciennes cartes.** Sur les Bureaux (portes 13,4 et 28,4), la Villa (18,5) et
-  le Centre de données (5,10), un bureau ou une rangée bouche l'embrasure d'un côté ; d'autres portes (Entrepôt,
-  Banque, Villa) ont un meuble qui frôle le passage à une case. Les cartes d'escorte sont vérifiées par les tests ;
-  celles-ci non.
-
-- **`E` n'referme pas une porte entrouverte** : il l'ouvre en grand (pour enchaîner après avoir jeté un
-  œil), et il faut redescendre les crans à la molette pour fermer. C'est un choix, pas un bug, mais il
-  mérite d'être rejoué : c'est le geste le plus fréquent.
+- **`E`, `E` ne referme pas une porte entrouverte** : il l'ouvre en grand (pour enchaîner après avoir jeté un
+  œil) ; pour la fermer, `E`, molette, `E`. C'est un choix, pas un bug, mais il mérite d'être rejoué : c'est le geste
+  le plus fréquent, et il demande désormais deux appuis au lieu d'un.
 - **Le premier cran d'entrebâillement reste avare.** À 0,3, on ne voit rien de face et il faut se placer
   du côté de l'ouverture. C'est géométriquement juste (l'épaisseur du mur fait tunnel) ; si ça frustre,
   c'est une seule valeur à bouger : `DOOR_STEPS` dans `js/map.js`.
@@ -161,6 +167,13 @@ de chaque section.
 
 ## Outillage
 
+- **Le banc d'équilibrage (`tests/sim.html`) est neuf** : il refait les mesures du TODO (trinômes, guerre totale, stratégie :
+  assaut, siège) sans le joueur. Les chiffres plus haut datent d'avant les replis, les embuscades, les colonnes du groupe
+  armé, les accessoires selon le rôle et le couvert bas : à remesurer avec lui. La suite complète prend six à neuf minutes
+  (Chrome sans interface) ; la GitHub Action n'a pas encore tourné.
+- **Un test est instable depuis longtemps** : « un suspect se tourne vers un bruit léger… » échoue environ une fois sur
+  quinze, avant comme après le 24 octobre. Il prend la place d'un otage tiré au sort comme point d'essai : selon la
+  disposition, les bruits de porte répétés n'arrivent pas assez fort. À rendre déterministe (un point choisi).
 - **Couverture des tests.** `tests/index.html` couvre les armes, les portes, la visibilité, la traversée,
   la fibre, les ordres, les entrées, le siège et les écrans. Manquent : le rendu (rien ne vérifie ce qui
   est réellement dessiné) et les entrées clavier/souris réelles, simulées ici au niveau de `game.input`.
@@ -175,10 +188,12 @@ de chaque section.
   simulées : depuis l'entrée, une rafale sans silencieux fait venir un ou deux suspects, la même au silencieux
   personne. À rejouer à la main, surtout en siège où les opérateurs convergent sur ce qu'ils entendent.
 - **Le tir dans une porte n'est réglé qu'à l'estime** : 2,5 s de rafales, ±0,6 case autour du point visé, riposte quand une
-  balle sortie d'une porte passe à moins de 1,2 case (`BLIND_*` en tête de `js/game.js`). Seuls les suspects de l'assaut le font :
+  balle sortie d'une porte passe à moins de 1,2 case (`BLIND_*` en tête de `js/game-enemies.js`). Seuls les suspects de l'assaut le font :
   ni les complices du siège, ni les coéquipiers, ni l'intervention (qui ne tire pas à l'aveugle avec des otages possibles derrière).
-- **Les opérateurs du siège n'ont pas de silencieux**, et les suspects ne se replient ni ne se barricadent :
-  ils viennent voir, puis rentrent.
+- **Repli, barricade, otage tenu en joue (suspects) réglés à l'estime** (`RETREAT_*`, `THREAT_*`, `BARRICADE_CHANCE` en tête
+  de `js/game-enemies.js`) : trois secondes et demie de menace avant que le suspect n'abatte l'otage, une chance sur deux de
+  se barricader après l'alerte, un repli sur deux quand il est blessé. La menace sur l'otage rend l'assaut nettement plus
+  dur une fois l'alerte donnée : à rejouer, et la note de fin ne récompense pas encore un otage sauvé d'une menace.
 
 ## Équipement
 
@@ -211,7 +226,6 @@ de chaque section.
 - **Tout est réglé à l'estime** : chances de reddition (`surrenderChance`), sept secondes avant qu'un suspect
   rendu laissé seul reprenne son arme, vue à quatre cases dans le noir, faisceau de 44° sur douze cases, une
   porte sur trois verrouillée, quatre secondes de crochetage, souffle de la charge. À rejouer à la main.
-- **Les coéquipiers ne menottent pas** et ne font pas de sommation : seul le joueur arrête.
 - **L'entrée coordonnée est simple** : chacun file vers l'angle de son côté. Pas d'entrée en croix, pas de
   coéquipier qui ouvre ou lance la flash lui-même au signal.
 - **Pas de courant coupé en siège**, ni de lampe pour l'intervention ou le groupe armé.
@@ -225,8 +239,6 @@ de chaque section.
 - **Le gilet souple par défaut adoucit l'assaut** : les suspects au pistolet, à l'Uzi ou au fusil scié ne font plus
   que la moitié de leurs dégâts au joueur. À rejouer : si c'est trop facile, réduire la couverture (tête et bras).
 - **Les coéquipiers n'ont pas de gilet à choisir**, et ni les suspects ni l'intervention du siège n'en portent.
-- **Les rondes ne referment pas les portes** derrière elles : au fil de la partie, le bâtiment s'ouvre.
-- **L'alerte générale ne change que la vigilance** : personne ne se replie, ne se barricade ni ne menace un otage.
 
 ## Cadrage et portée de tir de l'IA
 
@@ -250,34 +262,70 @@ de chaque section.
 - **Pas de réglage de difficulté.** Ni pour l'assaut, ni pour le siège.
 - **Pas de sauvegarde de progression** : les missions sont toutes accessibles, rien n'est débloqué ; seule la
   meilleure note de chaque mission est retenue.
-- **Le son est minimal** : bruits synthétisés, pas de spatialisation. En siège, entendre d'où vient un bruit
-  compte pourtant beaucoup.
-- **Menu d'actions (clic molette) depuis le 20 octobre, pas encore joué à la main.** Il connaît trois cibles : vous, une
-  porte, le sol. Un otage, un suspect rendu ou un corps sous le curseur ne sont pas des cibles : ce qu'on peut en faire
-  passe par le menu « Vous », pour le plus proche à portée de main. Pas d'ordre à un seul coéquipier, ni de colonne à
-  la charge pour l'équipe. Le temps ne s'arrête pas pendant le choix (on pourrait le ralentir). Les touches restent
-  toutes valables ; si le menu suffit, on pourrait en retirer. En stratégie, le menu connaît vos trinômes, un
-  adversaire, une porte fermée et le sol ; une porte ouverte compte comme le sol, et sur un trinôme le menu ne
-  propose pas de grenade (il faudrait un point visé).
+- **Menu de `E` et barre latérale de la stratégie depuis le 24 octobre, pas encore joués à la main.** Le clic molette ne
+  sert plus qu'à recharger ; le menu d'actions au curseur (sur vous, au sol, sur un adversaire en stratégie) a disparu,
+  ses lignes passent par les touches, `E` (porte, colonne en place, coéquipier tout près) ou les boutons de la barre.
+  À pied, `E` ne connaît ni l'otage, ni le suspect rendu, ni l'arme au sol (`H` et `V` restent) ; le menu ne s'ouvre que
+  sur la porte la plus proche, pas sur celle qu'on vise. La colonne en place a la priorité sur la porte où elle attend,
+  mais une autre porte à portée passe avant elle. En stratégie, les boutons d'une porte n'apparaissent qu'une fois la
+  colonne en place (rien pendant qu'elle s'y rend), et la charge posée ne se fait sauter que par eux.
+- **Grenades à fragmentation données à l'estime** : une par coéquipier (`MATE_FRAGS`) et par homme de vos trinômes
+  d'intervention en stratégie (`STRAT_FRAGS`), pour l'entrée à la grenade et le bouton « Grenade explosive ». Elles ne
+  partent que sur ordre ; l'équilibre n'a pas été mesuré.
+
+## Son, coups reçus, couvert bas (nouveau)
+
+- **Volumes et portées réglés à l'oreille d'un test, pas au casque** (`EAR_*`, `VOICE_*` en tête de `js/game-noise.js`, les
+  volumes des fonctions de `Sound`) : un coup de feu s'entend 2,1 fois plus loin qu'il n'alerte, l'étouffement derrière un
+  mur coupe les aigus. La distance acoustique depuis l'auditeur est recalculée tous les deux pas ou toutes les 0,6 s : à
+  mesurer sur les grands champs de bataille.
+- **Les voix passent par la synthèse vocale du navigateur** : seules les voix d'homme naturelles en français parlent
+  (les voix neuronales d'Edge, les voix « Premium » d'Apple), reconnues à leur prénom (`VOICE_MEN` en tête de
+  `js/util.js`) ; sans elles, rien. Chrome n'en propose en général pas : le jeu s'y tait. Une voix d'homme naturelle au
+  prénom absent de la liste n'est pas reconnue. Elles ne se placent ni à gauche ni à droite et ne s'étouffent pas
+  derrière un mur. Une seule à la fois. Le bouton « Voix » de la pause les coupe ; il n'y a pas d'autre réglage du son (pas de volume).
+- **Couvert bas réglé à l'estime** (`COVER_REACH`, `COVER_GUARD` dans `js/map.js`, `COVER_STOP`, `COVER_FRAG`, `COVER_FLANK`
+  dans `js/game-combat.js`) : 85 % des balles arrêtées, un tiers des éclats. Les sacs de sable des champs de bataille sont
+  devenus du couvert bas : la guerre totale est sans doute moins meurtrière, à remesurer. Les suspects de l'assaut ne
+  cherchent pas le couvert, et personne ne se baisse derrière.
+
+## Trinômes : nouvelles manœuvres (à éprouver)
+
+- **Repli, embuscade, colonnes du groupe armé, contacts partagés réglés à l'estime** (`GROUP_RETREAT_*`, `AMBUSH_*`,
+  `AI_STACK_ARMED`, `RADIO_RANGE` en tête de `js/game-hunters.js`). Les accessoires suivent le rang dans la file
+  (`ROLE_KITS`) : le chef de file au silencieux, ce qui rend l'intervention plus discrète qu'avant. Une première mesure au
+  banc (douze duels de trois contre trois, `scenario=duel`) donne huit victoires à l'intervention sur douze, en 48 s en
+  moyenne : le groupe armé est peut-être redevenu trop faible.
+- **Les nouvelles arènes (Parking, Médiathèque, Résidence) n'ont été jouées que par les tests.**
 
 ## Cartes
 
-- **Cartes en plein air jouées seulement par les tests** (Maison de maître, Corps de ferme). La traversée du jardin à
-  découvert est peut-être trop punitive face aux fenêtres : quelques couverts de plus (murets, voitures) aideraient. Les
-  arbres ne cachent rien (comme tout le mobilier) et les haies arrêtent les balles comme un mur. Pas de carte d'escorte
-  en plein air.
+- **Cartes en plein air jouées seulement par les tests** (Maison de maître, Corps de ferme). Des murets et des voitures
+  (couvert bas) y abritent désormais la traversée du jardin ; leur nombre et leur place sont à éprouver. Les arbres ne
+  cachent rien (comme tout le mobilier) et les haies arrêtent les balles comme un mur. Pas de carte d'escorte en plein air.
 
 - **Hôtel, Banque et Centre de données n'ont été jouées que par les tests.** Leur équilibre (nombre
   d'entrées, longueur des allées entre les baies, couvert du hall de la banque) reste à éprouver à la main,
   dans les deux modes.
 - **Les dix nouvelles cartes n'ont été jouées que par les tests** : Musée (assaut), Mairie et Supermarché (siège), Gare
   (escorte), Lycée, Galerie marchande et Chantier (trinômes), Village, Port et Usine (guerre totale).
-- **Les trinômes n'ont plus que trois cartes**, leurs arènes : les bâtiments à otages, pensés pour l'assaut, n'y sont
-  plus. Trois arènes, c'est peu ; en dessiner d'autres, ou rouvrir aux trinômes les deux cartes en plein air.
 - **Les meilleures notes sont rangées par numéro de carte** (`breach.best.<mode>.<i>`) : on ajoute les cartes en fin de
   liste pour ne pas les mélanger.
 
 ## Fait depuis la dernière version
+
+Son placé dans l'espace (distance acoustique, côté, étouffement derrière les murs), sortie générale avec compresseur, pas
+de course selon le sol, temps des rechargements, impacts selon la matière, voix synthétisées (« Police ! », « Contact ! »,
+« Grenade ! ») · arc des coups reçus, fil des morts en trinômes et en guerre totale · couvert bas : murets, voitures, sacs
+de sable, qui arrêtent les balles ; dans les jardins des cartes en plein air · suspects : repli, barricade, otage tenu en
+joue après l'alerte, rondes qui referment leurs portes · coéquipiers : menottes et sommation d'eux-mêmes, couverture du
+VIP, ordres à un seul (Tab, menu sur un coéquipier) · trinômes : colonnes et entrée à la grenade du groupe armé, repli en
+infériorité, embuscade, contacts partagés, accessoires selon le rôle, laser éteint hors contact · trois arènes de
+trinômes (Parking, Médiathèque, Résidence) · meubles écartés des portes sur toutes les cartes (vérifié par les tests) ·
+`js/game.js` découpé en fichiers par thème · `tests/run.sh`, GitHub Action, banc d'équilibrage `tests/sim.html`.
+
+Version précédente :
+
 
 IA des agents autonomes (trinômes, guerre totale, intervention du siège) : le secteur suivant est le plus proche à
 pied, choisi pour tout le trinôme et gardé jusqu'à ce qu'on l'ait vu, au lieu du premier de la liste à vol d'oiseau
@@ -287,7 +335,7 @@ fouille là où il n'a rien donné, et l'on vient en renfort des siens qui se ba
 des balles (de 260 à 900 m/s), qui volent jusqu'au premier obstacle et laissent une trace fugace ; gerbe de chevrotine
 serrée autour du point visé ; munition subsonique à 300 m/s ; la fiche du briefing affiche la vitesse de la balle.
 
-Version précédente :
+Il y a deux versions :
 
 Mode guerre totale : deux armées de trois trinômes, cinq minutes de combat sur des champs de bataille en plein air
 (Village, Port, Usine), un trinôme anéanti revient de sa base six secondes plus tard, le vôtre compris ; l'armée qui

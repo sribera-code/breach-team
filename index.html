@@ -18,21 +18,27 @@
       <div id="timer">00:00.0</div>
     </div>
     <div id="waveBanner"></div>
+    <div id="killfeed"></div>
+    <!-- stratégie : votre armée, ses ordres en boutons, la minimap (dessinée par le rendu dans #stratMini) -->
+    <div id="stratPanel">
+      <div id="stratArmy"></div>
+      <div id="stratCmds"></div>
+      <div id="stratMini"></div>
+      <div id="stratHelp"><b>Clic gauche</b> : choisir un groupe (glisser : plusieurs, Maj : en plus)<br><b>Clic droit</b> : y aller, attaquer ; sur une porte fermée : en colonne, puis ses boutons pour entrer<br><b>Double clic droit</b> : le menu de l'endroit (grenade…), <b>E</b> valide<br><b>ZQSD</b>, bords : la vue · <b>molette</b> : zoom</div>
+    </div>
     <div id="hudBottom">
       <div id="hpBox">
         <div class="label">SANTÉ<span id="gearLabel"></span></div>
         <div class="hpbar"><div id="hpFill"></div></div>
         <div id="flashBox"><span id="nadeLabel">Flash</span> <b id="flashCount">3</b> <small>(Espace)</small> <span id="nadeOther"></span> <span id="moveMode" class="mode">COURSE</span> <small>(A / Maj)</small> <span id="fiberMode" class="mode fiber">FIBRE</span> <span id="laserMode" class="mode laser">LASER</span> <span id="lampMode" class="mode lamp">LAMPE</span> <span id="scopeMode" class="mode scope">LUNETTE</span> <span id="chargeBox">· Charges <b id="chargeCount">2</b> <small>(B)</small></span></div>
         <div id="squad"></div>
-        <div id="squadHint">Clic droit : aller là (maintenir + tirer : direction à couvrir · sur une porte fermée : en colonne) · clic molette : les autres ordres</div>
+        <div id="squadHint">Clic droit : aller là (maintenir + tirer : direction à couvrir · sur une porte fermée : en colonne, à nouveau : entrer) · double clic droit : grenade ou ordre à cet endroit · E : ce qui est à portée (colonne en place ou charge posée, même de loin : comment entrer, mise à feu)</div>
       </div>
-      <div id="stratBox"></div>
       <div id="message"></div>
-      <div id="stratHint"><b>Clic gauche</b> : choisir un trinôme (glisser : plusieurs) · <b>Clic droit</b> : y aller, attaquer, entrer par une porte (maintenir + tirer : direction à tenir)<br><b>Clic molette</b> : menu d'actions (sur un trinôme, un adversaire, une porte, au sol) · <b>Espace</b> : pause tactique · <b>ZQSD</b>, bords : vue · <b>molette</b> : zoom</div>
       <div id="weaponBox">
         <div id="weaponName">—</div>
         <div id="ammo"><b id="ammoMag">0</b> / <span id="ammoReserve">0</span></div>
-        <div id="reloadHint"><b>Clic molette</b> : menu d'actions (sur vous, sur une porte, au sol) · R : recharger · E : porte · Espace : grenade</div>
+        <div id="reloadHint"><b>R</b> ou <b>clic molette</b> : recharger · <b>E</b> : la porte, la colonne, ramasser (molette : choisir, E : valider) · <b>Espace</b> : grenade</div>
       </div>
     </div>
   </div>
@@ -43,6 +49,18 @@
 <script src="js/map.js"></script>
 <script src="js/entities.js"></script>
 <script src="js/game.js"></script>
+<script src="js/game-combat.js"></script>
+<script src="js/game-noise.js"></script>
+<script src="js/game-doors.js"></script>
+<script src="js/game-player.js"></script>
+<script src="js/game-menu.js"></script>
+<script src="js/game-mates.js"></script>
+<script src="js/game-enemies.js"></script>
+<script src="js/game-hunters.js"></script>
+<script src="js/game-hostages.js"></script>
+<script src="js/game-siege.js"></script>
+<script src="js/game-squads.js"></script>
+<script src="js/game-strategy.js"></script>
 <script src="js/sprites.js"></script>
 <script src="js/render.js"></script>
 <script src="js/ui.js"></script>
