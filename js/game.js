@@ -812,8 +812,8 @@ class Game {
     return best;
   }
 
-  pathTo(agent, wx, wy) {
-    return this.map.routeTo(agent.x, agent.y, Math.floor(wx / TILE), Math.floor(wy / TILE), agent.radius) || [];
+  pathTo(agent, wx, wy, opts) {
+    return this.map.routeTo(agent.x, agent.y, Math.floor(wx / TILE), Math.floor(wy / TILE), agent.radius, opts) || [];
   }
 
   canSee(agent, other) {

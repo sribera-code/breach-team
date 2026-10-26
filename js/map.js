@@ -35,6 +35,7 @@ const DOOR_STEPS = [0, 0.3, 0.6, 1];
 class MinHeap {
   constructor() { this.k = []; this.v = []; }
   get size() { return this.k.length; }
+  clear() { this.k.length = 0; this.v.length = 0; }
   push(key, val) {
     const k = this.k, v = this.v;
     let i = k.length;
@@ -262,6 +263,19 @@ class GameMap {
       }
       this.nearWall[y * this.w + x] = near;
     }
+    // La grille ne change plus après la construction : findPath et walkField lisent ces tableaux plutôt que
+    // blocksMove et doorAt (même résultat, sans appel ni recherche dans une Map par case visitée).
+    this.solid = new Uint8Array(N);  // 1 : blocksMove
+    this.isDoor = new Uint8Array(N); // 1 : case d'une porte
+    for (let i = 0; i < N; i++) {
+      this.solid[i] = this.blocksMove(i % this.w, (i / this.w) | 0) ? 1 : 0;
+      this.isDoor[i] = this.doorAt.has(i) ? 1 : 0;
+    }
+    // tampons de recherche réutilisés d'un appel à l'autre (findPath, walkField)
+    this.searchG = new Float32Array(N);
+    this.searchCame = new Int32Array(N);
+    this.searchClosed = new Uint8Array(N);
+    this.searchHeap = new MinHeap();
   }
 
   // Orientation d'un meuble : dos au mur voisin (rot 0 : dos en haut, face vers le bas), sinon dans
@@ -482,19 +496,18 @@ class GameMap {
   // A* sur la grille (8 directions, pas de coupe de coin, portes traversées en ligne droite).
   // opts.noClosedDoors : les portes non ouvertes sont infranchissables (coéquipiers en suivi).
   // opts.passableDoors : seules les portes où l'on se glisse (doorPassable) sont franchissables (otages).
-  // opts.avoid : [{x, y, r}] zones à contourner (alliés), fortement pénalisées.
+  // opts.avoid : [{x, y, r, c}] zones à contourner (alliés) : chaque case à moins de r coûte c de plus (40 sans c).
   findPath(sx, sy, tx, ty, opts) {
     const noClosed = !!(opts && opts.noClosedDoors);
     const passOnly = !!(opts && opts.passableDoors);
     const avoid = (opts && opts.avoid) || [];
     if (!this.inBounds(tx, ty) || this.blocksMove(tx, ty)) return null;
     if (!this.inBounds(sx, sy)) return null;
-    const w = this.w, N = w * this.h;
-    const g = new Float32Array(N).fill(Infinity);
-    const came = new Int32Array(N).fill(-1);
-    const closed = new Uint8Array(N);
+    const w = this.w, h = this.h, solid = this.solid, isDoor = this.isDoor;
+    const g = this.searchG.fill(Infinity), came = this.searchCame.fill(-1), closed = this.searchClosed.fill(0);
     const heur = (x, y) => { const ax = Math.abs(x - tx), ay = Math.abs(y - ty); return Math.max(ax, ay) + 0.414 * Math.min(ax, ay); };
-    const open = new MinHeap();
+    const open = this.searchHeap;
+    open.clear();
     const start = sy * w + sx, goal = ty * w + tx;
     g[start] = 0;
     open.push(heur(sx, sy), start);
@@ -509,25 +522,25 @@ class GameMap {
         return out.reverse();
       }
       const cx = ck % w, cy = (ck / w) | 0;
-      const curDoor = this.doorAt.has(ck);
+      const curDoor = isDoor[ck] === 1;
       for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
         if (!dx && !dy) continue;
         const nx = cx + dx, ny = cy + dy;
-        if (!this.inBounds(nx, ny) || this.blocksMove(nx, ny)) continue;
+        if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
         const nk = ny * w + nx;
-        if (closed[nk]) continue;
+        if (solid[nk] || closed[nk]) continue;
         const diag = dx !== 0 && dy !== 0;
-        const dObj = this.doorAt.get(nk);
+        const dObj = isDoor[nk] ? this.doorAt.get(nk) : undefined;
         if (noClosed && dObj && !dObj.open) continue;
         if (passOnly && dObj && !this.doorPassable(dObj)) continue;
         if (diag) {
-          if (this.blocksMove(cx + dx, cy) || this.blocksMove(cx, cy + dy)) continue;
+          if (solid[ck + dx] || solid[ck + dy * w]) continue;
           if (curDoor || dObj) continue;
         }
         let cost = (diag ? 1.414 : 1) + (dObj ? 1 : 0) + (this.nearWall[nk] ? 2.5 : 0);
         if (avoid.length && nk !== goal) {
           const wx = (nx + 0.5) * TILE, wy = (ny + 0.5) * TILE;
-          for (const a of avoid) if (Math.abs(wx - a.x) < a.r && Math.abs(wy - a.y) < a.r && Math.hypot(wx - a.x, wy - a.y) < a.r) { cost += 40; break; }
+          for (const a of avoid) if (Math.abs(wx - a.x) < a.r && Math.abs(wy - a.y) < a.r && Math.hypot(wx - a.x, wy - a.y) < a.r) { cost += a.c || 40; break; }
         }
         const ng = g[ck] + cost;
         if (ng < g[nk]) { g[nk] = ng; came[nk] = ck; open.push(ng + heur(nx, ny), nk); }
@@ -540,25 +553,27 @@ class GameMap {
   // findPath : 8 directions sans couper les coins, une porte se franchit droit et coûte un peu plus, même fermée
   // (on l'ouvre en passant).
   walkField(x, y) {
-    const w = this.w, N = w * this.h, d = new Float32Array(N).fill(Infinity), closed = new Uint8Array(N);
+    const w = this.w, h = this.h, N = w * h, d = new Float32Array(N).fill(Infinity), closed = this.searchClosed.fill(0);
+    const solid = this.solid, isDoor = this.isDoor;
     const sx = Math.floor(x / TILE), sy = Math.floor(y / TILE);
     if (!this.inBounds(sx, sy)) return d;
-    const open = new MinHeap(), start = sy * w + sx;
+    const open = this.searchHeap, start = sy * w + sx;
+    open.clear();
     d[start] = 0;
     open.push(0, start);
     while (open.size) {
       const ck = open.pop();
       if (closed[ck]) continue;
       closed[ck] = 1;
-      const cx = ck % w, cy = (ck / w) | 0, curDoor = this.doorAt.has(ck);
+      const cx = ck % w, cy = (ck / w) | 0, curDoor = isDoor[ck] === 1;
       for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
         if (!dx && !dy) continue;
         const nx = cx + dx, ny = cy + dy;
-        if (!this.inBounds(nx, ny) || this.blocksMove(nx, ny)) continue;
+        if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
         const nk = ny * w + nx;
-        if (closed[nk]) continue;
-        const diag = dx !== 0 && dy !== 0, door = this.doorAt.has(nk);
-        if (diag && (this.blocksMove(cx + dx, cy) || this.blocksMove(cx, cy + dy) || curDoor || door)) continue;
+        if (solid[nk] || closed[nk]) continue;
+        const diag = dx !== 0 && dy !== 0, door = isDoor[nk] === 1;
+        if (diag && (solid[ck + dx] || solid[ck + dy * w] || curDoor || door)) continue;
         const nd = d[ck] + TILE * ((diag ? 1.414 : 1) + (door ? 1 : 0));
         if (nd < d[nk]) { d[nk] = nd; open.push(nd, nk); }
       }

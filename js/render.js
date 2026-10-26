@@ -33,7 +33,6 @@ class Renderer {
     this.ctx = canvas.getContext('2d');
     this.game = game;
     this.staticC = document.createElement('canvas');
-    this.decalC = document.createElement('canvas');
     this.fogC = document.createElement('canvas');
     this.exploredC = document.createElement('canvas');
     this.miniC = document.createElement('canvas');     // plan réduit (sols, murs, portes, fenêtres)
@@ -42,6 +41,8 @@ class Renderer {
     this.miniArrC = document.createElement('canvas');  // pièce où la dernière vague d'assaut est entrée
     this.noiseC = document.createElement('canvas');    // halo du dernier bruit du joueur (une case = un pixel)
     this.darkC = document.createElement('canvas');     // obscurité quand le courant est coupé, trouée par les lumières
+    this.vignetteC = document.createElement('canvas'); // assombrissement des bords de l'écran (voir drawVignette)
+    this.vignetteC.width = this.vignetteC.height = 0;
     this._noiseId = 0;
     this.miniScale = 4;
     this.dpr = 1;
@@ -77,8 +78,12 @@ class Renderer {
   buildStatic() {
     const m = this.game.map;
     const W = m.w * TILE, H = m.h * TILE;
-    for (const c of [this.staticC, this.decalC, this.fogC, this.exploredC, this.darkC]) { c.width = W; c.height = H; }
-    this.exploredC.getContext('2d').clearRect(0, 0, W, H);
+    for (const c of [this.staticC, this.fogC]) { c.width = W; c.height = H; }
+    // (l'obscurité n'existe que courant coupé : sinon, pas de calque de la taille de la carte pour rien)
+    this.darkC.width = this.game.dark ? W : 0; this.darkC.height = this.game.dark ? H : 0;
+    // cases déjà vues : un pixel par case fine, agrandi sans lissage au dessin du brouillard (même image, 256 fois moins lourd)
+    this.exploredC.width = m.w; this.exploredC.height = m.h;
+    this.exploredC.getContext('2d').clearRect(0, 0, m.w, m.h);
     m.newlyExplored = [];
     for (let i = 0; i < m.explored.length; i++) if (m.explored[i]) m.newlyExplored.push(i);
     const ctx = this.staticC.getContext('2d');
@@ -93,7 +98,6 @@ class Renderer {
     for (const d of m.doors) Sprites.paintDoorFrame(ctx, d);
     for (const w of m.windows) Sprites.paintWindow(ctx, w);
     for (const p of m.props) Sprites.paintProp(ctx, p);
-    this.decalC.getContext('2d').clearRect(0, 0, W, H);
     this.buildMinimap();
     // (en stratégie, la vue de départ, sur votre base)
     this.fitZoom(true);
@@ -332,8 +336,8 @@ class Renderer {
   draw(dt) {
     const g = this.game, ctx = this.ctx, m = g.map;
     this.updateCamera(dt);
-    // décalques en attente
-    if (g.decals.length) { const dc = this.decalC.getContext('2d'); for (const d of g.decals) Sprites.decal(dc, d); g.decals = []; }
+    // décalques en attente : peints une fois pour toutes sur le décor, comme le reste du sol
+    if (g.decals.length) { const dc = this.staticC.getContext('2d'); for (const d of g.decals) Sprites.decal(dc, d); g.decals = []; }
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.fillStyle = '#07090b';
@@ -345,7 +349,6 @@ class Renderer {
     // cônes de vision qui touchent l'écran : les seuls à découper le brouillard et les tracés (une armée entière en a neuf)
     this.shownPolys = g.visionPolys.filter(p => Renderer.polyMeets(p, v));
     ctx.drawImage(this.staticC, v.x, v.y, v.w, v.h, v.x, v.y, v.w, v.h);
-    ctx.drawImage(this.decalC, v.x, v.y, v.w, v.h, v.x, v.y, v.w, v.h);
     this.drawCasings();
     this.drawBodies();
     this.drawDoors();
@@ -806,12 +809,14 @@ class Renderer {
   // Courant coupé : un voile sombre sur tout le bâtiment, troué par les faisceaux des lampes, les flammes de
   // bouche, les flashs et un peu autour de soi (les yeux s'habituent).
   drawDark() {
-    const g = this.game, c = this.darkC, d = c.getContext('2d');
+    const g = this.game, c = this.darkC, d = c.getContext('2d'), v = this.viewRect(); // (seule la partie à l'écran)
     d.setTransform(1, 0, 0, 1, 0, 0);
+    d.save();
+    d.beginPath(); d.rect(v.x, v.y, v.w, v.h); d.clip();
     d.globalCompositeOperation = 'source-over';
-    d.clearRect(0, 0, c.width, c.height);
+    d.clearRect(v.x, v.y, v.w, v.h);
     d.fillStyle = 'rgba(2,4,12,0.62)';
-    d.fillRect(0, 0, c.width, c.height);
+    d.fillRect(v.x, v.y, v.w, v.h);
     d.globalCompositeOperation = 'destination-out';
     const hole = (x, y, r, a) => {
       const grad = d.createRadialGradient(x, y, 0, x, y, r);
@@ -829,8 +834,8 @@ class Renderer {
     if (p.alive) hole(p.x, p.y, DARK_SIGHT, 0.45);
     for (const a of [...g.ops, ...g.enemies]) if (a.alive && a.glowT > 0) hole(a.x, a.y, 2.5 * U, 0.8 * a.glowT / SHOT_GLOW);
     for (const f of g.effects) if (f.type === 'flash' || f.type === 'frag') hole(f.x, f.y, 8 * U, 1 - f.t / f.life);
-    d.globalCompositeOperation = 'source-over';
-    this.ctx.drawImage(c, 0, 0);
+    d.restore();
+    this.ctx.drawImage(c, v.x, v.y, v.w, v.h, v.x, v.y, v.w, v.h);
   }
 
   // Dans le noir, un suspect trahi par la flamme de son arme (ou pris dans un faisceau hors du champ) se devine
@@ -1144,12 +1149,13 @@ class Renderer {
       mc.fillStyle = '#fff';
       for (const i of m.newlyExplored) {
         const x = i % m.w, y = Math.floor(i / m.w);
-        ec.fillRect(x * TILE, y * TILE, TILE, TILE);
+        ec.fillRect(x, y, 1, 1);
         mc.fillRect(x * s, y * s, s, s);
       }
       m.newlyExplored = [];
     }
-    f.drawImage(this.exploredC, v.x, v.y, v.w, v.h, v.x, v.y, v.w, v.h);
+    f.imageSmoothingEnabled = false;
+    f.drawImage(this.exploredC, 0, 0, m.w, m.h, 0, 0, m.w * TILE, m.h * TILE); // (découpé à la vue par le clip)
     f.fillStyle = 'rgba(0,0,0,1)';
     for (const p of this.shownPolys || g.visionPolys) {
       f.beginPath(); f.moveTo(p.x, p.y);
@@ -1250,9 +1256,16 @@ class Renderer {
 
   drawVignette() {
     const ctx = this.ctx, W = this.canvas.width, H = this.canvas.height;
-    const g = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.35, W / 2, H / 2, Math.max(W, H) * 0.7);
-    g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(0,0,0,0.55)');
-    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    // le dégradé ne change qu'avec la taille de l'écran : peint une fois dans vignetteC, recopié ensuite
+    const vc = this.vignetteC;
+    if (vc.width !== W || vc.height !== H) {
+      vc.width = W; vc.height = H;
+      const c = vc.getContext('2d');
+      const g = c.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.35, W / 2, H / 2, Math.max(W, H) * 0.7);
+      g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(0,0,0,0.55)');
+      c.fillStyle = g; c.fillRect(0, 0, W, H);
+    }
+    ctx.drawImage(vc, 0, 0);
     const p = this.game.player;
     if (p.alive && p.hp < 40) {
       const r = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.3, W / 2, H / 2, Math.max(W, H) * 0.6);

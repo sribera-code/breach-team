@@ -22,6 +22,8 @@ const SQUAD_CONTACT = 20;
 // distancé de plus de SQUAD_CATCH de sa place court la reprendre. L'adversaire en vue, ceux qui ne le voient pas viennent
 // à hauteur du chef (SQUAD_LINE, dans le repère de la direction de l'adversaire).
 const SQUAD_FILE = [[-1.3, -0.6], [-2.4, 0.5], [-3.5, -0.4]], SQUAD_LINE = [[-0.4, -1.1], [-0.4, 1.1], [-0.4, 2.2]];
+// (de combien la place de chacun dans la file est plus loin du chef que celle du troisième : voir waitsForGroup)
+const SQUAD_DEPTH = SQUAD_FILE.map(([a, b]) => Math.max(0, Math.hypot(a, b) - Math.hypot(...SQUAD_FILE[1])) * U);
 const SQUAD_PACE = 0.7, SQUAD_DOOR_PAUSE = 0.6, SQUAD_SPREAD = 4 * U, SQUAD_WAIT = 4, SQUAD_CATCH = 0.6 * U;
 // Agents autonomes : un secteur à ratisser compte comme vu dès qu'un homme passe à SWEEP_SEEN, la vue dégagée ; le
 // suivant est le plus proche à pied, de SWEEP_AHEAD plus volontiers devant que derrière. Un trinôme garde son contact
@@ -43,6 +45,11 @@ const AMBUSH_RANGE = 10 * U, AMBUSH_CHANCE = 0.3, AMBUSH_CHANCE_ARMED = 0.5, AMB
 // second l'apprend) ; en guerre totale, seulement à ceux qui en sont à RADIO_RANGE au plus (un flanc enfoncé appelle ses
 // voisins, pas toute l'armée).
 const RADIO_RANGE = 14 * U;
+// Chemins d'un trinôme : les alliés arrêtés se contournent où qu'ils soient sur le trajet, ceux qui marchent seulement à
+// CROWD_NEAR au plus (ils seront ailleurs quand on arrivera) ; chaque case qui passe à CROWD_R d'un homme (CROWD_R_STUCK
+// pour celui qui vient de se coincer) coûte CROWD_COST de plus (GameMap.findPath, opts.avoid) s'il est arrêté et
+// d'un autre trinôme, CROWD_SOFT s'il marche ou s'il est des siens : ceux-là s'écartent, ou on les frôle.
+const CROWD_NEAR = 4 * U, CROWD_R = 22, CROWD_R_STUCK = 30, CROWD_COST = 40, CROWD_SOFT = 6;
 
 mixGame(class {
   // Points de passage à nettoyer, du plus proche de l'entrée au plus lointain (from : d'un point précis, sinon de la
@@ -191,7 +198,7 @@ mixGame(class {
     // chemin tracé ailleurs, vers une cible ou un poste, n'en a pas)
     const to = e.path.to;
     if (!e.path.length || e.repathT <= 0 || !to || dist(to.x, to.y, goal.x, goal.y) > 1.5 * U) {
-      e.path = this.pathTo(e, goal.x, goal.y);
+      e.path = this.pathTo(e, goal.x, goal.y, { avoid: this.crowdAvoid(e, true) });
       e.path.to = { x: goal.x, y: goal.y };
       e.repathT = 1.2;
       // point injoignable (au ras d'un mur, derrière un meuble) : on l'oublie et on reprend le ratissage (un secteur
@@ -310,6 +317,33 @@ mixGame(class {
     }
   }
 
+  // Les alliés que e contourne sur son chemin (opts.avoid de GameMap.findPath) : ceux qui se tiennent arrêtés, où qu'ils
+  // soient, ceux qui marchent tout près. Un chef de file ne contourne pas les siens (lead) : ils le suivent, ils
+  // s'écartent d'eux-mêmes ; un équipier les contourne peu (un détour de vingt cases pour ne pas frôler son chef sur un
+  // pont). Que les arrêtés comptent de loin évite le va-et-vient : un équipier qui ne voyait un groupe posté sur un pont
+  // qu'à quatre cases prenait le détour, s'en éloignait, et revenait au pont.
+  crowdAvoid(e, lead) {
+    const r = e.stuckCount ? CROWD_R_STUCK : CROWD_R, out = [];
+    for (const o of this.teamOf(e)) {
+      if (o === e || !o.alive) continue;
+      const mine = !!o.group && o.group === e.group;
+      if (lead && mine) continue;
+      if (!o.moving || dist(o.x, o.y, e.x, e.y) < CROWD_NEAR) out.push({ x: o.x, y: o.y, r, c: o.moving || mine ? CROWD_SOFT : CROWD_COST });
+    }
+    return out;
+  }
+
+  // Sens où va un agent arrêté sur son chemin (le point du chemin à une case et demie), sinon celui de sa marche.
+  pathHeading(a) {
+    let x = a.x, y = a.y, left = 1.5 * U;
+    for (const q of a.path) {
+      const L = dist(x, y, q.x, q.y);
+      if (L >= left) { x += (q.x - x) * left / L; y += (q.y - y) * left / L; break; }
+      left -= L; x = q.x; y = q.y;
+    }
+    return x === a.x && y === a.y ? (a.moveDir === undefined ? a.angle : a.moveDir) : Math.atan2(y - a.y, x - a.x);
+  }
+
   // Chemin restant d'un agent (px).
   pathLeft(a) {
     let L = 0, x = a.x, y = a.y;
@@ -319,13 +353,24 @@ mixGame(class {
 
   // Le chef de file attend celui des siens resté à plus de SQUAD_SPREAD (à vol d'oiseau ou à pied), SQUAD_WAIT s au plus
   // de suite : un équipier coincé ne fige pas le trinôme. Celui qui se bat ou tient son poste en colonne ne compte pas.
+  // Le quatrième d'un groupe d'assaut a sa place plus loin dans la file (SQUAD_FILE) : il a la même marge que le
+  // troisième au-delà de sa place, sinon, arrêté un peu en deçà, il se croit placé quand son chef le croit distancé.
   waitsForGroup(e, dt) {
-    const g = e.group;
-    const lag = g.members.some(o => o !== e && o.alive && o.group === g && !o.target && !o.entry && !o.clear
-      && (dist(o.x, o.y, e.x, e.y) > SQUAD_SPREAD || this.pathLeft(o) > SQUAD_SPREAD + U));
+    const g = e.group, fol = g.members.filter(o => o !== e && o.alive && o.group === g);
+    const lag = fol.some((o, k) => {
+      if (o.target || o.entry || o.clear) return false;
+      // (à sa place, tenue à jour : un équipier sonné n'y est plus, elle a bougé avec le chef)
+      if (o.formAt && o.formT > this.time - 0.3 && !(o.stun > 0) && !o.path.length && dist(o.x, o.y, o.formAt.x, o.formAt.y) < U) return false;
+      const far = SQUAD_SPREAD + SQUAD_DEPTH[Math.min(k, SQUAD_DEPTH.length - 1)];
+      return dist(o.x, o.y, e.x, e.y) > far || this.pathLeft(o) > far + U;
+    });
     if (!lag) { g.waitT = 0; return false; }
     g.waitT = (g.waitT || 0) + dt;
-    return g.waitT < SQUAD_WAIT;
+    if (g.waitT >= SQUAD_WAIT) return false;
+    // arrêté, il fait face à là où il va : sa file se range derrière lui de ce côté (formationPos lit moveDir), pas
+    // derrière sa dernière marche (au demi-tour, les siens allaient se placer de l'autre côté d'un pont)
+    e.moveDir = this.pathHeading(e);
+    return true;
   }
 
   // Avant de franchir une porte (ouverte, ou qu'il vient d'ouvrir), le chef de file marque SQUAD_DOOR_PAUSE s sur le
@@ -385,7 +430,7 @@ mixGame(class {
       const tile = { x: Math.floor(dest.x / TILE), y: Math.floor(dest.y / TILE) };
       const changed = !e.destTile || e.destTile.x !== tile.x || e.destTile.y !== tile.y;
       if (changed || e.repathT <= 0 || !e.path.length) {
-        const avoid = this.teamOf(e).filter(o => o !== e && o.alive && dist(o.x, o.y, e.x, e.y) < 4 * U).map(o => ({ x: o.x, y: o.y, r: e.stuckCount ? 30 : 22 }));
+        const avoid = this.crowdAvoid(e);
         let path = this.map.routeTo(e.x, e.y, tile.x, tile.y, e.radius, { noClosedDoors: true, avoid });
         if (path && path.length) path[path.length - 1] = { x: dest.x, y: dest.y };
         // pas de chemin sans ouvrir de porte (une porte s'est refermée entre eux) : il rejoint le chef, porte comprise
@@ -879,20 +924,25 @@ mixGame(class {
       secs.forEach((s, i) => { if (i < k || f[cell(s)] === Infinity) s.done = true; });
       return secs.find(s => !s.done) || null;
     }
-    const others = (this.squads ? this.squads.groups : []).filter(o => o !== own && o.sectors === secs).map(o => this.anchorOf(o)).filter(Boolean);
+    const mates = (this.squads ? this.squads.groups : []).filter(o => o !== own && o.sectors === secs);
+    const others = mates.map(o => this.anchorOf(o)).filter(Boolean);
     if (this.squads && !this.war && own.team === 'ops' && this.player.alive) others.push(this.player);
     const fo = others.map(o => m.walkField(o.x, o.y));
-    let best = null, bs = Infinity, any = null, as = Infinity;
+    // (celui où va déjà un autre trinôme de la liste est à lui, tant qu'il en reste d'autres : leurs trajets changent, et
+    // un secteur plus près de lui au départ peut le devenir de nous en route)
+    const taken = mates.map(o => o.sweepTo).filter(Boolean);
+    let best = null, bs = Infinity, any = null, as = Infinity, last = null, ls = Infinity;
     for (const s of secs) {
       if (s.done) continue;
       const i = cell(s), d = f[i];
       if (d === Infinity) { s.done = true; continue; } // injoignable
       const sc = own.sectorDir === undefined ? d : d - SWEEP_AHEAD * Math.cos(angleDiff(Math.atan2(s.y - at.y, s.x - at.x), own.sectorDir));
+      if (taken.includes(s)) { if (sc < ls) { ls = sc; last = s; } continue; }
       if (sc < as) { as = sc; any = s; }
       if (fo.some(o => o[i] + U < d)) continue; // plus près d'un autre des siens : à lui
       if (sc < bs) { bs = sc; best = s; }
     }
-    const pick = best || any;
+    const pick = best || any || last;
     if (pick) own.sectorDir = Math.atan2(pick.y - at.y, pick.x - at.x);
     return pick;
   }

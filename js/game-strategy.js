@@ -5,6 +5,13 @@
 // STRAT_ARRIVE de son point s'y arrête, et y retourne s'il en a été écarté de plus de STRAT_LEASH ; tolérance d'un clic
 // sur un homme, en pixels d'écran.
 const STRAT_SPACING = 2.6 * U, STRAT_ARRIVE = 0.3 * U, STRAT_LEASH = 0.9 * U, STRAT_PICK = 7;
+// Un trinôme envoyé là où un autre se tient (ou va) prend la place libre la plus proche à STRAT_APART au moins du point de
+// l'autre, s'il en trouve une à STRAT_LOOK petites cases : en ligne, chacun tient deux cases de large, et deux lignes au
+// même point s'emmêlaient.
+const STRAT_APART = 2 * U, STRAT_LOOK = 10;
+// Lancé à l'attaque, un tireur à lunette s'arrête à cette part de sa portée de tir de sa cible (voir snipeStep) : un peu
+// en deçà, pour qu'elle ne sorte pas de sa portée au premier pas.
+const STRAT_SNIPE = 0.85;
 // Grenades à fragmentation de chaque homme de vos trinômes d'intervention, en plus de ses flashs : elles ne partent que
 // sur vos ordres (bouton, N, entrée à la grenade).
 const STRAT_FRAGS = 1;
@@ -323,10 +330,13 @@ mixGame(class {
     const dir = Math.atan2(y - cy, x - cx), px = -Math.sin(dir), py = Math.cos(dir);
     const row = gs.map((g, i) => ({ g, lat: (anchors[i].x - cx) * px + (anchors[i].y - cy) * py })).sort((p, q) => p.lat - q.lat);
     const sent = [];
+    // (les points des autres trinômes de l'armée, et ceux déjà donnés par cet ordre)
+    const away = this.war.slots.ops.filter(o => o && !gs.includes(o) && this.stratAlive(o) && o.order && (o.order.type === 'move' || o.order.type === 'hold')).map(o => o.order);
     row.forEach(({ g }, i) => {
-      const off = (i - (gs.length - 1) / 2) * STRAT_SPACING;
-      const spot = this.freeSpotNear(x + px * off, y + py * off) || this.freeSpotNear(x, y);
+      const off = (i - (gs.length - 1) / 2) * STRAT_SPACING, ox = x + px * off, oy = y + py * off;
+      const spot = this.freeSpotNear(ox, oy, STRAT_LOOK, away) || this.freeSpotNear(ox, oy) || this.freeSpotNear(x, y);
       if (!spot) return;
+      away.push(spot);
       const after = queue && g.order && g.order.type === 'move';
       const from = after ? g.queue[g.queue.length - 1] || g.order : this.anchorOf(g);
       const o = { type: 'move', x: spot.x, y: spot.y, angle: angle !== null && angle !== undefined ? angle : Math.atan2(spot.y - from.y, spot.x - from.x) };
@@ -340,8 +350,9 @@ mixGame(class {
     return sent;
   }
 
-  // Case libre la plus proche de (x, y), à R petites cases au plus, où un homme tient sans toucher de mur ni de meuble.
-  freeSpotNear(x, y, R = 6) {
+  // Case libre la plus proche de (x, y), à R petites cases au plus, où un homme tient sans toucher de mur ni de meuble
+  // (et, avec away, à STRAT_APART au moins de chacun de ces points).
+  freeSpotNear(x, y, R = 6, away = null) {
     const m = this.map, cx = Math.floor(x / TILE), cy = Math.floor(y / TILE);
     let best = null, bd = Infinity;
     for (let dy = -R; dy <= R; dy++) for (let dx = -R; dx <= R; dx++) {
@@ -349,6 +360,7 @@ mixGame(class {
       if (!m.inBounds(tx, ty) || m.tile(tx, ty) !== 0 || m.blocksMove(tx, ty) || m.door(tx, ty)) continue;
       const px = (tx + 0.5) * TILE, py = (ty + 0.5) * TILE;
       if (!m.circleFree(px, py, 12, false)) continue;
+      if (away && away.some(q => dist(q.x, q.y, px, py) < STRAT_APART)) continue;
       const d = dist(px, py, x, y);
       if (d < bd) { bd = d; best = { x: px, y: py }; }
     }
@@ -510,6 +522,7 @@ mixGame(class {
     const o = g.order, lead = this.leaderOf(g);
     if (lead !== e) { this.followStep(e, lead, dt); return; }
     if (o.type === 'hold') { this.holdStep(g, e, o, dt); return; }
+    if (o.type === 'attack' && this.snipeStep(e, o, dt)) return;
     // arrivé : sur le point, ou tout près au bout du chemin tracé vers lui (quelqu'un s'y tient déjà)
     const d = dist(e.x, e.y, o.x, o.y), to = e.path.to;
     if (d < STRAT_ARRIVE || (d < 1.2 * U && !e.path.length && to && to.x === o.x && to.y === o.y)) {
@@ -529,6 +542,23 @@ mixGame(class {
     this.say(`${g.label} : cible abattue`, 1.4);
   }
 
+  // Ordre d'attaque d'un groupe que mène un tireur à lunette (groupe de précision) : il ne va pas au contact, où il
+  // perdrait sa lunette en marchant (Game.scoped), donc sa vue et sa portée. Dès qu'il a la vue sur la dernière position
+  // connue de sa cible à STRAT_SNIPE de sa portée de tir (fireRange), il s'arrête et vise ce point, l'œil posé ; la cible
+  // vue ailleurs par l'armée et sortie de sa portée (trackFoe), il se rapproche. Plus vue, tant pis : il tient où il est.
+  // true : il est posté.
+  snipeStep(e, o, dt) {
+    if (!e.weapon || !e.weapon.scope) return false;
+    const R = this.fireRange(e) * (o.post ? 1 : STRAT_SNIPE); // (posté, il ne repart qu'au-delà de toute sa portée)
+    o.post = dist(e.x, e.y, o.x, o.y) <= R && this.map.hasLOS(e.x, e.y, o.x, o.y);
+    if (!o.post) return false;
+    e.path = []; e.moving = false;
+    const a = Math.atan2(o.y - e.y, o.x - e.x);
+    e.moveDir = a; // (sa file se range face à la cible : voir followStep)
+    if (!e.target && e.alertAngle === null) turnToward(e, a, e.turnRate, dt);
+    return true;
+  }
+
   // Le chef tient le point (il y revient si on l'en a écarté), et regarde dans la direction donnée.
   holdStep(g, e, o, dt) {
     if (dist(e.x, e.y, o.x, o.y) > STRAT_LEASH) { this.leadTo(g, e, o, dt, false); return; }
@@ -544,7 +574,7 @@ mixGame(class {
   leadTo(g, e, goal, dt, rush) {
     const to = e.path.to;
     if (!e.path.length || e.repathT <= 0 || !to || dist(to.x, to.y, goal.x, goal.y) > 0.5 * U) {
-      e.path = this.pathTo(e, goal.x, goal.y);
+      e.path = this.pathTo(e, goal.x, goal.y, { avoid: this.crowdAvoid(e, true) });
       // (tout près, sans chemin tracé : droit dessus, si rien n'est entre)
       if (!e.path.length && dist(e.x, e.y, goal.x, goal.y) <= 1.2 * U && this.map.segmentFree(e.x, e.y, goal.x, goal.y, e.radius - 1)) e.path = [{ x: goal.x, y: goal.y }];
       e.path.to = { x: goal.x, y: goal.y };

@@ -3866,11 +3866,17 @@ test('trinômes : un trinôme autonome ratisse le bâtiment au plus près, sans 
     const game = g.game, tag = SQUAD_LEVELS[lvl].name;
     game.enemies = [];
     const grp = game.mates.find(m => m.hunter).group, secs = grp.sectors, seen = new Set();
+    // (tout ratissé, la liste repart à zéro dans la même image que le dernier secteur vu : on compte les tours)
+    const pick = game.pickSector.bind(game);
+    let laps = 0;
+    game.pickSector = (own, e, list) => { if (list === secs && !list.some(q => !q.done)) laps++; return pick(own, e, list); };
     let prev = null, fickle = 0;
     // (le trinôme avance au pas, en marquant les portes : deux minutes)
     for (let i = 0; i < 120 * 60; i++) {
+      const lap = laps;
       game.update(1 / 60);
       for (const s of secs) if (s.done) seen.add(s);
+      if (laps > lap) secs.forEach(q => seen.add(q));
       // un secteur choisi n'est quitté qu'une fois vu (ou la liste reprise à zéro, tout étant vu)
       if (prev && grp.sweepTo !== prev && !prev.done && seen.size < secs.length) fickle++;
       prev = grp.sweepTo;
@@ -4988,6 +4994,49 @@ test('stratégie : un groupe d’assaut marche en file à quatre et tient en lig
   ok(fol.every(m => dist(m.x, m.y, lead.x, lead.y) < 3.5 * U), 'les siens près du chef');
 });
 
+test('stratégie : lancé à l’attaque, le tireur d’élite s’arrête à portée de lunette de la cible au lieu d’aller au contact', () => {
+  for (const mode of ['strategy', 'strategyArmed']) {
+    const g = mkStrat({ mode, calm: true, loadout: { ...MODES[mode].loadout, army: [{ type: 'precision', sup: false }, { type: 'normal', sup: false }, { type: 'normal', sup: false }] } });
+    const game = g.game, [a] = game.war.slots.ops, marks = game.leaderOf(a);
+    ok(marks.weapon.scope, mode + ' : le tireur mène');
+    // une cible à 30 cases, en vue, immobile et aveugle (elle ne répond pas)
+    let spot = null;
+    for (let k = 0; k < 96 && !spot; k++) {
+      const t = k * TAU / 96, x = marks.x + Math.cos(t) * 30 * U, y = marks.y + Math.sin(t) * 30 * U;
+      if (game.map.inBounds(Math.floor(x / TILE), Math.floor(y / TILE)) && game.map.hasLOS(marks.x, marks.y, x, y) && game.map.circleFree(x, y, 11, false)) spot = { x, y };
+    }
+    ok(spot, mode + ' : une cible à 30 cases en vue');
+    const foe = new Enemy(spot.x, spot.y, 0, 'ak');
+    foe.viewRange = 0;
+    game.enemies = [foe];
+    game.updateEnemy = () => {};
+    stratKey(g, 'Digit1');
+    game.stratAttack([a], foe);
+    const R = game.fireRange(marks);
+    ok(simUntil(game, () => foe.hp < foe.maxHp || !foe.alive, 30), mode + ' : il la touche');
+    // (en marchant jusqu'à la voir sans lunette, il l'aurait touchée à moins de viewRange)
+    const d = dist(marks.x, marks.y, foe.x, foe.y);
+    ok(d <= R && d > marks.viewRange + U, mode + ' : de loin, à portée de lunette (' + (d / U).toFixed(1) + ' cases)');
+    simUntil(game, () => false, 2);
+    ok(Math.abs(dist(marks.x, marks.y, foe.x, foe.y) - d) < U, mode + ' : posté, sans s’approcher davantage');
+  }
+});
+
+test('stratégie : le chef d’un groupe d’assaut n’attend pas le quatrième, resté juste en deçà de sa place', () => {
+  // (sa place en file est à 3,5 U du chef : arrêté un peu en arrière, il passait les 4 U de SQUAD_SPREAD, et le chef
+  // l'attendait SQUAD_WAIT s à chaque pas : 40 s pour douze cases)
+  for (const mode of ['strategy', 'strategyArmed']) {
+    const g = mkStrat({ mode, calm: true, loadout: { ...MODES[mode].loadout, army: [{ type: 'assault', sup: false }, { type: 'normal', sup: false }, { type: 'normal', sup: false }] } });
+    const game = g.game, [a] = game.war.slots.ops;
+    stratKey(g, 'Digit1');
+    const p = fieldPoint(game, 12);
+    clickAt(g, p.x, p.y, 2);
+    let waited = 0;
+    ok(simUntil(game, () => { if ((a.waitT || 0) > 0) waited += 1 / 60; return a.order.type === 'hold'; }, 15), mode + ' : il arrive sans traîner');
+    ok(waited < 2, mode + ' : le chef n’a presque pas attendu (' + waited.toFixed(1) + ' s)');
+  }
+});
+
 test('stratégie : au briefing, la sorte et le mode de chaque groupe se choisissent, et le groupe se reforme', () => {
   const key = 'breach.loadout.strategy', saved = localStorage.getItem(key);
   try {
@@ -5063,6 +5112,63 @@ test('stratégie : plusieurs trinômes envoyés ensemble se rangent côte à cô
   ok(simUntil(game, () => W.slots.ops.every(s => s.order.type === 'hold'), 45), 'tous arrivent');
   const all = armyOf(game, 'ops');
   ok(all.every((m, i) => all.every((o, j) => j <= i || dist(m.x, m.y, o.x, o.y) > 14)), 'personne l’un sur l’autre');
+});
+
+test('stratégie : trois trinômes envoyés au pont du Village s’y retrouvent, sans aller-retour devant le pont occupé', () => {
+  // (le trinôme du milieu tient sur le pont ; les équipiers des deux autres ne contournaient un allié qu'à quatre cases
+  // d'eux : ils prenaient le détour par la route, s'éloignaient du pont, y revenaient, et ainsi de suite)
+  const g = mkStrat({ calm: true, level: 0 });
+  const game = g.game, W = game.war;
+  stratKey(g, 'KeyQ');
+  const p = fieldPoint(game, 14);
+  clickAt(g, p.x, p.y, 2);
+  const placed = () => W.slots.ops.every(s => s.order.type === 'hold' && upOf(s).every(m => !m.moving && dist(m.x, m.y, game.leaderOf(s).x, game.leaderOf(s).y) < 3.5 * U));
+  ok(simUntil(game, placed, 30), 'chacun près de son chef, arrêté, en moins de 30 s');
+});
+
+test('stratégie : les chemins d’un trinôme contournent les alliés arrêtés, même loin, et frôlent les siens', () => {
+  const g = mkStrat({ calm: true });
+  const game = g.game, [a, b] = game.war.slots.ops, lead = game.leaderOf(a), [f] = upOf(a).slice(1), far = upOf(b)[0];
+  for (const m of armyOf(game, 'ops')) m.moving = false;
+  Object.assign(far, { x: lead.x + 12 * U, y: lead.y });
+  const of = (e, lead2, o) => game.crowdAvoid(e, lead2).find(q => q.x === o.x && q.y === o.y);
+  ok(of(f, false, far) && of(f, false, far).c === CROWD_COST, 'un homme d’un autre trinôme, arrêté à douze cases : contourné');
+  ok(of(f, false, lead).c === CROWD_SOFT, 'son chef : frôlé');
+  ok(!of(lead, true, f) && of(lead, true, far), 'le chef ne contourne pas les siens, mais l’autre trinôme oui');
+  far.moving = true;
+  ok(!of(f, false, far), 'qui marche loin ne compte pas');
+});
+
+test('stratégie : le chef qui attend les siens fait face à son chemin, et sa file se range derrière lui de ce côté', () => {
+  // (au demi-tour, il gardait le sens de sa dernière marche : les siens allaient se placer devant lui, de l'autre côté
+  // d'un pont, à plus de SQUAD_SPREAD, et il les attendait)
+  const g = mkStrat({ calm: true });
+  const game = g.game, [a] = game.war.slots.ops, lead = game.leaderOf(a), [f1, f2] = upOf(a).slice(1);
+  const p = fieldPoint(game, 10);
+  lead.path = game.pathTo(lead, p.x, p.y);
+  const h = game.pathHeading(lead);
+  lead.moveDir = h + Math.PI;
+  const q = spotAt(game, lead, 6 * U);
+  Object.assign(f2, { x: q.x, y: q.y, path: [], formAt: null });
+  ok(game.waitsForGroup(lead, 1 / 60), 'il attend le retardataire, à six cases');
+  near(angleDiff(lead.moveDir, h), 0, 0.05, 'face à son chemin');
+  const slot = game.formationPos(f1, lead, SQUAD_FILE[0], lead.moveDir);
+  ok((slot.x - lead.x) * Math.cos(h) + (slot.y - lead.y) * Math.sin(h) < 0, 'la place du second est derrière lui');
+  // à sa place (tenue à jour), même un peu loin, un équipier n'est pas en retard ; sonné, il n'y est plus
+  Object.assign(f2, { formAt: { x: f2.x, y: f2.y }, formT: game.time + 0.15 });
+  a.waitT = 0;
+  ok(!game.waitsForGroup(lead, 1 / 60), 'à sa place, on ne l’attend pas');
+  f2.stun = 5;
+  ok(game.waitsForGroup(lead, 1 / 60), 'sonné, on l’attend');
+});
+
+test('stratégie : un trinôme envoyé là où un autre se tient prend une place à côté', () => {
+  const g = mkStrat({ calm: true });
+  const game = g.game, [a, b] = game.war.slots.ops, p = fieldPoint(game, 10);
+  game.stratMove([a], p.x, p.y, null, false, true);
+  game.stratMove([b], a.order.x, a.order.y, null, false, true);
+  ok(dist(a.order.x, a.order.y, b.order.x, b.order.y) >= STRAT_APART, 'à deux cases au moins de l’autre');
+  ok(dist(a.order.x, a.order.y, b.order.x, b.order.y) < STRAT_APART + 1.5 * U, 'mais tout près');
 });
 
 test('stratégie : Maj + clic droit enchaîne les étapes, H tient, R rend son couloir au trinôme, C le fait courir', () => {
@@ -5816,6 +5922,84 @@ test('chaque carte d’escorte se joue sans exception', () => {
     }
     ok(true, 'escorte / ' + ESCORT_LEVELS[lvl].name);
   }
+});
+
+test('brouillard : le calque des cases vues tient un pixel par case, et agrandi donne l’image de pleine résolution', () => {
+  const g = mkGame({ alone: true }), { game, r } = g, m = game.map;
+  for (let i = 0; i < m.explored.length; i += 7) if (!m.explored[i]) { m.explored[i] = 1; m.newlyExplored.push(i); }
+  g.step(1);
+  eq(r.exploredC.width, m.w, 'largeur : un pixel par case fine'); eq(r.exploredC.height, m.h, 'hauteur');
+  // la référence : chaque case vue peinte à pleine résolution, comme avant
+  const W = m.w * TILE, H = m.h * TILE, canvas = () => { const c = document.createElement('canvas'); c.width = W; c.height = H; return c.getContext('2d'); };
+  const ref = canvas(), big = canvas();
+  ref.fillStyle = 'rgba(0,0,0,0.45)';
+  for (let i = 0; i < m.explored.length; i++) if (m.explored[i]) ref.fillRect((i % m.w) * TILE, Math.floor(i / m.w) * TILE, TILE, TILE);
+  big.imageSmoothingEnabled = false; // (comme drawFog)
+  big.drawImage(r.exploredC, 0, 0, m.w, m.h, 0, 0, W, H);
+  const a = ref.getImageData(0, 0, W, H).data, b = big.getImageData(0, 0, W, H).data;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) diff++;
+  eq(diff, 0, 'octets différents de la référence');
+});
+
+test('rendu : un décalque vu se peint sur le décor, qui se recopie seul à l’écran', () => {
+  const g = mkGame({ alone: true }), { game, r } = g, p = game.player;
+  const x = Math.round(p.x), y = Math.round(p.y);
+  const at = () => Array.from(r.staticC.getContext('2d').getImageData(x, y, 1, 1).data).join(',');
+  const before = at();
+  game.addDecal({ type: 'pool', x, y, rot: 0 });
+  eq(game.decals.length, 1, 'là où vous êtes, vous le voyez');
+  g.step(1);
+  eq(game.decals.length, 0, 'file des décalques vidée');
+  ok(at() !== before, 'la flaque est peinte sur le décor');
+  ok(!('decalC' in r), 'plus de calque de décalques à part');
+});
+
+test('rendu : le calque d’obscurité n’existe que courant coupé, et le vignettage n’est peint qu’une fois par taille', () => {
+  const lit = mkGame({ alone: true });
+  eq(lit.r.darkC.width * lit.r.darkC.height, 0, 'courant laissé : pas de calque');
+  const dark = mkGame({ alone: true, loadout: { primary: 'hk416', sidearm: 'glock17', cutPower: true } });
+  ok(dark.game.dark, 'courant coupé');
+  eq(dark.r.darkC.width, dark.game.map.w * TILE, 'courant coupé : la largeur de la carte');
+  dark.step(2);
+  // le vignettage : peint dans vignetteC à la première image, recopié ensuite, repeint si l'écran change de taille
+  lit.step(1);
+  const r = lit.r, vc = r.vignetteC, vx = vc.getContext('2d'), grad = vx.createRadialGradient;
+  let made = 0;
+  vx.createRadialGradient = function (...a) { made++; return grad.apply(this, a); };
+  lit.step(3);
+  eq(made, 0, 'déjà peint : rien à refaire');
+  eq(vc.width, r.canvas.width, 'à la taille de l’écran');
+  r.canvas.width -= 10;
+  lit.step(2);
+  eq(made, 1, 'nouvelle taille : peint une fois de plus');
+  eq(vc.width, r.canvas.width, 'à la nouvelle taille');
+  const alpha = (px, py) => vx.getImageData(px, py, 1, 1).data[3];
+  ok(alpha(0, 0) > 100 && alpha(vc.width >> 1, vc.height >> 1) === 0, 'les bords sombres, le centre clair');
+  r.resize();
+});
+
+test('chemins : les tables de la grille suivent blocksMove et les portes, et une recherche ne garde rien de la précédente', () => {
+  for (const def of ALL_LEVELS) {
+    const m = new GameMap(def);
+    for (let i = 0; i < m.w * m.h; i++) {
+      const x = i % m.w, y = (i / m.w) | 0;
+      if (m.solid[i] !== (m.blocksMove(x, y) ? 1 : 0)) throw new Error(def.name + ' : solid faux en ' + x + ',' + y);
+      if (m.isDoor[i] !== (m.doorAt.has(i) ? 1 : 0)) throw new Error(def.name + ' : isDoor faux en ' + x + ',' + y);
+    }
+  }
+  // findPath et walkField partagent leurs tampons : un appel intercalé ne change rien au suivant
+  const m = new GameMap(WAR_LEVELS[0]), free = [];
+  for (let i = 0; i < m.w * m.h; i++) if (!m.solid[i]) free.push({ x: i % m.w, y: (i / m.w) | 0 });
+  const [a, b, c, d] = [free[0], free[free.length - 1], free[free.length >> 2], free[(3 * free.length) >> 2]];
+  const path = () => JSON.stringify(m.findPath(a.x, a.y, b.x, b.y));
+  const field = () => Array.from(m.walkField((c.x + 0.5) * TILE, (c.y + 0.5) * TILE)).join();
+  const p1 = path(), f1 = field();
+  ok(JSON.parse(p1), 'un chemin d’un bout à l’autre du champ de bataille');
+  m.findPath(c.x, c.y, d.x, d.y, { noClosedDoors: true });
+  m.walkField((d.x + 0.5) * TILE, (d.y + 0.5) * TILE);
+  eq(path(), p1, 'même chemin');
+  ok(field() === f1, 'mêmes distances');
 });
 
 // ---------------------------------------------------------------- couvert bas

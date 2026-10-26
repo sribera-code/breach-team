@@ -8,8 +8,12 @@
   renderer.resize();
   window.addEventListener('resize', () => renderer.resize());
   game.loadLevel(0);
-  // on choisit le mode, puis la carte, puis l'équipement (#nobrief : on joue tout de suite la première carte du mode)
-  if (location.hash !== '#nobrief') ui.showModes();
+  // on choisit le mode, puis la carte, puis l'équipement (#nobrief : on joue tout de suite la première carte du mode ;
+  // #fps : compteur d'images ; les deux : #nobrief&fps)
+  const flags = location.hash.slice(1).split(/[&,]/);
+  if (!flags.includes('nobrief')) ui.showModes();
+  const fps = flags.includes('fps') && document.getElementById('fps');
+  if (fps) fps.hidden = false;
 
   const inp = game.input;
   // Souris verrouillée dans le jeu (Pointer Lock) : le curseur est celui qu'on dessine, il ne bute plus sur le bord de
@@ -77,9 +81,21 @@
   });
   window.addEventListener('keyup', e => { if (NO_DEFAULT.includes(e.code)) e.preventDefault(); inp.keys[e.code] = false; });
 
+  // #fps : images par seconde et pire écart entre deux images (ce que l'on voit, GPU compris), temps de calcul moyens
+  // de la simulation, du dessin (commandes seulement : le GPU travaille ensuite) et du HUD, par demi-seconde
+  const perf = { n: 0, gap: 0, worst: 0, u: 0, d: 0, h: 0, t: 0 };
+  function countFps(now, gap, u, d, h) {
+    perf.n++; perf.gap += gap; perf.worst = Math.max(perf.worst, gap); perf.u += u; perf.d += d; perf.h += h;
+    if (now - perf.t < 500) return;
+    const n = perf.n;
+    fps.textContent = `${Math.round(1000 * n / perf.gap)} i/s · pire ${perf.worst.toFixed(0)} ms · simulation ${(perf.u / n).toFixed(1)} · dessin ${(perf.d / n).toFixed(1)} · HUD ${(perf.h / n).toFixed(1)} ms`;
+    Object.assign(perf, { n: 0, gap: 0, worst: 0, u: 0, d: 0, h: 0, t: now });
+  }
+
   let last = performance.now();
   function frame(now) {
-    const dt = Math.min(0.05, (now - last) / 1000);
+    const gap = now - last;
+    const dt = Math.min(0.05, gap / 1000);
     last = now;
     if (locked() && ui.isOpen()) document.exitPointerLock();
     renderer.locked = locked(); // (stratégie : la vue glisse quand le curseur bute sur un bord)
@@ -96,10 +112,14 @@
     if (game.strat) { renderer.miniSlot = ui.miniSlot(); renderer.panelW = ui.panelWidth(); }
     // ce qu'on entend : depuis le joueur, ou en stratégie depuis le centre de la vue (voir Game.hearAt)
     game.ear = game.strat ? { x: renderer.cam.x, y: renderer.cam.y } : null;
+    const t0 = performance.now();
     game.update(dt);
+    const t1 = performance.now();
     renderer.draw(dt);
+    const t2 = performance.now();
     ui.update();
     ui.hoverAt(game.strat && locked() ? renderer.mouse.sx : null, renderer.mouse.sy);
+    if (fps) countFps(now, gap, t1 - t0, t2 - t1, performance.now() - t2);
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);

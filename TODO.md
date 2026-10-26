@@ -112,6 +112,14 @@ de chaque section.
 - **Les ordres restent simples** : un trinôme envoyé tire en route sans poursuivre, un trinôme qui tient ne bouge pas même
   pris à revers ; pas de patrouille, pas de « tenir le feu », pas de groupes enregistrés (Ctrl + numéro). Une colonne ne se
   forme qu'à l'ordre (la porte cliquée) ; en route, une porte fermée s'ouvre comme elle vient.
+- **Les trinômes se gênent moins en chemin depuis le 25 octobre, réglé à l'estime** (`CROWD_*` en tête de
+  `js/game-hunters.js`, `STRAT_APART`) : chaque chemin contourne les alliés arrêtés où qu'ils soient, le chef qui attend
+  les siens fait face à son chemin, un trinôme envoyé là où un autre se tient prend une place à côté. Sur un banc d'ordres
+  donnés au calme sur les trois champs de bataille, les trois trinômes allant ensemble à 14 cases puis revenant mettent
+  18 s au lieu de 33 (une fois sur six, avant, des équipiers restaient bloqués devant le pont du Village), et l'attente
+  des chefs à trois trinômes passe de 12 à 2 s sur quatre ordres au hasard. Limite : personne ne s'écarte pour laisser
+  passer. Un trinôme qui tient sur un pont ou dans une porte barre le passage, et les autres font le détour, parfois long
+  (une vingtaine de cases par la route du Village).
 - **Le rendu d'une armée entière vue de haut reste à mesurer dans un vrai navigateur** : toute la carte à l'écran, c'est
   tout le brouillard et dix-huit personnages à redessiner à chaque image.
 
